@@ -1,25 +1,31 @@
 {
-    // 使用 IntelliSense 了解相关属性。 
-    // 悬停以查看现有属性的描述。
-    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "xinghe_new",
+            "name": "xinghe_new (Windows)",
             "request": "launch",
             "type": "dart",
-            "flutterMode": "debug" 
+            "program": "lib/main.dart",
+            "deviceId": "windows",
+            "flutterMode": "debug",
+            "args": [
+                "--debug"
+            ]
         },
         {
-            "name": "xinghe_new (Profile Mode)",
+            "name": "xinghe_new (Profile)",
             "request": "launch",
             "type": "dart",
+            "program": "lib/main.dart",
+            "deviceId": "windows",
             "flutterMode": "profile"
         },
         {
-            "name": "xinghe_new (Release Mode)",
+            "name": "xinghe_new (Release)",
             "request": "launch",
             "type": "dart",
+            "program": "lib/main.dart",
+            "deviceId": "windows",
             "flutterMode": "release"
         }
     ]
