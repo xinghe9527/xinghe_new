@@ -2,6 +2,9 @@ import 'base/api_service_base.dart';
 import 'base/api_config.dart';
 import 'providers/openai_service.dart';
 import 'providers/custom_service.dart';
+import 'providers/gemini_image_service.dart';
+import 'providers/midjourney_service.dart';
+import 'providers/veo_video_service.dart';
 
 /// API服务工厂
 /// 根据服务商名称创建对应的API服务实例
@@ -19,13 +22,21 @@ class ApiFactory {
       case 'openai':
         return OpenAIService(config);
       
+      case 'gemini':
+      case 'gemini-image':
+        return GeminiImageService(config);
+      
+      case 'midjourney':
+      case 'mj':
+        return MidjourneyService(config);
+      
+      case 'veo':
+      case 'veo-video':
+        return VeoVideoService(config);
+      
       case 'anthropic':
         // TODO: 当添加Anthropic支持时，返回AnthropicService实例
         return CustomApiService(config, customProviderName: 'Anthropic');
-      
-      case 'midjourney':
-        // TODO: 当添加Midjourney支持时，返回MidjourneyService实例
-        return CustomApiService(config, customProviderName: 'Midjourney');
       
       case 'runway':
         // TODO: 当添加Runway支持时，返回RunwayService实例
@@ -56,8 +67,10 @@ class ApiFactory {
   List<String> getSupportedProviders() {
     return [
       'openai',
-      'anthropic',
+      'gemini-image',
       'midjourney',
+      'veo-video',
+      'anthropic',
       'runway',
       'pika',
       // 可以继续添加...
@@ -68,6 +81,15 @@ class ApiFactory {
   bool isFullySupported(String provider) {
     switch (provider.toLowerCase()) {
       case 'openai':
+        return true; // 已完全实现
+      case 'gemini':
+      case 'gemini-image':
+        return true; // 已完全实现
+      case 'midjourney':
+      case 'mj':
+        return true; // 已完全实现
+      case 'veo':
+      case 'veo-video':
         return true; // 已完全实现
       default:
         return false; // 使用自定义服务模板

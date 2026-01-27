@@ -4,6 +4,7 @@ import 'settings_page.dart';
 import 'drawing_space.dart';
 import 'video_space.dart';
 import 'asset_library.dart';
+import 'system_log.dart';
 import 'package:xinghe_new/main.dart'; // 引入全局 themeNotifier 和 AppTheme
 
 class HomeScreen extends StatefulWidget {
@@ -192,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 3: // 素材库
         return const AssetLibrary();
       case 4: // 系统日志
-        return _buildPlaceholder('系统日志');
+        return const SystemLog();
       default:
         return _buildPlaceholder('未知空间');
     }

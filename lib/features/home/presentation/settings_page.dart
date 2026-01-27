@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:xinghe_new/main.dart'; // 引入全局 themeNotifier 和 pathNotifiers
+import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:xinghe_new/services/api/secure_storage_manager.dart';
+import 'package:xinghe_new/core/logger/log_manager.dart';
 
 class SettingsPage extends StatefulWidget {
   final VoidCallback onBack;
@@ -12,13 +15,84 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  int _mainTabIndex = 0; // 0: API设置, 1: 风格设置, 2: 保存设置
-  int _apiSubTabIndex = 0; // 0: LLM模型, 1: 图片模型, 2: 视频模型, 3: 上传设置
-  bool _isPickingImagePath = false; // 图片路径选择状态
-  bool _isPickingVideoPath = false; // 视频路径选择状态
+  int _mainTabIndex = 0;
+  int _apiSubTabIndex = 0;
+  bool _isPickingImagePath = false;
+  bool _isPickingVideoPath = false;
 
   final List<String> _mainTabs = ['API设置', '风格设置', '保存设置'];
   final List<String> _apiSubTabs = ['LLM模型', '图片模型', '视频模型', '上传设置'];
+
+  // API配置状态
+  final SecureStorageManager _storage = SecureStorageManager();
+  final LogManager _logger = LogManager();
+  
+  // LLM API 配置
+  String _llmProvider = 'openai';
+  final TextEditingController _llmApiKeyController = TextEditingController();
+  final TextEditingController _llmBaseUrlController = TextEditingController();
+  final TextEditingController _llmModelController = TextEditingController();
+
+  // 图片 API 配置
+  String _imageProvider = 'openai';
+  final TextEditingController _imageApiKeyController = TextEditingController();
+  final TextEditingController _imageBaseUrlController = TextEditingController();
+  final TextEditingController _imageModelController = TextEditingController();
+
+  // 视频 API 配置
+  String _videoProvider = 'openai';
+  final TextEditingController _videoApiKeyController = TextEditingController();
+  final TextEditingController _videoBaseUrlController = TextEditingController();
+  final TextEditingController _videoModelController = TextEditingController();
+
+  // 上传 API 配置
+  String _uploadProvider = 'openai';
+  final TextEditingController _uploadApiKeyController = TextEditingController();
+  final TextEditingController _uploadBaseUrlController = TextEditingController();
+
+  // GeekNow 模型列表
+  final Map<String, List<String>> _geekNowModels = {
+    'llm': [
+      // OpenAI 系列
+      'gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo',
+      // DeepSeek 系列
+      'deepseek-chat', 'deepseek-coder',
+      // Claude 系列
+      'claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku',
+      // Gemini 系列
+      'gemini-pro', 'gemini-pro-vision',
+      // Llama 系列
+      'llama-3-70b', 'llama-3-8b',
+      // 其他常用模型
+      'mixtral-8x7b', 'qwen-turbo', 'qwen-plus',
+    ],
+    'image': [
+      // OpenAI 系列
+      'gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2',
+      // Gemini 图像生成系列
+      'gemini-3-pro-image-preview', 'gemini-3-pro-image-preview-lite', 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-image', 'gemini-pro-vision',
+      // Stable Diffusion 系列
+      'stable-diffusion-xl', 'stable-diffusion-3',
+      // Midjourney 风格
+      'midjourney-v6', 'midjourney-niji',
+    ],
+    'video': [
+      // VEO 系列
+      'veo_3_1', 'veo_3_1-4K', 'veo_3_1-fast', 'veo_3_1-fast-4K',
+      'veo_3_1-components', 'veo_3_1-components-4K',
+      'veo_3_1-fast-components', 'veo_3_1-fast-components-4K',
+      // Sora 系列
+      'sora-2', 'sora-turbo',
+      // Kling
+      'kling-video-o1',
+      // Doubao 系列
+      'doubao-seedance-1-5-pro_480p',
+      'doubao-seedance-1-5-pro_720p',
+      'doubao-seedance-1-5-pro_1080p',
+      // Grok
+      'grok-video-3',
+    ],
+  };
 
   final List<Map<String, dynamic>> _styleOptions = [
     {
@@ -41,7 +115,232 @@ class _SettingsPageState extends State<SettingsPage> {
     },
   ];
 
-  // 选择图片保存路径
+  @override
+  void initState() {
+    super.initState();
+    _loadAllConfigs();
+  }
+
+  @override
+  void dispose() {
+    _llmApiKeyController.dispose();
+    _llmBaseUrlController.dispose();
+    _llmModelController.dispose();
+    _imageApiKeyController.dispose();
+    _imageBaseUrlController.dispose();
+    _imageModelController.dispose();
+    _videoApiKeyController.dispose();
+    _videoBaseUrlController.dispose();
+    _videoModelController.dispose();
+    _uploadApiKeyController.dispose();
+    _uploadBaseUrlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAllConfigs() async {
+    await _loadLLMConfig();
+    await _loadImageConfig();
+    await _loadVideoConfig();
+    await _loadUploadConfig();
+  }
+
+  Future<void> _loadLLMConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('llm_provider') ?? 'openai';
+      final apiKey = await _storage.getApiKey(provider: provider);
+      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final model = await _storage.getModel(provider: provider, modelType: 'llm');
+
+      if (mounted) {
+        setState(() {
+          _llmProvider = provider;
+          _llmApiKeyController.text = apiKey ?? '';
+          _llmBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+          _llmModelController.text = model ?? '';
+        });
+      }
+    } catch (e) {
+      _logger.error('加载LLM配置失败: $e', module: '设置');
+    }
+  }
+
+  Future<void> _loadImageConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('image_provider') ?? 'openai';
+      final apiKey = await _storage.getApiKey(provider: provider);
+      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final model = await _storage.getModel(provider: provider, modelType: 'image');
+
+      if (mounted) {
+        setState(() {
+          _imageProvider = provider;
+          _imageApiKeyController.text = apiKey ?? '';
+          _imageBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+          _imageModelController.text = model ?? '';
+        });
+      }
+    } catch (e) {
+      _logger.error('加载图片配置失败: $e', module: '设置');
+    }
+  }
+
+  Future<void> _loadVideoConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('video_provider') ?? 'openai';
+      final apiKey = await _storage.getApiKey(provider: provider);
+      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final model = await _storage.getModel(provider: provider, modelType: 'video');
+
+      if (mounted) {
+        setState(() {
+          _videoProvider = provider;
+          _videoApiKeyController.text = apiKey ?? '';
+          _videoBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+          _videoModelController.text = model ?? '';
+        });
+      }
+    } catch (e) {
+      _logger.error('加载视频配置失败: $e', module: '设置');
+    }
+  }
+
+  Future<void> _loadUploadConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('upload_provider') ?? 'openai';
+      final apiKey = await _storage.getApiKey(provider: provider);
+      final baseUrl = await _storage.getBaseUrl(provider: provider);
+
+      if (mounted) {
+        setState(() {
+          _uploadProvider = provider;
+          _uploadApiKeyController.text = apiKey ?? '';
+          _uploadBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+        });
+      }
+    } catch (e) {
+      _logger.error('加载上传配置失败: $e', module: '设置');
+    }
+  }
+
+  String _getDefaultBaseUrl(String provider) {
+    switch (provider.toLowerCase()) {
+      case 'openai':
+        return 'https://api.openai.com/v1';
+      case 'geeknow':
+        return 'https://api.geeknow.ai/v1';
+      case 'azure':
+        return 'https://your-resource.openai.azure.com';
+      case 'anthropic':
+        return 'https://api.anthropic.com/v1';
+      default:
+        return 'https://api.openai.com/v1';
+    }
+  }
+
+  Future<void> _saveLLMConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('llm_provider', _llmProvider);
+      
+      if (_llmApiKeyController.text.isNotEmpty) {
+        await _storage.saveApiKey(provider: _llmProvider, apiKey: _llmApiKeyController.text);
+      }
+      if (_llmBaseUrlController.text.isNotEmpty) {
+        await _storage.saveBaseUrl(provider: _llmProvider, baseUrl: _llmBaseUrlController.text);
+      }
+      if (_llmModelController.text.isNotEmpty) {
+        await _storage.saveModel(provider: _llmProvider, modelType: 'llm', model: _llmModelController.text);
+      }
+
+      _logger.success('保存LLM配置成功', module: '设置', extra: {'provider': _llmProvider});
+      _showMessage('LLM配置已保存');
+    } catch (e) {
+      _logger.error('保存LLM配置失败: $e', module: '设置');
+      _showMessage('保存失败: $e', isError: true);
+    }
+  }
+
+  Future<void> _saveImageConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('image_provider', _imageProvider);
+      
+      if (_imageApiKeyController.text.isNotEmpty) {
+        await _storage.saveApiKey(provider: _imageProvider, apiKey: _imageApiKeyController.text);
+      }
+      if (_imageBaseUrlController.text.isNotEmpty) {
+        await _storage.saveBaseUrl(provider: _imageProvider, baseUrl: _imageBaseUrlController.text);
+      }
+      if (_imageModelController.text.isNotEmpty) {
+        await _storage.saveModel(provider: _imageProvider, modelType: 'image', model: _imageModelController.text);
+      }
+
+      _logger.success('保存图片API配置成功', module: '设置', extra: {'provider': _imageProvider});
+      _showMessage('图片API配置已保存');
+    } catch (e) {
+      _logger.error('保存图片配置失败: $e', module: '设置');
+      _showMessage('保存失败: $e', isError: true);
+    }
+  }
+
+  Future<void> _saveVideoConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('video_provider', _videoProvider);
+      
+      if (_videoApiKeyController.text.isNotEmpty) {
+        await _storage.saveApiKey(provider: _videoProvider, apiKey: _videoApiKeyController.text);
+      }
+      if (_videoBaseUrlController.text.isNotEmpty) {
+        await _storage.saveBaseUrl(provider: _videoProvider, baseUrl: _videoBaseUrlController.text);
+      }
+      if (_videoModelController.text.isNotEmpty) {
+        await _storage.saveModel(provider: _videoProvider, modelType: 'video', model: _videoModelController.text);
+      }
+
+      _logger.success('保存视频API配置成功', module: '设置', extra: {'provider': _videoProvider});
+      _showMessage('视频API配置已保存');
+    } catch (e) {
+      _logger.error('保存视频配置失败: $e', module: '设置');
+      _showMessage('保存失败: $e', isError: true);
+    }
+  }
+
+  Future<void> _saveUploadConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('upload_provider', _uploadProvider);
+      
+      if (_uploadApiKeyController.text.isNotEmpty) {
+        await _storage.saveApiKey(provider: _uploadProvider, apiKey: _uploadApiKeyController.text);
+      }
+      if (_uploadBaseUrlController.text.isNotEmpty) {
+        await _storage.saveBaseUrl(provider: _uploadProvider, baseUrl: _uploadBaseUrlController.text);
+      }
+
+      _logger.success('保存上传API配置成功', module: '设置', extra: {'provider': _uploadProvider});
+      _showMessage('上传API配置已保存');
+    } catch (e) {
+      _logger.error('保存上传配置失败: $e', module: '设置');
+      _showMessage('保存失败: $e', isError: true);
+    }
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : const Color(0xFF2AF598),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   Future<void> _pickImageDirectory() async {
     if (_isPickingImagePath) return;
     
@@ -55,25 +354,15 @@ class _SettingsPageState extends State<SettingsPage> {
       
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         imageSavePathNotifier.value = selectedDirectory;
+        _logger.success('设置图片保存路径', module: '设置', extra: {'path': selectedDirectory});
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('图片保存路径已更新: $selectedDirectory'),
-              backgroundColor: const Color(0xFF2AF598),
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          _showMessage('图片保存路径已更新: $selectedDirectory');
         }
       }
     } catch (e) {
+      _logger.error('选择图片路径失败: $e', module: '设置');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('选择文件夹时出错: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        _showMessage('选择文件夹时出错: ${e.toString()}', isError: true);
       }
     } finally {
       if (mounted) {
@@ -82,7 +371,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  // 选择视频保存路径
   Future<void> _pickVideoDirectory() async {
     if (_isPickingVideoPath) return;
     
@@ -96,25 +384,15 @@ class _SettingsPageState extends State<SettingsPage> {
       
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         videoSavePathNotifier.value = selectedDirectory;
+        _logger.success('设置视频保存路径', module: '设置', extra: {'path': selectedDirectory});
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('视频保存路径已更新: $selectedDirectory'),
-              backgroundColor: const Color(0xFF2AF598),
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          _showMessage('视频保存路径已更新: $selectedDirectory');
         }
       }
     } catch (e) {
+      _logger.error('选择视频路径失败: $e', module: '设置');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('选择文件夹时出错: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        _showMessage('选择文件夹时出错: ${e.toString()}', isError: true);
       }
     } finally {
       if (mounted) {
@@ -132,7 +410,6 @@ class _SettingsPageState extends State<SettingsPage> {
           color: AppTheme.scaffoldBackground,
           child: Column(
             children: [
-              // 1. 顶部导航与主标签
               Container(
                 height: 60,
                 padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -140,7 +417,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   children: [
                     _buildIconButton(Icons.arrow_back_ios_new_rounded, '返回工作台', widget.onBack),
                     const SizedBox(width: 40),
-                    // 主标签切换
                     ...List.generate(_mainTabs.length, (index) {
                       final isSelected = _mainTabIndex == index;
                       return _buildMainTab(index, isSelected);
@@ -151,12 +427,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               Divider(height: 1, color: AppTheme.dividerColor),
               
-              // 2. 内容区
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 左侧子导航 (仅 API 设置显示)
                     if (_mainTabIndex == 0)
                       Container(
                         width: 180,
@@ -171,7 +445,6 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                     
-                    // 右侧详情配置区
                     Expanded(
                       child: _buildContentArea(currentThemeIndex),
                     ),
@@ -197,8 +470,6 @@ class _SettingsPageState extends State<SettingsPage> {
         return _buildPlaceholderView();
     }
   }
-
-  // --- 组件构建方法 ---
 
   Widget _buildMainTab(int index, bool isSelected) {
     return MouseRegion(
@@ -255,7 +526,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // 保存设置界面
   Widget _buildSaveSettings() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(40),
@@ -390,7 +660,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // 风格设置界面
   Widget _buildStyleSettings(int currentThemeIndex) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(40),
@@ -412,8 +681,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 cursor: SystemMouseCursors.click,
                 child: GestureDetector(
                   onTap: () {
-                    // 立即更新全局主题
                     themeNotifier.value = index;
+                    _logger.info('切换主题', module: '设置', extra: {'theme': style['name']});
                   },
                   child: Container(
                     width: 260,
@@ -431,7 +700,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 预览色块
                         Container(
                           height: 120,
                           decoration: BoxDecoration(
@@ -464,7 +732,6 @@ class _SettingsPageState extends State<SettingsPage> {
                             ],
                           ),
                         ),
-                        // 文字描述
                         Padding(
                           padding: const EdgeInsets.all(16),
                           child: Column(
@@ -513,6 +780,25 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _buildApiConfigurationForm() {
     String currentTitle = _apiSubTabs[_apiSubTabIndex];
     
+    // 根据不同的子标签显示不同的API配置表单
+    Widget formContent;
+    switch (_apiSubTabIndex) {
+      case 0: // LLM模型
+        formContent = _buildLLMForm();
+        break;
+      case 1: // 图片模型
+        formContent = _buildImageForm();
+        break;
+      case 2: // 视频模型
+        formContent = _buildVideoForm();
+        break;
+      case 3: // 上传设置
+        formContent = _buildUploadForm();
+        break;
+      default:
+        formContent = _buildPlaceholderView();
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(40),
       child: Column(
@@ -520,32 +806,359 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           _buildFormHeader(currentTitle),
           const SizedBox(height: 40),
-          
-          _buildFieldLabel('API 服务商'),
-          const SizedBox(height: 10),
-          _buildDropdown(['OpenAI', 'GeekNow', 'Azure', 'Anthropic']),
-          
-          const SizedBox(height: 30),
-          _buildFieldLabel('API Key'),
-          const SizedBox(height: 10),
-          _buildTextField('请输入您的 API 密钥...', isPassword: true),
-          
-          const SizedBox(height: 30),
-          _buildFieldLabel('Base URL (API 地址)'),
-          const SizedBox(height: 10),
-          _buildTextField('https://api.openai.com/v1'),
-          
-          const SizedBox(height: 30),
-          _buildFieldLabel('选择推理模型'),
-          const SizedBox(height: 10),
-          _buildModelPicker(),
-          
-          const SizedBox(height: 40),
-          Text(
-            '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
-            style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
-          ),
+          formContent,
         ],
+      ),
+    );
+  }
+
+  Widget _buildLLMForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildFieldLabel('API 服务商'),
+        const SizedBox(height: 10),
+        _buildProviderDropdown(
+          value: _llmProvider,
+          onChanged: (v) {
+            setState(() => _llmProvider = v);
+            _llmBaseUrlController.text = _getDefaultBaseUrl(v);
+            _saveLLMConfig();
+          },
+        ),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('API Key'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_llmApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveLLMConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('Base URL (API 地址)'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_llmBaseUrlController, 'https://api.openai.com/v1', onSave: _saveLLMConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('选择推理模型'),
+        const SizedBox(height: 10),
+        _buildModelSelector(
+          provider: _llmProvider,
+          modelType: 'llm',
+          controller: _llmModelController,
+          hint: '例如: gpt-4-turbo',
+        ),
+        
+        const SizedBox(height: 40),
+        _buildSaveButton(_saveLLMConfig),
+        
+        const SizedBox(height: 20),
+        Text(
+          '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImageForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildFieldLabel('API 服务商'),
+        const SizedBox(height: 10),
+        _buildProviderDropdown(
+          value: _imageProvider,
+          onChanged: (v) {
+            setState(() => _imageProvider = v);
+            _imageBaseUrlController.text = _getDefaultBaseUrl(v);
+            _saveImageConfig();
+          },
+        ),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('API Key'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_imageApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveImageConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('Base URL (API 地址)'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_imageBaseUrlController, 'https://api.openai.com/v1', onSave: _saveImageConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('选择推理模型'),
+        const SizedBox(height: 10),
+        _buildModelSelector(
+          provider: _imageProvider,
+          modelType: 'image',
+          controller: _imageModelController,
+          hint: '例如: dall-e-3',
+        ),
+        
+        const SizedBox(height: 40),
+        _buildSaveButton(_saveImageConfig),
+        
+        const SizedBox(height: 20),
+        Text(
+          '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVideoForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildFieldLabel('API 服务商'),
+        const SizedBox(height: 10),
+        _buildProviderDropdown(
+          value: _videoProvider,
+          onChanged: (v) {
+            setState(() => _videoProvider = v);
+            _videoBaseUrlController.text = _getDefaultBaseUrl(v);
+            _saveVideoConfig();
+          },
+        ),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('API Key'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_videoApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveVideoConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('Base URL (API 地址)'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_videoBaseUrlController, 'https://api.openai.com/v1', onSave: _saveVideoConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('选择推理模型'),
+        const SizedBox(height: 10),
+        _buildModelSelector(
+          provider: _videoProvider,
+          modelType: 'video',
+          controller: _videoModelController,
+          hint: '例如: veo_3_1 或 sora-2',
+        ),
+        
+        const SizedBox(height: 40),
+        _buildSaveButton(_saveVideoConfig),
+        
+        const SizedBox(height: 20),
+        Text(
+          '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUploadForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildFieldLabel('API 服务商'),
+        const SizedBox(height: 10),
+        _buildProviderDropdown(
+          value: _uploadProvider,
+          onChanged: (v) {
+            setState(() => _uploadProvider = v);
+            _uploadBaseUrlController.text = _getDefaultBaseUrl(v);
+            _saveUploadConfig();
+          },
+        ),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('API Key'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_uploadApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveUploadConfig),
+        
+        const SizedBox(height: 30),
+        _buildFieldLabel('Base URL (API 地址)'),
+        const SizedBox(height: 10),
+        _buildEditableTextField(_uploadBaseUrlController, 'https://api.openai.com/v1', onSave: _saveUploadConfig),
+        
+        const SizedBox(height: 40),
+        _buildSaveButton(_saveUploadConfig),
+        
+        const SizedBox(height: 20),
+        Text(
+          '* 提示：文件上传用于图像引用、素材管理等场景。',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppTheme.accentColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.accentColor.withOpacity(0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.info_outline, color: AppTheme.accentColor, size: 20),
+                  const SizedBox(width: 10),
+                  Text(
+                    '上传功能说明',
+                    style: TextStyle(color: AppTheme.textColor, fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '文件上传（通用）:\n'
+                '• GeekNow: /v1/files - 上传图片素材\n'
+                '• Midjourney: /mj/submit/upload-discord-images - 上传到Discord\n'
+                '• 用途: 图生图、参考图等\n\n'
+                'Sora 角色创建（专用）:\n'
+                '• GeekNow Sora: /sora/v1/characters - 创建角色\n'
+                '• 从视频URL或任务ID提取角色\n'
+                '• 时间范围: 1-3秒（差值最大3秒，最小1秒）\n'
+                '• 用途: 角色引用，保持角色一致性',
+                style: TextStyle(color: AppTheme.subTextColor, fontSize: 13, height: 1.6),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProviderDropdown({required String value, required Function(String) onChanged}) {
+    final providers = ['openai', 'geeknow', 'azure', 'anthropic'];
+    final displayNames = {
+      'openai': 'OpenAI',
+      'geeknow': 'GeekNow',
+      'azure': 'Azure',
+      'anthropic': 'Anthropic',
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceBackground,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: AppTheme.surfaceBackground,
+          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+          items: providers.map((e) => DropdownMenuItem(
+            value: e, 
+            child: Text(displayNames[e] ?? e, style: TextStyle(color: AppTheme.textColor, fontSize: 14))
+          )).toList(),
+          onChanged: (v) {
+            if (v != null) {
+              onChanged(v);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEditableTextField(TextEditingController controller, String hint, {bool isPassword = false, VoidCallback? onSave}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceBackground,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+      ),
+      child: TextField(
+        controller: controller,
+        obscureText: isPassword,
+        style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          hintText: hint,
+          hintStyle: TextStyle(color: AppTheme.subTextColor),
+          suffixIcon: isPassword ? Icon(Icons.visibility_off_rounded, color: AppTheme.subTextColor, size: 18) : null,
+        ),
+        onChanged: (v) {
+          // 可以选择是否在每次输入时自动保存
+          // onSave?.call();
+        },
+      ),
+    );
+  }
+
+  /// GeekNow 智能模型选择器（支持搜索）
+  Widget _buildModelSelector({
+    required String provider,
+    required String modelType,
+    required TextEditingController controller,
+    required String hint,
+  }) {
+    // 如果不是 GeekNow，使用普通文本输入
+    if (provider != 'geeknow') {
+      return _buildEditableTextField(controller, hint);
+    }
+
+    // GeekNow 使用下拉选择器
+    final models = _geekNowModels[modelType] ?? [];
+    final currentModel = controller.text.isEmpty ? null : controller.text;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceBackground,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: models.contains(currentModel) ? currentModel : null,
+          hint: Text(hint, style: TextStyle(color: AppTheme.subTextColor)),
+          isExpanded: true,
+          dropdownColor: AppTheme.surfaceBackground,
+          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+          items: models.map((model) {
+            return DropdownMenuItem(
+              value: model,
+              child: Text(model, style: TextStyle(color: AppTheme.textColor, fontSize: 14)),
+            );
+          }).toList(),
+          onChanged: (v) {
+            if (v != null) {
+              setState(() {
+                controller.text = v;
+              });
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton(VoidCallback onSave) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onSave,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.save_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 10),
+              Text('保存配置', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -572,84 +1185,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildFieldLabel(String label) {
     return Text(label, style: TextStyle(color: AppTheme.textColor.withOpacity(0.7), fontSize: 14, fontWeight: FontWeight.w500));
-  }
-
-  Widget _buildTextField(String hint, {bool isPassword = false}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceBackground,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
-      ),
-      child: TextField(
-        obscureText: isPassword,
-        style: TextStyle(color: AppTheme.textColor, fontSize: 14),
-        decoration: InputDecoration(
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          hintText: hint,
-          hintStyle: TextStyle(color: AppTheme.subTextColor),
-          suffixIcon: isPassword ? Icon(Icons.visibility_off_rounded, color: AppTheme.subTextColor, size: 18) : null,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDropdown(List<String> options) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceBackground,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: options[0],
-          isExpanded: true,
-          dropdownColor: AppTheme.surfaceBackground,
-          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
-          items: options.map((e) => DropdownMenuItem(value: e, child: Text(e, style: TextStyle(color: AppTheme.textColor, fontSize: 14)))).toList(),
-          onChanged: (v) {},
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModelPicker() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceBackground,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Icon(Icons.search_rounded, color: AppTheme.subTextColor, size: 20),
-              const SizedBox(width: 12),
-              Expanded(child: Text('搜索并选择模型...', style: TextStyle(color: AppTheme.subTextColor, fontSize: 14))),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: AppTheme.textColor.withOpacity(0.05), borderRadius: BorderRadius.circular(4)),
-                child: Text('API 未连接', style: TextStyle(color: AppTheme.subTextColor, fontSize: 10)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Opacity(
-            opacity: 0.5,
-            child: Text(
-              '请先完成上方配置，系统将根据您的 API 文档自动获取可用模型列表',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildIconButton(IconData icon, String label, VoidCallback onTap) {

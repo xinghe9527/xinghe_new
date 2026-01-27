@@ -29,6 +29,11 @@ class ApiResponse<T> {
       statusCode: statusCode,
     );
   }
+
+  // 便捷 getter
+  bool get isSuccess => success;
+  bool get isFailure => !success;
+  String? get errorMessage => error;
 }
 
 /// LLM文本生成响应

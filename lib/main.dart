@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'features/home/presentation/home_screen.dart';
+import 'core/logger/log_manager.dart';
 
 // 全局主题状态管理器
 final ValueNotifier<int> themeNotifier = ValueNotifier<int>(0); // 0: 深邃黑, 1: 纯净白, 2: 梦幻粉
@@ -34,6 +35,11 @@ void main() async {
     await windowManager.focus();
     await windowManager.setSkipTaskbar(false);
   });
+
+  // 初始化日志管理器
+  final logManager = LogManager();
+  await logManager.loadLogs();
+  logManager.success('应用启动成功', module: '系统');
 
   runApp(const XingheApp());
 }
