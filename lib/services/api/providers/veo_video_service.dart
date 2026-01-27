@@ -77,10 +77,16 @@ class VeoVideoService extends ApiServiceBase {
       final aspectRatio = parameters?['aspect_ratio'] as String?;
       final grokSize = parameters?['grok_size'] as String?;
 
+      // 智能处理 baseUrl，避免重复 /v1
+      String baseUrl = config.baseUrl;
+      if (baseUrl.endsWith('/v1') || baseUrl.endsWith('/v1/')) {
+        baseUrl = baseUrl.replaceFirst(RegExp(r'/v1/?$'), '');
+      }
+      
       // ⚠️ 关键：必须使用 multipart/form-data 格式，即使没有文件
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('${config.baseUrl}/v1/videos'),
+        Uri.parse('$baseUrl/v1/videos'),
       );
 
       // 添加请求头（不要手动设置 Content-Type，让 http 库自动处理）
@@ -185,8 +191,14 @@ class VeoVideoService extends ApiServiceBase {
     required String taskId,
   }) async {
     try {
+      // 智能处理 baseUrl，避免重复 /v1
+      String baseUrl = config.baseUrl;
+      if (baseUrl.endsWith('/v1') || baseUrl.endsWith('/v1/')) {
+        baseUrl = baseUrl.replaceFirst(RegExp(r'/v1/?$'), '');
+      }
+      
       final response = await http.get(
-        Uri.parse('${config.baseUrl}/v1/videos/$taskId'),
+        Uri.parse('$baseUrl/v1/videos/$taskId'),
         headers: {'Authorization': 'Bearer ${config.apiKey}'},
       );
 
@@ -243,13 +255,19 @@ class VeoVideoService extends ApiServiceBase {
     required int seconds,
   }) async {
     try {
+      // 智能处理 baseUrl，避免重复 /v1
+      String baseUrl = config.baseUrl;
+      if (baseUrl.endsWith('/v1') || baseUrl.endsWith('/v1/')) {
+        baseUrl = baseUrl.replaceFirst(RegExp(r'/v1/?$'), '');
+      }
+      
       final requestBody = {
         'prompt': prompt,
         'seconds': seconds,
       };
 
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/v1/videos/$videoId/remix'),
+        Uri.parse('$baseUrl/v1/videos/$videoId/remix'),
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -335,10 +353,10 @@ class VeoVideoService extends ApiServiceBase {
         requestBody['from_task'] = fromTask;
       }
 
-      // 处理 baseUrl：如果以 /v1 结尾，去掉它（避免路径重复）
+      // 智能处理 baseUrl，避免重复 /v1
       var apiBaseUrl = config.baseUrl;
-      if (apiBaseUrl.endsWith('/v1')) {
-        apiBaseUrl = apiBaseUrl.substring(0, apiBaseUrl.length - 3);
+      if (apiBaseUrl.endsWith('/v1') || apiBaseUrl.endsWith('/v1/')) {
+        apiBaseUrl = apiBaseUrl.replaceFirst(RegExp(r'/v1/?$'), '');
       }
 
       final response = await http.post(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'features/home/presentation/home_screen.dart';
 import 'core/logger/log_manager.dart';
 
@@ -61,9 +62,34 @@ void main() async {
   // 初始化日志管理器
   final logManager = LogManager();
   await logManager.loadLogs();
+  
+  // 加载保存路径配置
+  await _loadSavePaths();
+  
   logManager.success('应用启动成功', module: '系统');
 
   runApp(const XingheApp());
+}
+
+/// 启动时加载保存路径
+Future<void> _loadSavePaths() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final imagePath = prefs.getString('image_save_path');
+    final videoPath = prefs.getString('video_save_path');
+
+    if (imagePath != null && imagePath.isNotEmpty) {
+      imageSavePathNotifier.value = imagePath;
+      debugPrint('✅ 加载图片保存路径: $imagePath');
+    }
+
+    if (videoPath != null && videoPath.isNotEmpty) {
+      videoSavePathNotifier.value = videoPath;
+      debugPrint('✅ 加载视频保存路径: $videoPath');
+    }
+  } catch (e) {
+    debugPrint('⚠️ 加载保存路径失败: $e');
+  }
 }
 
 class XingheApp extends StatelessWidget {

@@ -149,6 +149,28 @@ class _SettingsPageState extends State<SettingsPage> {
     await _loadImageConfig();
     await _loadVideoConfig();
     await _loadUploadConfig();
+    await _loadSavePathsConfig();
+  }
+
+  /// 加载保存路径配置
+  Future<void> _loadSavePathsConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final imagePath = prefs.getString('image_save_path');
+      final videoPath = prefs.getString('video_save_path');
+
+      if (imagePath != null && imagePath.isNotEmpty) {
+        imageSavePathNotifier.value = imagePath;
+        _logger.info('加载图片保存路径: $imagePath', module: '设置');
+      }
+
+      if (videoPath != null && videoPath.isNotEmpty) {
+        videoSavePathNotifier.value = videoPath;
+        _logger.info('加载视频保存路径: $videoPath', module: '设置');
+      }
+    } catch (e) {
+      _logger.error('加载保存路径配置失败: $e', module: '设置');
+    }
   }
 
   Future<void> _loadLLMConfig() async {
@@ -360,7 +382,13 @@ class _SettingsPageState extends State<SettingsPage> {
       );
       
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        // 更新内存中的值
         imageSavePathNotifier.value = selectedDirectory;
+        
+        // 持久化保存到 SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('image_save_path', selectedDirectory);
+        
         _logger.success('设置图片保存路径', module: '设置', extra: {'path': selectedDirectory});
         if (mounted) {
           _showMessage('图片保存路径已更新: $selectedDirectory');
@@ -390,7 +418,13 @@ class _SettingsPageState extends State<SettingsPage> {
       );
       
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        // 更新内存中的值
         videoSavePathNotifier.value = selectedDirectory;
+        
+        // 持久化保存到 SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('video_save_path', selectedDirectory);
+        
         _logger.success('设置视频保存路径', module: '设置', extra: {'path': selectedDirectory});
         if (mounted) {
           _showMessage('视频保存路径已更新: $selectedDirectory');

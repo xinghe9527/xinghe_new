@@ -5,6 +5,7 @@ class VideoTask {
   String ratio;
   String quality;
   int batchCount;
+  String seconds;  // 时长选择
   String prompt;
   List<String> referenceImages;
   List<String> generatedVideos;
@@ -16,6 +17,7 @@ class VideoTask {
     this.ratio = '16:9',
     this.quality = '1080P',
     this.batchCount = 1,
+    this.seconds = '10秒',  // 默认10秒
     this.prompt = '',
     List<String>? referenceImages,
     List<String>? generatedVideos,
@@ -38,6 +40,7 @@ class VideoTask {
       ratio: json['ratio'] as String? ?? '16:9',
       quality: json['quality'] as String? ?? '1080P',
       batchCount: json['batchCount'] as int? ?? 1,
+      seconds: json['seconds'] as String? ?? '10秒',
       prompt: json['prompt'] as String? ?? '',
       referenceImages: (json['referenceImages'] as List<dynamic>?)
           ?.map((e) => e as String)
@@ -57,6 +60,7 @@ class VideoTask {
       'ratio': ratio,
       'quality': quality,
       'batchCount': batchCount,
+      'seconds': seconds,
       'prompt': prompt,
       'referenceImages': referenceImages,
       'generatedVideos': generatedVideos,
@@ -69,6 +73,7 @@ class VideoTask {
     String? ratio,
     String? quality,
     int? batchCount,
+    String? seconds,
     String? prompt,
     List<String>? referenceImages,
     List<String>? generatedVideos,
@@ -80,6 +85,7 @@ class VideoTask {
       ratio: ratio ?? this.ratio,
       quality: quality ?? this.quality,
       batchCount: batchCount ?? this.batchCount,
+      seconds: seconds ?? this.seconds,
       prompt: prompt ?? this.prompt,
       referenceImages: referenceImages ?? this.referenceImages,
       generatedVideos: generatedVideos ?? this.generatedVideos,
