@@ -81,6 +81,25 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
+# ==========================================
+# FFmpeg Auto-packaging Configuration
+# ==========================================
+set(FFMPEG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg")
+
+if(EXISTS "${FFMPEG_DIR}/ffmpeg.exe")
+  message(STATUS "Found FFmpeg: ${FFMPEG_DIR}/ffmpeg.exe")
+  
+  # Install FFmpeg to output directory
+  install(FILES "${FFMPEG_DIR}/ffmpeg.exe"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    COMPONENT Runtime)
+  
+  message(STATUS "FFmpeg will be packaged with the application")
+else()
+  message(WARNING "FFmpeg not found at ${FFMPEG_DIR}/ffmpeg.exe")
+  message(WARNING "Run download_ffmpeg.ps1 to download FFmpeg")
+endif()
+
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"

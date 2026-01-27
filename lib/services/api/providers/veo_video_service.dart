@@ -335,8 +335,14 @@ class VeoVideoService extends ApiServiceBase {
         requestBody['from_task'] = fromTask;
       }
 
+      // 处理 baseUrl：如果以 /v1 结尾，去掉它（避免路径重复）
+      var apiBaseUrl = config.baseUrl;
+      if (apiBaseUrl.endsWith('/v1')) {
+        apiBaseUrl = apiBaseUrl.substring(0, apiBaseUrl.length - 3);
+      }
+
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/sora/v1/characters'),
+        Uri.parse('$apiBaseUrl/sora/v1/characters'),
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',

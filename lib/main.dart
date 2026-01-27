@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'features/home/presentation/home_screen.dart';
 import 'core/logger/log_manager.dart';
 
@@ -12,6 +14,26 @@ final ValueNotifier<String> videoSavePathNotifier = ValueNotifier<String>('未�
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 1. 加载环境变量
+  try {
+    await dotenv.load(fileName: ".env");
+    debugPrint('✅ 环境变量加载成功');
+  } catch (e) {
+    debugPrint('⚠️ 环境变量加载失败: $e');
+  }
+  
+  // 2. 初始化 Supabase
+  try {
+    await Supabase.initialize(
+      url: dotenv.env['SUPABASE_URL'] ?? '',
+      anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+    );
+    debugPrint('✅ Supabase 初始化成功');
+  } catch (e) {
+    debugPrint('⚠️ Supabase 初始化失败: $e');
+  }
+  
   await windowManager.ensureInitialized();
 
   WindowOptions windowOptions = const WindowOptions(
