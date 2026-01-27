@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,6 +20,12 @@ class _SettingsPageState extends State<SettingsPage> {
   int _apiSubTabIndex = 0;
   bool _isPickingImagePath = false;
   bool _isPickingVideoPath = false;
+  
+  // 密码可见性状态
+  bool _llmApiKeyVisible = false;
+  bool _imageApiKeyVisible = false;
+  bool _videoApiKeyVisible = false;
+  bool _uploadApiKeyVisible = false;
 
   final List<String> _mainTabs = ['API设置', '风格设置', '保存设置'];
   final List<String> _apiSubTabs = ['LLM模型', '图片模型', '视频模型', '上传设置'];
@@ -830,7 +837,18 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 30),
         _buildFieldLabel('API Key'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_llmApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveLLMConfig),
+        _buildEditableTextField(
+          _llmApiKeyController, 
+          '请输入您的 API 密钥...', 
+          isPassword: true,
+          isVisible: _llmApiKeyVisible,
+          onToggleVisibility: () => setState(() => _llmApiKeyVisible = !_llmApiKeyVisible),
+          onCopy: () async {
+            await Clipboard.setData(ClipboardData(text: _llmApiKeyController.text));
+            _showMessage('API Key 已复制', isError: false);
+          },
+          onSave: _saveLLMConfig,
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
@@ -877,7 +895,18 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 30),
         _buildFieldLabel('API Key'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_imageApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveImageConfig),
+        _buildEditableTextField(
+          _imageApiKeyController, 
+          '请输入您的 API 密钥...', 
+          isPassword: true,
+          isVisible: _imageApiKeyVisible,
+          onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
+          onCopy: () async {
+            await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
+            _showMessage('API Key 已复制', isError: false);
+          },
+          onSave: _saveImageConfig,
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
@@ -924,7 +953,18 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 30),
         _buildFieldLabel('API Key'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_videoApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveVideoConfig),
+        _buildEditableTextField(
+          _videoApiKeyController, 
+          '请输入您的 API 密钥...', 
+          isPassword: true,
+          isVisible: _videoApiKeyVisible,
+          onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
+          onCopy: () async {
+            await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
+            _showMessage('API Key 已复制', isError: false);
+          },
+          onSave: _saveVideoConfig,
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
@@ -971,7 +1011,18 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 30),
         _buildFieldLabel('API Key'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_uploadApiKeyController, '请输入您的 API 密钥...', isPassword: true, onSave: _saveUploadConfig),
+        _buildEditableTextField(
+          _uploadApiKeyController, 
+          '请输入您的 API 密钥...', 
+          isPassword: true,
+          isVisible: _uploadApiKeyVisible,
+          onToggleVisibility: () => setState(() => _uploadApiKeyVisible = !_uploadApiKeyVisible),
+          onCopy: () async {
+            await Clipboard.setData(ClipboardData(text: _uploadApiKeyController.text));
+            _showMessage('API Key 已复制', isError: false);
+          },
+          onSave: _saveUploadConfig,
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
@@ -1064,7 +1115,17 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildEditableTextField(TextEditingController controller, String hint, {bool isPassword = false, VoidCallback? onSave}) {
+  Widget _buildEditableTextField(
+    TextEditingController controller, 
+    String hint, {
+    bool isPassword = false, 
+    bool? isVisible,
+    VoidCallback? onToggleVisibility,
+    VoidCallback? onCopy,
+    VoidCallback? onSave,
+  }) {
+    final shouldObscure = isPassword && (isVisible == null || !isVisible);
+    
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surfaceBackground,
@@ -1073,14 +1134,48 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       child: TextField(
         controller: controller,
-        obscureText: isPassword,
+        obscureText: shouldObscure,
         style: TextStyle(color: AppTheme.textColor, fontSize: 14),
         decoration: InputDecoration(
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           hintText: hint,
           hintStyle: TextStyle(color: AppTheme.subTextColor),
-          suffixIcon: isPassword ? Icon(Icons.visibility_off_rounded, color: AppTheme.subTextColor, size: 18) : null,
+          suffixIcon: isPassword
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 复制按钮
+                    if (onCopy != null)
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: onCopy,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(Icons.copy, color: AppTheme.subTextColor, size: 18),
+                          ),
+                        ),
+                      ),
+                    // 查看/隐藏按钮
+                    if (onToggleVisibility != null)
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: onToggleVisibility,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(
+                              (isVisible ?? false) ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                              color: AppTheme.subTextColor,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                )
+              : null,
         ),
         onChanged: (v) {
           // 可以选择是否在每次输入时自动保存

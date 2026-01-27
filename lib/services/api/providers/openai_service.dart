@@ -279,9 +279,15 @@ class OpenAIService extends ApiServiceBase {
         ...?parameters,
       };
 
+      // 处理 baseUrl：如果以 /v1 结尾，去掉它（避免路径重复）
+      var apiBaseUrl = config.baseUrl;
+      if (apiBaseUrl.endsWith('/v1')) {
+        apiBaseUrl = apiBaseUrl.substring(0, apiBaseUrl.length - 3);
+      }
+
       // 发送请求
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/v1/chat/completions'),
+        Uri.parse('$apiBaseUrl/v1/chat/completions'),
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -581,11 +587,22 @@ class ChatImageChoice {
     final urls = <String>[];
 
     if (content is String) {
-      // 尝试从文本中提取URL（如果API返回的是URL字符串）
-      final urlPattern = RegExp(r'https?://[^\s]+');
-      final matches = urlPattern.allMatches(content);
-      for (final match in matches) {
-        urls.add(match.group(0)!);
+      // 1. 优先提取 Markdown 格式的图片链接：![xxx](url)
+      final markdownPattern = RegExp(r'!\[.*?\]\((https?://[^)]+)\)');
+      final markdownMatches = markdownPattern.allMatches(content);
+      for (final match in markdownMatches) {
+        if (match.group(1) != null) {
+          urls.add(match.group(1)!);
+        }
+      }
+      
+      // 2. 如果没有找到 Markdown 格式，尝试直接提取 URL
+      if (urls.isEmpty) {
+        final urlPattern = RegExp(r'https?://[^\s)]+');
+        final matches = urlPattern.allMatches(content);
+        for (final match in matches) {
+          urls.add(match.group(0)!);
+        }
       }
     } else if (content is List<ChatMessageContent>) {
       for (final item in content) {
