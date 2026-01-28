@@ -101,6 +101,40 @@ class _SettingsPageState extends State<SettingsPage> {
     ],
   };
 
+  // Yunwu（云雾）模型列表
+  final Map<String, List<String>> _yunwuModels = {
+    'llm': [
+      // Gemini 系列（Google）
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+    ],
+    'image': [
+      // Gemini 图像生成系列（Google）
+      'gemini-2.5-flash-image-preview',
+      'gemini-3-pro-image-preview',
+      'gemini-3-pro-image-preview-lite',
+    ],
+    'video': [
+      // Sora 系列（根据 API 文档）
+      'sora-2',        // 支持 duration: 10
+      'sora-2-all',    // 支持 duration: 10, 15
+      'sora-2-pro',    // 支持 duration: 15, 25; size: large (1080p)
+      
+      // VEO2 系列（Google）
+      'veo2', 'veo2-fast', 'veo2-fast-frames', 'veo2-fast-components', 
+      'veo2-pro', 'veo2-pro-components',
+      
+      // VEO3 系列（Google，支持音频）
+      'veo3', 'veo3-fast', 'veo3-fast-frames', 'veo3-frames', 
+      'veo3-pro', 'veo3-pro-frames',
+      
+      // VEO3.1 系列（Google，最新）
+      'veo3.1', 'veo3.1-fast', 'veo3.1-pro', 'veo3.1-components',
+    ],
+  };
+
   final List<Map<String, dynamic>> _styleOptions = [
     {
       'name': '深邃黑',
@@ -261,6 +295,8 @@ class _SettingsPageState extends State<SettingsPage> {
         return 'https://api.openai.com/v1';
       case 'geeknow':
         return 'https://api.geeknow.ai/v1';
+      case 'yunwu':
+        return 'https://yunwu.ai';  // Yunwu API 地址（根据文档）
       case 'azure':
         return 'https://your-resource.openai.azure.com';
       case 'anthropic':
@@ -1114,10 +1150,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildProviderDropdown({required String value, required Function(String) onChanged}) {
-    final providers = ['openai', 'geeknow', 'azure', 'anthropic'];
+    final providers = ['openai', 'geeknow', 'yunwu', 'azure', 'anthropic'];
     final displayNames = {
       'openai': 'OpenAI',
       'geeknow': 'GeekNow',
+      'yunwu': 'Yunwu（云雾）',
       'azure': 'Azure',
       'anthropic': 'Anthropic',
     };
@@ -1219,20 +1256,26 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// GeekNow 智能模型选择器（支持搜索）
+  /// 智能模型选择器（支持 GeekNow 和 Yunwu）
   Widget _buildModelSelector({
     required String provider,
     required String modelType,
     required TextEditingController controller,
     required String hint,
   }) {
-    // 如果不是 GeekNow，使用普通文本输入
-    if (provider != 'geeknow') {
+    // 根据服务商选择对应的模型列表
+    List<String> models = [];
+    
+    if (provider == 'geeknow') {
+      models = _geekNowModels[modelType] ?? [];
+    } else if (provider == 'yunwu') {
+      models = _yunwuModels[modelType] ?? [];
+    } else {
+      // 其他服务商使用普通文本输入
       return _buildEditableTextField(controller, hint);
     }
 
-    // GeekNow 使用下拉选择器
-    final models = _geekNowModels[modelType] ?? [];
+    // GeekNow 和 Yunwu 使用下拉选择器
     final currentModel = controller.text.isEmpty ? null : controller.text;
 
     return Container(

@@ -3,6 +3,7 @@ import 'base/api_config.dart';
 import 'providers/openai_service.dart';
 import 'providers/custom_service.dart';
 import 'providers/gemini_image_service.dart';
+import 'providers/gemini_pro_image_service.dart';
 import 'providers/midjourney_service.dart';
 import 'providers/veo_video_service.dart';
 
@@ -25,6 +26,11 @@ class ApiFactory {
       case 'gemini':
       case 'gemini-image':
         return GeminiImageService(config);
+      
+      case 'gemini-3-pro-image':
+      case 'gemini-pro-image':
+      case 'yunwu':
+        return GeminiProImageService(config);
       
       case 'midjourney':
       case 'mj':
@@ -68,6 +74,8 @@ class ApiFactory {
     return [
       'openai',
       'gemini-image',
+      'gemini-3-pro-image',
+      'yunwu',
       'midjourney',
       'veo-video',
       'anthropic',
@@ -84,6 +92,10 @@ class ApiFactory {
         return true; // 已完全实现
       case 'gemini':
       case 'gemini-image':
+        return true; // 已完全实现
+      case 'gemini-3-pro-image':
+      case 'gemini-pro-image':
+      case 'yunwu':
         return true; // 已完全实现
       case 'midjourney':
       case 'mj':

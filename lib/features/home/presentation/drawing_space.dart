@@ -35,14 +35,57 @@ class DrawingSpace extends StatefulWidget {
   State<DrawingSpace> createState() => _DrawingSpaceState();
 }
 
-class _DrawingSpaceState extends State<DrawingSpace> {
+class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver {
   final List<DrawingTask> _tasks = [DrawingTask.create()];
   final LogManager _logger = LogManager();
+  String _lastKnownProvider = '';  // 记录上次加载的服务商
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadTasks());
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadTasks();
+      _checkProviderChange();  // 检查服务商变化
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 当应用从后台恢复时，检查服务商是否变化
+    if (state == AppLifecycleState.resumed) {
+      _checkProviderChange();
+    }
+  }
+
+  /// 检查图片服务商是否变化，如果变化则刷新所有任务卡片
+  Future<void> _checkProviderChange() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final currentProvider = prefs.getString('image_provider') ?? 'openai';
+      
+      if (_lastKnownProvider.isNotEmpty && _lastKnownProvider != currentProvider) {
+        _logger.info('检测到图片服务商变化', module: '绘图空间', extra: {
+          '旧服务商': _lastKnownProvider,
+          '新服务商': currentProvider,
+        });
+        
+        // 强制刷新 UI，让所有 TaskCard 重新加载
+        if (mounted) {
+          setState(() {});
+        }
+      }
+      
+      _lastKnownProvider = currentProvider;
+    } catch (e) {
+      _logger.error('检查服务商变化失败: $e', module: '绘图空间');
+    }
   }
 
   Future<void> _loadTasks() async {
@@ -280,7 +323,7 @@ class TaskCard extends StatefulWidget {
   State<TaskCard> createState() => _TaskCardState();
 }
 
-class _TaskCardState extends State<TaskCard> {
+class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
   late final TextEditingController _controller;
   List<String> _models = ['DALL-E 3', 'Midjourney', 'Stable Diffusion', 'Flux'];
   final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];
@@ -290,10 +333,44 @@ class _TaskCardState extends State<TaskCard> {
   String _imageProvider = 'openai';  // 当前图片服务商
 
   @override
+  bool get wantKeepAlive => true;  // 保持状态
+
+  @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.task.prompt);
+    WidgetsBinding.instance.addObserver(this);  // 添加生命周期监听
     _loadImageProvider();  // 加载服务商和模型列表
+  }
+
+  @override
+  void didUpdateWidget(TaskCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Widget 更新时，重新检查服务商配置
+    _checkAndReloadProvider();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 当应用从后台恢复时，重新加载服务商配置
+    if (state == AppLifecycleState.resumed) {
+      _loadImageProvider();
+    }
+  }
+
+  /// 检查并重新加载服务商配置（如果需要）
+  Future<void> _checkAndReloadProvider() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('image_provider') ?? 'openai';
+      
+      // 如果服务商变化了，重新加载模型列表
+      if (provider != _imageProvider) {
+        await _loadImageProvider();
+      }
+    } catch (e) {
+      _logger.error('检查服务商配置失败: $e', module: '绘图空间');
+    }
   }
 
   /// 从设置加载图片服务商，并更新可用模型列表
@@ -302,14 +379,23 @@ class _TaskCardState extends State<TaskCard> {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
       
+      _logger.info('加载图片服务商配置', module: '绘图空间', extra: {'provider': provider});
+      
       if (mounted) {
         setState(() {
           _imageProvider = provider;
           _models = _getModelsForProvider(provider);
           
-          // 如果当前任务的模型不在新列表中，设置为列表第一个
+          // 如果当前任务的模型不在新列表中，设置为列表第一个并更新任务
           if (!_models.contains(widget.task.model)) {
-            widget.task.model = _models.first;
+            final newModel = _models.first;
+            _logger.warning(
+              '当前模型不在服务商模型列表中，已切换', 
+              module: '绘图空间',
+              extra: {'旧模型': widget.task.model, '新模型': newModel, '服务商': provider}
+            );
+            // 立即更新任务的模型
+            widget.onUpdate(widget.task.copyWith(model: newModel));
           }
         });
       }
@@ -323,6 +409,13 @@ class _TaskCardState extends State<TaskCard> {
     switch (provider.toLowerCase()) {
       case 'geeknow':
         return GeekNowImageModels.models;
+      case 'yunwu':
+        // Yunwu（云雾）图片模型列表
+        return [
+          'gemini-2.5-flash-image-preview',
+          'gemini-3-pro-image-preview',
+          'gemini-3-pro-image-preview-lite',
+        ];
       case 'openai':
         return ['gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2'];
       case 'gemini':
@@ -336,6 +429,7 @@ class _TaskCardState extends State<TaskCard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);  // 移除监听
     _controller.dispose();
     super.dispose();
   }
@@ -374,7 +468,6 @@ class _TaskCardState extends State<TaskCard> {
     
     try {
       // 从设置中读取保存路径
-      final prefs = await SharedPreferences.getInstance();
       final savePath = imageSavePathNotifier.value;
       
       _logger.info('图片保存路径', module: '绘图空间', extra: {
@@ -834,6 +927,7 @@ class _TaskCardState extends State<TaskCard> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);  // 必须调用，因为使用了 AutomaticKeepAliveClientMixin
     return Container(
       height: 400,
       decoration: BoxDecoration(
