@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
+import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/features/home/domain/video_task.dart';
 import 'package:http/http.dart' as http;
@@ -168,8 +169,6 @@ class _VideoSpaceState extends State<VideoSpace> {
         children: [
           Text('视频空间', style: TextStyle(color: AppTheme.textColor, fontSize: 18, fontWeight: FontWeight.bold)),
           const Spacer(),
-          _toolButton(Icons.video_library_outlined, '全局视频库', () {}),
-          const SizedBox(width: 12),
           _toolButton(Icons.delete_sweep_rounded, '清空全部', () {
             if (_tasks.isEmpty) return;
             showDialog(
@@ -194,7 +193,7 @@ class _VideoSpaceState extends State<VideoSpace> {
                 ],
               ),
             );
-          }, color: Colors.red),
+          }),
           const SizedBox(width: 12),
           _newTaskButton(),
         ],
@@ -356,6 +355,32 @@ class _TaskCardState extends State<TaskCard> {
   }
 
   void _update(VideoTask task) => widget.onUpdate(task);
+
+  /// 显示任务菜单
+  void _showTaskMenu(BuildContext context) {
+    showMenu(
+      context: context,
+      position: const RelativeRect.fromLTRB(1000, 80, 20, 0),  // 右上角位置
+      color: AppTheme.surfaceBackground,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      items: [
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              const Icon(Icons.delete_outline, color: Colors.red, size: 18),
+              const SizedBox(width: 8),
+              Text('删除', style: TextStyle(color: Colors.red, fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'delete') {
+        widget.onDelete();
+      }
+    });
+  }
 
   /// 真实的视频生成
   Future<void> _generateVideos() async {
@@ -787,11 +812,8 @@ class _TaskCardState extends State<TaskCard> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // 视频缩略图（暂时用图标代替）
-                    Container(
-                      color: Colors.black87,
-                      child: const Icon(Icons.videocam, color: Colors.white54, size: 48),
-                    ),
+                    // 视频缩略图（优先显示首帧）
+                    _buildVideoThumbnail(videoPath),
                     // 播放按钮
                     Center(
                       child: Container(
@@ -830,6 +852,42 @@ class _TaskCardState extends State<TaskCard> {
         ),
       ],
     );
+  }
+
+  /// 构建视频缩略图
+  Widget _buildVideoThumbnail(String videoPath) {
+    final isLocalFile = !videoPath.startsWith('http');
+    
+    if (isLocalFile) {
+      // 本地视频：检查是否有对应的首帧图片
+      final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+      final thumbnailFile = File(thumbnailPath);
+      
+      return FutureBuilder<bool>(
+        future: thumbnailFile.exists(),
+        builder: (context, snapshot) {
+          if (snapshot.data == true) {
+            // 显示首帧图片
+            return Image.file(
+              thumbnailFile,
+              fit: BoxFit.cover,
+            );
+          } else {
+            // 没有首帧，显示默认图标
+            return Container(
+              color: Colors.black87,
+              child: const Icon(Icons.videocam, color: Colors.white54, size: 48),
+            );
+          }
+        },
+      );
+    } else {
+      // 在线 URL：显示默认图标
+      return Container(
+        color: Colors.black87,
+        child: const Icon(Icons.videocam, color: Colors.white54, size: 48),
+      );
+    }
   }
 
   /// 删除视频
@@ -1039,6 +1097,24 @@ class _TaskCardState extends State<TaskCard> {
           'path': filePath,
           'size': '${(response.bodyBytes.length / 1024 / 1024).toStringAsFixed(2)} MB',
         });
+        
+        // 提取视频首帧作为缩略图
+        try {
+          final thumbnailPath = filePath.replaceAll('.mp4', '.jpg');
+          final ffmpeg = FFmpegService();
+          final success = await ffmpeg.extractFrame(
+            videoPath: filePath,
+            outputPath: thumbnailPath,
+          );
+          
+          if (success) {
+            _logger.success('视频首帧已提取', module: '视频空间', extra: {
+              'thumbnail': thumbnailPath,
+            });
+          }
+        } catch (e) {
+          _logger.warning('提取首帧失败: $e', module: '视频空间');
+        }
         
         return filePath;
       } else {
@@ -1438,16 +1514,27 @@ class _TaskCardState extends State<TaskCard> {
                 ),
         ),
         Positioned(
-          top: 12,
-          right: 12,
+          top: -2,  // 上移到卡片边缘外
+          right: 6,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
-              onTap: widget.onDelete,
+              onTap: () => _showTaskMenu(context),
               child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.red.withOpacity(0.3))),
-                child: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceBackground.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: AppTheme.dividerColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.15),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
               ),
             ),
           ),

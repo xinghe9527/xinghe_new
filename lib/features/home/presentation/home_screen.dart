@@ -5,6 +5,7 @@ import 'drawing_space.dart';
 import 'video_space.dart';
 import 'asset_library.dart';
 import 'system_log.dart';
+import 'widgets/creation_space.dart';
 import 'package:xinghe_new/main.dart'; // 引入全局 themeNotifier 和 AppTheme
 
 class HomeScreen extends StatefulWidget {
@@ -15,7 +16,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 1; // 默认选中绘图空间
+  int _selectedIndex = 0; // 默认选中创作空间
   bool _showSettings = false; // 控制是否显示设置页面
 
   final List<String> _menuItems = ['创作空间', '绘图空间', '视频空间', '素材库', '系统日志'];
@@ -185,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildContentArea() {
     switch (_selectedIndex) {
       case 0: // 创作空间
-        return _buildPlaceholder('创作空间');
+        return const CreationSpace();
       case 1: // 绘图空间
         return const DrawingSpace();
       case 2: // 视频空间

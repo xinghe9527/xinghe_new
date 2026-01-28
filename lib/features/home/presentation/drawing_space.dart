@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -153,8 +154,6 @@ class _DrawingSpaceState extends State<DrawingSpace> {
         children: [
           Text('绘图空间', style: TextStyle(color: AppTheme.textColor, fontSize: 18, fontWeight: FontWeight.bold)),
           const Spacer(),
-          _toolButton(Icons.photo_library_outlined, '全局图库', () {}),
-          const SizedBox(width: 12),
           _toolButton(Icons.delete_sweep_rounded, '清空全部', () {
             if (_tasks.isEmpty) return;
             showDialog(
@@ -179,7 +178,7 @@ class _DrawingSpaceState extends State<DrawingSpace> {
                 ],
               ),
             );
-          }, color: Colors.red),
+          }),
           const SizedBox(width: 12),
           _newTaskButton(),
         ],
@@ -343,6 +342,32 @@ class _TaskCardState extends State<TaskCard> {
 
   void _update(DrawingTask task) => widget.onUpdate(task);
 
+  /// 显示任务菜单
+  void _showTaskMenu(BuildContext context) {
+    showMenu(
+      context: context,
+      position: const RelativeRect.fromLTRB(1000, 80, 20, 0),  // 右上角位置
+      color: AppTheme.surfaceBackground,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      items: [
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              const Icon(Icons.delete_outline, color: Colors.red, size: 18),
+              const SizedBox(width: 8),
+              Text('删除', style: TextStyle(color: Colors.red, fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'delete') {
+        widget.onDelete();
+      }
+    });
+  }
+
   /// 下载并保存图片到本地
   Future<List<String>> _downloadAndSaveImages(List<String> imageUrls) async {
     final savedPaths = <String>[];
@@ -367,28 +392,47 @@ class _TaskCardState extends State<TaskCard> {
         await saveDir.create(recursive: true);
       }
       
-      // 下载并保存每张图片
+      // 下载并保存每张图片（带重试）
       for (var i = 0; i < imageUrls.length; i++) {
         try {
           final url = imageUrls[i];
-          final response = await http.get(Uri.parse(url));
+          String? savedPath;
           
-          if (response.statusCode == 200) {
-            final timestamp = DateTime.now().millisecondsSinceEpoch;
-            final fileName = 'image_${timestamp}_$i.png';
-            final filePath = path.join(savePath, fileName);
-            
-            final file = File(filePath);
-            await file.writeAsBytes(response.bodyBytes);
-            
-            savedPaths.add(filePath);
-            _logger.success('图片已保存', module: '绘图空间', extra: {
-              'path': filePath,
-            });
-          } else {
-            _logger.error('下载图片失败: HTTP ${response.statusCode}', module: '绘图空间');
-            savedPaths.add(url);  // 保存失败，使用在线 URL
+          // 重试最多3次
+          for (var retry = 0; retry < 3; retry++) {
+            try {
+              final response = await http.get(
+                Uri.parse(url),
+                headers: {'Connection': 'keep-alive'},
+              ).timeout(const Duration(seconds: 30));
+              
+              if (response.statusCode == 200) {
+                final timestamp = DateTime.now().millisecondsSinceEpoch;
+                final fileName = 'image_${timestamp}_$i.png';
+                final filePath = path.join(savePath, fileName);
+                
+                final file = File(filePath);
+                await file.writeAsBytes(response.bodyBytes);
+                
+                savedPath = filePath;
+                _logger.success('图片已保存', module: '绘图空间', extra: {
+                  'path': filePath,
+                  'retry': retry,
+                });
+                break;  // 成功，跳出重试
+              } else {
+                _logger.warning('下载失败 (重试 $retry/3): HTTP ${response.statusCode}', module: '绘图空间');
+              }
+            } catch (e) {
+              _logger.warning('下载异常 (重试 $retry/3): $e', module: '绘图空间');
+              if (retry < 2) {
+                await Future.delayed(Duration(seconds: retry + 1));  // 等待1/2/3秒后重试
+              }
+            }
           }
+          
+          savedPaths.add(savedPath ?? url);  // 使用本地路径或在线 URL
+          
         } catch (e) {
           _logger.error('保存图片失败: $e', module: '绘图空间');
           savedPaths.add(imageUrls[i]);  // 保存失败，使用在线 URL
@@ -446,11 +490,32 @@ class _TaskCardState extends State<TaskCard> {
       // 创建服务
       final service = OpenAIService(config);
 
+      // 📤 详细记录发送给 API 的所有参数
+      _logger.info('📤 发送给 API 的完整参数', module: '绘图空间', extra: {
+        '🌐 API Provider': provider,
+        '🔗 API BaseUrl': baseUrl,
+        '📝 提示词': widget.task.prompt,
+        '🤖 模型': widget.task.model,
+        '📐 比例 (ratio/size)': widget.task.ratio,
+        '🎨 质量 (quality)': widget.task.quality,
+        '🔢 批量数量': batchCount,
+        '🖼️ 参考图片数量': widget.task.referenceImages.length,
+        '📁 参考图片路径': widget.task.referenceImages.isEmpty 
+            ? '无参考图片（文生图）' 
+            : widget.task.referenceImages.join(' | '),
+      });
+
       // 批量生成：多次调用 API
       final allImageUrls = <String>[];
       
       for (int i = 0; i < batchCount; i++) {
-        _logger.info('生成第 ${i + 1}/$batchCount 张', module: '绘图空间');
+        _logger.info('🎯 生成第 ${i + 1}/$batchCount 张', module: '绘图空间');
+        
+        _logger.info('📦 单次 API 请求 parameters', module: '绘图空间', extra: {
+          'n': 1,
+          'size': widget.task.ratio,
+          'quality': widget.task.quality,
+        });
         
         // 调用图片生成 API（每次生成1张）
         final result = await service.generateImagesByChat(
@@ -459,13 +524,25 @@ class _TaskCardState extends State<TaskCard> {
           referenceImagePaths: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
           parameters: {
             'n': 1,  // 每次生成1张
+            'size': widget.task.ratio,  // 传递比例参数
+            'quality': widget.task.quality,  // 传递质量参数
           },
         );
 
         if (result.isSuccess && result.data != null && result.data!.imageUrls.isNotEmpty) {
           allImageUrls.addAll(result.data!.imageUrls);
+          _logger.success('第 ${i + 1} 张生成成功', module: '绘图空间', extra: {
+            'urls': result.data!.imageUrls.join(', '),
+          });
         } else {
-          _logger.warning('第 ${i + 1} 张生成失败', module: '绘图空间');
+          // 📝 详细记录失败原因
+          _logger.error('第 ${i + 1} 张生成失败', module: '绘图空间', extra: {
+            'isSuccess': result.isSuccess,
+            'hasData': result.data != null,
+            'imageUrlsCount': result.data?.imageUrls.length ?? 0,
+            'errorMessage': result.errorMessage ?? '无错误信息',
+            'statusCode': result.statusCode,
+          });
         }
         
         // 避免请求过快
@@ -498,8 +575,10 @@ class _TaskCardState extends State<TaskCard> {
         // 添加保存的本地路径
         currentImages.addAll(savedPaths);
         
+        // 确保状态更新为 completed
         _update(widget.task.copyWith(
           generatedImages: currentImages,
+          status: TaskStatus.completed,
         ));
       } else {
         throw Exception('批量生成失败：没有生成任何图片');
@@ -518,8 +597,12 @@ class _TaskCardState extends State<TaskCard> {
         }
       }
       
+      // 检查是否还有"生成中"的占位符
+      final hasLoadingPlaceholder = currentImages.any((img) => img.startsWith('loading_'));
+      
       _update(widget.task.copyWith(
         generatedImages: currentImages,
+        status: hasLoadingPlaceholder ? TaskStatus.generating : TaskStatus.completed,
       ));
     }
   }
@@ -590,15 +673,16 @@ class _TaskCardState extends State<TaskCard> {
     // 真实图片（支持点击放大和右键）
     final imageFile = File(imageUrl);
     final isLocalFile = imageFile.existsSync();
+    final isOnlineUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
     
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      child:       GestureDetector(
+      child: GestureDetector(
         // 左键点击：放大查看
         onTap: () => _showImagePreviewNew(imageUrl, isLocalFile),
-        // 右键：显示菜单
-        onSecondaryTapDown: isLocalFile 
-            ? (details) => _showContextMenu(context, details.globalPosition, imageUrl)
+        // 右键：显示菜单（本地文件和在线图片都支持）
+        onSecondaryTapDown: (isLocalFile || isOnlineUrl)
+            ? (details) => _showContextMenu(context, details.globalPosition, imageUrl, isLocalFile)
             : null,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -622,8 +706,21 @@ class _TaskCardState extends State<TaskCard> {
   void _deleteImage(String imageUrl) {
     final currentImages = List<String>.from(widget.task.generatedImages);
     currentImages.remove(imageUrl);
-    _update(widget.task.copyWith(generatedImages: currentImages));
-    _logger.info('删除图片', module: '绘图空间');
+    
+    // 检查是否还有"生成中"的占位符
+    final hasLoadingPlaceholder = currentImages.any((img) => img.startsWith('loading_'));
+    final newStatus = hasLoadingPlaceholder ? TaskStatus.generating : TaskStatus.completed;
+    
+    _update(widget.task.copyWith(
+      generatedImages: currentImages,
+      status: newStatus,
+    ));
+    
+    _logger.info('删除图片', module: '绘图空间', extra: {
+      'remainingImages': currentImages.length,
+      'hasLoading': hasLoadingPlaceholder,
+      'newStatus': newStatus.toString(),
+    });
   }
 
   // 显示图片预览（放大）- 新版本支持本地文件
@@ -669,7 +766,39 @@ class _TaskCardState extends State<TaskCard> {
   }
 
   // 显示右键菜单
-  void _showContextMenu(BuildContext context, Offset position, String filePath) {
+  void _showContextMenu(BuildContext context, Offset position, String imageUrl, bool isLocalFile) {
+    final menuItems = <PopupMenuEntry<String>>[];
+    
+    if (isLocalFile) {
+      // 本地文件：显示"查看文件夹"
+      menuItems.add(
+        PopupMenuItem<String>(
+          value: 'open_folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 18, color: AppTheme.textColor),
+              const SizedBox(width: 12),
+              Text('查看文件夹', style: TextStyle(color: AppTheme.textColor)),
+            ],
+          ),
+        ),
+      );
+    } else {
+      // 在线图片：显示"复制链接"
+      menuItems.add(
+        PopupMenuItem<String>(
+          value: 'copy_url',
+          child: Row(
+            children: [
+              Icon(Icons.link, size: 18, color: AppTheme.textColor),
+              const SizedBox(width: 12),
+              Text('复制图片链接', style: TextStyle(color: AppTheme.textColor)),
+            ],
+          ),
+        ),
+      );
+    }
+    
     showMenu(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -678,19 +807,15 @@ class _TaskCardState extends State<TaskCard> {
         position.dx + 1,
         position.dy + 1,
       ),
-      items: [
-        PopupMenuItem(
-          child: Row(
-            children: [
-              Icon(Icons.folder_open, size: 18, color: AppTheme.textColor),
-              const SizedBox(width: 12),
-              Text('查看文件夹', style: TextStyle(color: AppTheme.textColor)),
-            ],
-          ),
-          onTap: () => _openFileLocation(filePath),
-        ),
-      ],
-    );
+      items: menuItems,
+    ).then((value) {
+      if (value == 'open_folder') {
+        _openFileLocation(imageUrl);
+      } else if (value == 'copy_url') {
+        Clipboard.setData(ClipboardData(text: imageUrl));
+        _logger.success('图片链接已复制', module: '绘图空间');
+      }
+    });
   }
 
   // 打开文件所在文件夹
@@ -1101,38 +1226,41 @@ class _TaskCardState extends State<TaskCard> {
                       Text('等待生成', style: TextStyle(color: AppTheme.subTextColor, fontSize: 14)),
                     ]))
                   : GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.0),
-                  itemCount: widget.task.generatedImages.length > 4 ? 4 : widget.task.generatedImages.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2, 
+                    crossAxisSpacing: 12, 
+                    mainAxisSpacing: 12, 
+                    childAspectRatio: 1.0,
+                  ),
+                  itemCount: widget.task.generatedImages.length,  // 显示所有图片
                   itemBuilder: (context, index) {
-                    final hasMore = index == 3 && widget.task.generatedImages.length > 4;
                     final imageUrl = widget.task.generatedImages[index];
-                    
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: AppTheme.inputBackground, 
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: hasMore
-                          ? Container(
-                              decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(8)),
-                              child: Center(child: Text('+${widget.task.generatedImages.length - 3}', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold))),
-                            )
-                          : _buildImageItem(imageUrl),
-                    );
+                    return _buildImageItem(imageUrl);
                   },
                 ),
         ),
         Positioned(
-          top: 12,
-          right: 12,
+          top: -2,  // 上移到卡片边缘外
+          right: 6,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
-              onTap: widget.onDelete,
+              onTap: () => _showTaskMenu(context),
               child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.red.withOpacity(0.3))),
-                child: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceBackground.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: AppTheme.dividerColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.15),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
               ),
             ),
           ),

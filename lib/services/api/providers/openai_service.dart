@@ -250,14 +250,16 @@ class OpenAIService extends ApiServiceBase {
     }
   }
 
-  /// OpenAI对话格式生图
-  /// 使用 /v1/chat/completions 端点，支持文生图和图生图
+  /// OpenAI/Gemini 对话格式生图
+  /// 支持两种 API 格式：
+  /// 1. Gemini 官方格式: /v1beta/models/{model}:generateContent
+  /// 2. OpenAI 格式: /v1/chat/completions
   /// 
   /// [prompt] - 文本提示词
-  /// [model] - 模型名称，如 "gpt-4o", "dall-e-3" 等
+  /// [model] - 模型名称，如 "gemini-2.5-flash-image", "gpt-4o" 等
   /// [referenceImagePaths] - 参考图片的本地路径列表（用于图生图）
   /// [messages] - 自定义消息列表（如果提供，将覆盖 prompt 和 referenceImagePaths）
-  /// [parameters] - 其他参数，如 temperature, top_p, n, max_tokens 等
+  /// [parameters] - 其他参数，如 temperature, top_p, n, max_tokens, size, quality 等
   Future<ApiResponse<ChatImageResponse>> generateImagesByChat({
     String? prompt,
     String? model,
@@ -266,18 +268,8 @@ class OpenAIService extends ApiServiceBase {
     Map<String, dynamic>? parameters,
   }) async {
     try {
-      // 构建消息列表
-      final messageList = messages ?? await _buildChatMessages(
-        prompt: prompt,
-        referenceImagePaths: referenceImagePaths,
-      );
-
-      // 构建请求体
-      final requestBody = {
-        'model': model ?? config.model ?? 'gpt-4o',
-        'messages': messageList.map((msg) => msg.toJson()).toList(),
-        ...?parameters,
-      };
+      final useModel = model ?? config.model ?? 'gpt-4o';
+      final isGemini = useModel.toLowerCase().contains('gemini');
 
       // 处理 baseUrl：如果以 /v1 结尾，去掉它（避免路径重复）
       var apiBaseUrl = config.baseUrl;
@@ -285,9 +277,122 @@ class OpenAIService extends ApiServiceBase {
         apiBaseUrl = apiBaseUrl.substring(0, apiBaseUrl.length - 3);
       }
 
+      // 根据模型类型选择不同的请求格式
+      late final Map<String, dynamic> requestBody;
+      late final String apiUrl;
+
+      if (isGemini) {
+        // ===== Gemini 官方格式 =====
+        // 构建 Gemini contents (parts)
+        final parts = <Map<String, dynamic>>[];
+        
+        // 1. 添加参考图片（如果有）
+        if (referenceImagePaths != null && referenceImagePaths.isNotEmpty) {
+          for (final imagePath in referenceImagePaths) {
+            final imageBytes = await File(imagePath).readAsBytes();
+            final base64Image = base64Encode(imageBytes);
+            final extension = imagePath.split('.').last.toLowerCase();
+            final mimeType = _getMimeType(extension);
+
+            parts.add({
+              'inline_data': {
+                'mime_type': mimeType,
+                'data': base64Image,
+              }
+            });
+          }
+        }
+
+        // 2. 添加文本提示词
+        if (prompt != null && prompt.isNotEmpty) {
+          parts.add({'text': prompt});
+        }
+
+        // 3. 构建 generationConfig
+        final generationConfig = <String, dynamic>{
+          'responseModalities': ['TEXT', 'IMAGE'],
+        };
+
+        // 从 parameters 中提取 aspectRatio 和 imageSize
+        // 确保直接使用原始值，符合 Gemini 官方文档
+        final aspectRatio = parameters?['size'] ?? '16:9';  // UI 传入的 ratio，如 "16:9"
+        final imageSize = parameters?['quality'] ?? '1K';   // UI 传入的 quality，如 "1K", "2K", "4K"
+
+        generationConfig['imageConfig'] = {
+          'aspectRatio': aspectRatio,    // 直接使用，如 "16:9", "9:16", "1:1"
+          'imageSize': imageSize,        // 直接使用，如 "1K", "2K", "4K"
+        };
+
+        requestBody = {
+          'contents': [
+            {
+              'role': 'user',
+              'parts': parts,
+            }
+          ],
+          'generationConfig': generationConfig,
+        };
+
+        apiUrl = '$apiBaseUrl/v1beta/models/$useModel:generateContent';
+
+        // 📝 记录 Gemini 请求
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('📤 Gemini 官方 API 请求详情');
+        print('🤖 模型: $useModel');
+        print('   支持的模型: gemini-2.5-flash-image, gemini-3-pro-image-preview, gemini-3-pro-image-preview-lite');
+        print('🔗 URL: $apiUrl');
+        print('📦 Request Body:');
+        print('   contents[0].parts: ${parts.length} 项');
+        if (referenceImagePaths != null && referenceImagePaths.isNotEmpty) {
+          print('   - 🖼️ 参考图片: ${referenceImagePaths.length} 张');
+        }
+        print('   - 📝 文本提示: $prompt');
+        print('   generationConfig:');
+        print('     - responseModalities: [TEXT, IMAGE]');
+        print('     - imageConfig:');
+        print('       • aspectRatio: $aspectRatio (从 parameters[\'size\'] 读取)');
+        print('       • imageSize: $imageSize (从 parameters[\'quality\'] 读取，支持: 1K/2K/4K)');
+        print('');
+        print('📄 完整 JSON (用于调试):');
+        print(jsonEncode(requestBody));
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      } else {
+        // ===== OpenAI 格式 =====
+        final messageList = messages ?? await _buildChatMessages(
+          prompt: prompt,
+          referenceImagePaths: referenceImagePaths,
+        );
+
+        requestBody = {
+          'model': useModel,
+          'messages': messageList.map((msg) => msg.toJson()).toList(),
+          ...?parameters,
+        };
+
+        apiUrl = '$apiBaseUrl/v1/chat/completions';
+
+        // 📝 记录 OpenAI 请求
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('📤 OpenAI API 请求详情');
+        print('🔗 URL: $apiUrl');
+        print('📦 Request Body:');
+        print('   model: $useModel');
+        print('   messages: ${messageList.length} 条消息');
+        if (parameters != null && parameters.isNotEmpty) {
+          print('🎨 额外参数:');
+          parameters.forEach((key, value) {
+            print('   $key: $value');
+          });
+        }
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      }
+
       // 发送请求
+      print('🌐 正在发送 HTTP 请求...');
+      print('🔑 API Key: ${config.apiKey.substring(0, 10)}...');
+      
       final response = await http.post(
-        Uri.parse('$apiBaseUrl/v1/chat/completions'),
+        Uri.parse(apiUrl),
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -295,20 +400,209 @@ class OpenAIService extends ApiServiceBase {
         body: jsonEncode(requestBody),
       );
 
+      // 📥 记录 API 响应
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('📥 API 响应');
+      print('📊 Status Code: ${response.statusCode}');
+      print('📄 Response Length: ${response.body.length} 字符');
+      
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return ApiResponse.success(
-          ChatImageResponse.fromJson(data),
-          statusCode: 200,
-        );
+        
+        print('✅ 响应成功');
+        print('📦 Response Data (原始):');
+        print(jsonEncode(data));  // 打印完整 JSON
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        
+        // 根据格式解析响应
+        if (isGemini) {
+          return _parseGeminiResponse(data);
+        } else {
+          return ApiResponse.success(
+            ChatImageResponse.fromJson(data),
+            statusCode: 200,
+          );
+        }
       } else {
+        print('❌ 响应失败');
+        print('📄 Response Body: ${response.body}');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        
         return ApiResponse.failure(
           '图像生成失败: ${response.statusCode} - ${response.body}',
           statusCode: response.statusCode,
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('❌ 图像生成异常！');
+      print('错误: $e');
+      print('堆栈: $stackTrace');
       return ApiResponse.failure('图像生成错误: $e');
+    }
+  }
+
+  /// 解析 Gemini API 响应
+  ApiResponse<ChatImageResponse> _parseGeminiResponse(Map<String, dynamic> data) {
+    try {
+      print('🔍 开始解析 Gemini 响应...');
+      print('📊 Response 数据结构:');
+      print('   - candidates 数量: ${(data['candidates'] as List?)?.length ?? 0}');
+      print('   - responseId: ${data['responseId']}');
+      print('   - modelVersion: ${data['modelVersion']}');
+
+      // Gemini 响应格式示例：
+      // {
+      //   "candidates": [
+      //     {
+      //       "content": {
+      //         "role": "assistant",
+      //         "parts": [
+      //           {
+      //             "inlineData": {
+      //               "mimeType": "image/jpeg",
+      //               "data": "base64..."
+      //             }
+      //           }
+      //         ]
+      //       },
+      //       "finishReason": "STOP"
+      //     }
+      //   ],
+      //   "responseId": "...",
+      //   ...
+      // }
+
+      // 转换为 OpenAI 兼容格式
+      final choices = <Map<String, dynamic>>[];
+      final candidates = data['candidates'] as List?;
+      
+      print('🔍 candidates: ${candidates != null ? "存在" : "null"}');
+
+      if (candidates != null && candidates.isNotEmpty) {
+        print('📦 遍历 ${candidates.length} 个 candidates...');
+        
+        for (var i = 0; i < candidates.length; i++) {
+          final candidate = candidates[i] as Map<String, dynamic>;
+          final content = candidate['content'] as Map<String, dynamic>?;
+          final parts = content?['parts'] as List?;
+
+          print('   Candidate $i:');
+          print('     - content: ${content != null ? "存在" : "null"}');
+          print('     - parts 数量: ${parts?.length ?? 0}');
+
+          if (parts != null && parts.isNotEmpty) {
+            // 查找图片数据（支持两种格式）
+            String? imageContent;
+            
+            for (var j = 0; j < parts.length; j++) {
+              final part = parts[j];
+              print('       Part $j 类型: ${part.runtimeType}');
+              
+              if (part is Map<String, dynamic>) {
+                print('       Part $j 包含的 keys: ${part.keys.join(", ")}');
+                
+                // 格式1: inlineData (base64 图片数据)
+                if (part.containsKey('inlineData')) {
+                  final inlineData = part['inlineData'] as Map<String, dynamic>;
+                  final imageData = inlineData['data'] as String?;
+                  if (imageData != null) {
+                    imageContent = 'data:image/jpeg;base64,$imageData';
+                    print('       ✅ 找到 inlineData 图片！长度: ${imageData.length} 字符');
+                    break;
+                  }
+                }
+                
+                // 格式2: text (Markdown 或 URL 格式的图片链接)
+                if (part.containsKey('text')) {
+                  final textContent = part['text'] as String?;
+                  if (textContent != null) {
+                    print('       📝 text 内容: $textContent');
+                    
+                    // 提取 Markdown 格式：![image](url)
+                    final markdownPattern = RegExp(r'!\[.*?\]\((https?://[^)]+)\)');
+                    final markdownMatch = markdownPattern.firstMatch(textContent);
+                    if (markdownMatch != null && markdownMatch.group(1) != null) {
+                      imageContent = markdownMatch.group(1)!;
+                      print('       ✅ 找到 Markdown 图片链接: $imageContent');
+                      break;
+                    }
+                    
+                    // 提取普通 URL
+                    final urlPattern = RegExp(r'https?://[^\s)]+');
+                    final urlMatch = urlPattern.firstMatch(textContent);
+                    if (urlMatch != null) {
+                      imageContent = urlMatch.group(0)!;
+                      print('       ✅ 找到普通 URL 图片链接: $imageContent');
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+
+            // 如果找到图片，转换为 OpenAI 格式
+            if (imageContent != null) {
+              choices.add({
+                'index': i,
+                'message': {
+                  'role': 'assistant',
+                  'content': '![image]($imageContent)',  // Markdown 格式
+                },
+                'finish_reason': candidate['finishReason'] ?? 'stop',
+              });
+              
+              print('       ✅ 已添加到 choices！');
+            } else {
+              print('       ⚠️ 未找到图片数据或链接！');
+            }
+          }
+        }
+      }
+
+      // 构造 OpenAI 兼容的响应
+      final openaiResponse = {
+        'id': data['responseId'] ?? data['id'] ?? 'gemini-${DateTime.now().millisecondsSinceEpoch}',
+        'object': 'chat.completion',
+        'created': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        'model': data['modelVersion'] ?? 'gemini',
+        'choices': choices,
+        'usage': data['usageMetadata'] != null
+            ? {
+                'prompt_tokens': (data['usageMetadata'] as Map)['promptTokenCount'] ?? 0,
+                'completion_tokens': (data['usageMetadata'] as Map)['candidatesTokenCount'] ?? 0,
+                'total_tokens': (data['usageMetadata'] as Map)['totalTokenCount'] ?? 0,
+              }
+            : {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+              },
+      };
+
+      print('');
+      print('✅ Gemini 响应解析完成！');
+      print('📦 转换后的 OpenAI 兼容格式:');
+      print('   - 总共 ${choices.length} 个 choices');
+      if (choices.isEmpty) {
+        print('   ⚠️ 警告：没有找到任何图片！');
+      } else {
+        for (var i = 0; i < choices.length; i++) {
+          final choice = choices[i];
+          final content = (choice['message'] as Map)['content'] as String;
+          print('   Choice $i: ${content.length > 100 ? "${content.substring(0, 100)}..." : content}');
+        }
+      }
+      print('');
+
+      return ApiResponse.success(
+        ChatImageResponse.fromJson(openaiResponse),
+        statusCode: 200,
+      );
+    } catch (e, stackTrace) {
+      print('❌ 解析 Gemini 响应失败！');
+      print('错误: $e');
+      print('堆栈: $stackTrace');
+      return ApiResponse.failure('解析 Gemini 响应失败: $e');
     }
   }
 

@@ -382,6 +382,81 @@ class _AssetLibraryState extends State<AssetLibrary> {
     );
   }
 
+  // 智能图片显示（区分横屏和竖屏）
+  Widget _buildSmartImage(String imagePath) {
+    return FutureBuilder<ImageInfo>(
+      future: _getImageInfo(imagePath),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done && snapshot.hasData) {
+          final imageInfo = snapshot.data!;
+          final width = imageInfo.image.width;
+          final height = imageInfo.image.height;
+          final isLandscape = width > height;  // 横屏图片
+          
+          if (isLandscape) {
+            // 横屏图片：上下留白，左右填充
+            return Container(
+              color: AppTheme.inputBackground,
+              padding: const EdgeInsets.only(top: 40),  // 上方留白40像素
+              child: Image.file(
+                File(imagePath),
+                width: double.infinity,
+                fit: BoxFit.fitWidth,  // 宽度填充，高度自适应
+                alignment: Alignment.center,
+                errorBuilder: (context, error, stackTrace) {
+                  return Center(
+                    child: Icon(Icons.broken_image, color: AppTheme.subTextColor, size: 40),
+                  );
+                },
+              ),
+            );
+          } else {
+            // 竖屏图片：保持原样，填充显示
+            return Image.file(
+              File(imagePath),
+              width: double.infinity,
+              fit: BoxFit.cover,  // 填充显示
+              alignment: Alignment.center,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: AppTheme.inputBackground,
+                  child: Center(
+                    child: Icon(Icons.broken_image, color: AppTheme.subTextColor, size: 40),
+                  ),
+                );
+              },
+            );
+          }
+        }
+        
+        // 加载中或出错时显示默认容器
+        return Container(
+          color: AppTheme.inputBackground,
+          child: Center(
+            child: snapshot.hasError
+                ? Icon(Icons.broken_image, color: AppTheme.subTextColor, size: 40)
+                : CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(AppTheme.accentColor)),
+          ),
+        );
+      },
+    );
+  }
+
+  // 获取图片信息（宽高）
+  Future<ImageInfo> _getImageInfo(String imagePath) async {
+    final completer = Completer<ImageInfo>();
+    final img = FileImage(File(imagePath));
+    final stream = img.resolve(const ImageConfiguration());
+    
+    stream.addListener(ImageStreamListener((info, _) {
+      if (!completer.isCompleted) {
+        completer.complete(info);
+      }
+    }));
+    
+    return completer.future;
+  }
+
   // 显示图片预览（放大查看）
   void _showImagePreview(BuildContext context, String imagePath) {
     showDialog(
@@ -850,19 +925,7 @@ class _AssetLibraryState extends State<AssetLibrary> {
                     onTap: () => _showImagePreview(context, asset.path),
                     child: ClipRRect(
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                      child: Image.file(
-                        File(asset.path),
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: AppTheme.inputBackground,
-                            child: Center(
-                              child: Icon(Icons.broken_image, color: AppTheme.subTextColor, size: 40),
-                            ),
-                          );
-                        },
-                      ),
+                      child: _buildSmartImage(asset.path),  // 使用智能图片显示
                     ),
                   ),
                 ),
@@ -900,7 +963,7 @@ class _AssetLibraryState extends State<AssetLibrary> {
                           color: Colors.black.withOpacity(0.6),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.delete_outline, color: Colors.white, size: 16),
+                        child: const Icon(Icons.close, color: Colors.white, size: 16),  // 改为 ❌ 图标
                       ),
                     ),
                   ),
