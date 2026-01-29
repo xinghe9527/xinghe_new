@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/features/home/presentation/settings_page.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
+import 'dart:io';
 import 'widgets/custom_title_bar.dart';
 import 'character_prompt_manager.dart';
 import 'style_reference_dialog.dart';
+import 'asset_library_selector.dart';
 
 /// 角色生成页面
 class CharacterGenerationPage extends StatefulWidget {
@@ -160,7 +163,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                           color: const Color(0xFF888888),
                           tooltip: '角色提示词（当前：$_selectedPromptName）',
                           style: IconButton.styleFrom(
-                            backgroundColor: const Color(0xFF3A3A3C).withOpacity(0.3),
+                            backgroundColor: const Color(0xFF3A3A3C).withValues(alpha: 0.3),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -232,7 +235,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
           Icon(
             Icons.person_outline,
             size: 80,
-            color: Colors.white.withOpacity(0.1),
+            color: Colors.white.withValues(alpha: 0.1),
           ),
           const SizedBox(height: 24),
           const Text(
@@ -340,21 +343,40 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                   bottomRight: Radius.circular(12),
                 ),
               ),
-              child: character.imageUrl != null && character.imageUrl!.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(12),
-                        bottomRight: Radius.circular(12),
+              child: Stack(
+                children: [
+                  // 图片显示区
+                  Positioned.fill(
+                    child: character.imageUrl != null && character.imageUrl!.isNotEmpty
+                        ? GestureDetector(
+                            onTap: () => _viewImage(character.imageUrl!),
+                            onSecondaryTapDown: (details) => _showImageContextMenu(context, details, character.imageUrl!),
+                            child: ClipRRect(
+                              borderRadius: const BorderRadius.only(
+                                topRight: Radius.circular(12),
+                                bottomRight: Radius.circular(12),
+                              ),
+                              child: _buildImageWidget(character.imageUrl!),
+                            ),
+                          )
+                        : _buildImagePlaceholder(),
+                  ),
+                  // 右上角插入按钮
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: IconButton(
+                          icon: const Icon(Icons.add_photo_alternate, size: 20),
+                          color: const Color(0xFF888888),
+                          onPressed: () => _showImageSourceMenu(context, index),
+                          tooltip: '添加图片',
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black.withValues(alpha: 0.6),
+                          ),
+                        ),
                       ),
-                      child: Image.network(
-                        character.imageUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return _buildImagePlaceholder();
-                        },
-                      ),
-                    )
-                  : _buildImagePlaceholder(),
+                ],
+              ),
             ),
           ),
         ],
@@ -371,7 +393,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
           Icon(
             Icons.image_outlined,
             size: 60,
-            color: Colors.white.withOpacity(0.1),
+            color: Colors.white.withValues(alpha: 0.1),
           ),
           const SizedBox(height: 12),
           const Text(
@@ -388,20 +410,35 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
 
   /// 打开角色提示词管理器
   void _openCharacterPromptManager() async {
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => CharacterPromptManager(
-        currentPresetName: _selectedPromptName,
-      ),
-    );
+    if (!mounted) return;
+    
+    try {
+      final result = await showDialog<Map<String, String>>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) => CharacterPromptManager(
+          currentPresetName: _selectedPromptName,
+        ),
+      );
 
-    if (result != null && mounted) {
-      setState(() {
-        _selectedPromptName = result['name'] ?? '默认';
-        _selectedPromptContent = result['content'] ?? '';
-      });
-      await _saveCharacterData();
-      debugPrint('✅ 作品 ${widget.workName} 选择角色提示词: $_selectedPromptName');
+      if (!mounted) return;
+      
+      if (result != null) {
+        setState(() {
+          _selectedPromptName = result['name'] ?? '默认';
+          _selectedPromptContent = result['content'] ?? '';
+        });
+        await _saveCharacterData();
+        debugPrint('✅ 作品 ${widget.workName} 选择角色提示词: $_selectedPromptName');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('❌ 打开角色提示词管理器失败: $e');
+      debugPrint('堆栈: $stackTrace');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开失败: $e')),
+        );
+      }
     }
   }
 
@@ -496,9 +533,10 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
       setState(() {
         for (var i = 0; i < _characters.length; i++) {
           // Mock图片URL
-          _characters[i] = _characters[i].copyWith(
-            imageUrl: 'https://picsum.photos/seed/${_characters[i].id}/400/600',
-          );
+          final imageUrl = 'https://picsum.photos/seed/${_characters[i].id}/400/600';
+          _characters[i] = _characters[i].copyWith(imageUrl: imageUrl);
+          // 保存到本地
+          _saveImageToLocal(imageUrl, 'character_${_characters[i].id}');
         }
       });
       await _saveCharacterData();
@@ -508,6 +546,176 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
           SnackBar(content: Text('✅ 已为 ${_characters.length} 个角色生成图片')),
         );
       }
+    }
+  }
+
+  /// 显示图片来源选择菜单
+  void _showImageSourceMenu(BuildContext context, int index) {
+    showMenu(
+      context: context,
+      position: const RelativeRect.fromLTRB(100, 100, 0, 0),
+      items: const [
+        PopupMenuItem(
+          value: 'library',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('角色素材库', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'local',
+          child: Row(
+            children: [
+              Icon(Icons.file_upload, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('本地图片', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'library') {
+        _selectFromLibrary(index);
+      } else if (value == 'local') {
+        _insertLocalImage(index);
+      }
+    });
+  }
+
+  /// 从素材库选择
+  Future<void> _selectFromLibrary(int index) async {
+    final selectedPath = await showDialog<String>(
+      context: context,
+      builder: (context) => const AssetLibrarySelector(
+        category: AssetCategory.character,  // 只显示角色素材
+      ),
+    );
+
+    if (selectedPath != null && mounted) {
+      setState(() {
+        _characters[index] = _characters[index].copyWith(imageUrl: selectedPath);
+      });
+      await _saveCharacterData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已从素材库选择图片')),
+        );
+      }
+    }
+  }
+
+  /// 插入本地图片
+  Future<void> _insertLocalImage(int index) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.isNotEmpty && mounted) {
+      final filePath = result.files.first.path!;
+      setState(() {
+        _characters[index] = _characters[index].copyWith(imageUrl: filePath);
+      });
+      await _saveCharacterData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已插入图片')),
+        );
+      }
+    }
+  }
+
+  /// 保存图片到本地
+  Future<void> _saveImageToLocal(String imageUrl, String filename) async {
+    try {
+      final savePath = imageSavePathNotifier.value;
+      if (savePath == '未设置' || savePath.isEmpty) return;
+      
+      // TODO: 下载并保存图片到本地
+      debugPrint('保存图片到: $savePath/$filename.png');
+    } catch (e) {
+      debugPrint('保存图片失败: $e');
+    }
+  }
+
+  /// 查看图片（放大）
+  void _viewImage(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: InteractiveViewer(
+            child: _buildImageWidget(imageUrl),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 显示图片右键菜单
+  void _showImageContextMenu(BuildContext context, TapDownDetails details, String imageUrl) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+      ),
+      items: [
+        const PopupMenuItem(
+          value: 'open_folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'open_folder') {
+        _openSaveFolder();
+      }
+    });
+  }
+
+  /// 打开保存文件夹
+  void _openSaveFolder() async {
+    final savePath = imageSavePathNotifier.value;
+    if (savePath != '未设置' && savePath.isNotEmpty) {
+      try {
+        if (Platform.isWindows) {
+          Process.run('explorer', [savePath]);
+        } else if (Platform.isMacOS) {
+          Process.run('open', [savePath]);
+        } else if (Platform.isLinux) {
+          Process.run('xdg-open', [savePath]);
+        }
+      } catch (e) {
+        debugPrint('打开文件夹失败: $e');
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在设置中配置图片保存路径')),
+      );
+    }
+  }
+
+  /// 构建图片Widget（支持网络和本地）
+  Widget _buildImageWidget(String imageUrl) {
+    if (imageUrl.startsWith('http')) {
+      return Image.network(imageUrl, fit: BoxFit.cover);
+    } else {
+      return Image.file(File(imageUrl), fit: BoxFit.cover);
     }
   }
 }

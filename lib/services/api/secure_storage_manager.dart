@@ -22,37 +22,63 @@ class SecureStorageManager {
   Future<void> saveApiKey({
     required String provider,
     required String apiKey,
+    String? modelType,  // 新增：模型类型（llm/image/video/upload）
   }) async {
+    final key = modelType != null
+        ? '${_keyPrefix}${modelType}_${provider}_key'  // 包含模型类型
+        : '${_keyPrefix}${provider}_key';  // 兼容旧版本
     await _storage.write(
-      key: '${_keyPrefix}${provider}_key',
+      key: key,
       value: apiKey,
     );
   }
 
   /// 获取API密钥
-  Future<String?> getApiKey({required String provider}) async {
-    return await _storage.read(key: '${_keyPrefix}${provider}_key');
+  Future<String?> getApiKey({
+    required String provider,
+    String? modelType,  // 新增：模型类型
+  }) async {
+    final key = modelType != null
+        ? '${_keyPrefix}${modelType}_${provider}_key'
+        : '${_keyPrefix}${provider}_key';
+    return await _storage.read(key: key);
   }
 
   /// 删除API密钥
-  Future<void> deleteApiKey({required String provider}) async {
-    await _storage.delete(key: '${_keyPrefix}${provider}_key');
+  Future<void> deleteApiKey({
+    required String provider,
+    String? modelType,  // 新增：模型类型
+  }) async {
+    final key = modelType != null
+        ? '${_keyPrefix}${modelType}_${provider}_key'
+        : '${_keyPrefix}${provider}_key';
+    await _storage.delete(key: key);
   }
 
   /// 保存Base URL
   Future<void> saveBaseUrl({
     required String provider,
     required String baseUrl,
+    String? modelType,  // 新增：模型类型
   }) async {
+    final key = modelType != null
+        ? '${_keyPrefix}${modelType}_${provider}_url'
+        : '${_keyPrefix}${provider}_url';
     await _storage.write(
-      key: '${_keyPrefix}${provider}_url',
+      key: key,
       value: baseUrl,
     );
   }
 
   /// 获取Base URL
-  Future<String?> getBaseUrl({required String provider}) async {
-    return await _storage.read(key: '${_keyPrefix}${provider}_url');
+  Future<String?> getBaseUrl({
+    required String provider,
+    String? modelType,  // 新增：模型类型
+  }) async {
+    final key = modelType != null
+        ? '${_keyPrefix}${modelType}_${provider}_url'
+        : '${_keyPrefix}${provider}_url';
+    return await _storage.read(key: key);
   }
 
   /// 保存模型名称

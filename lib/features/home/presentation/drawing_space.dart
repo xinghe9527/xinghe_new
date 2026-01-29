@@ -566,8 +566,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // 从设置中读取图片 API 配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'geeknow';
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
-      final apiKey = await _storage.getApiKey(provider: provider);
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
 
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置图片 API，请先在设置中配置');
@@ -1101,7 +1101,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       spacing: 8,
       runSpacing: 8,
       children: [
-        _compactModelSelector(),  // 紧凑型模型选择器
+        // 模型选择器已删除，使用设置中的全局配置
         _dropdown(null, widget.task.ratio, _ratios, (v) => _update(widget.task.copyWith(ratio: v))),
         _dropdown(null, widget.task.quality, _qualities, (v) => _update(widget.task.copyWith(quality: v))),
         _batch(),

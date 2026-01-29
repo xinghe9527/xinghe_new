@@ -5,6 +5,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:async';
 
 class SettingsPage extends StatefulWidget {
   final VoidCallback onBack;
@@ -33,6 +36,9 @@ class _SettingsPageState extends State<SettingsPage> {
   // API配置状态
   final SecureStorageManager _storage = SecureStorageManager();
   final LogManager _logger = LogManager();
+  
+  // ✅ 防抖定时器 - 避免频繁保存
+  Timer? _saveDebounceTimer;
   
   // LLM API 配置
   String _llmProvider = 'openai';
@@ -164,6 +170,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
+    _saveDebounceTimer?.cancel(); // ✅ 取消防抖定时器
     _llmApiKeyController.dispose();
     _llmBaseUrlController.dispose();
     _llmModelController.dispose();
@@ -211,8 +218,8 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('llm_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider);
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'llm');
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'llm');
       final model = await _storage.getModel(provider: provider, modelType: 'llm');
 
       if (mounted) {
@@ -232,8 +239,8 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider);
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
       final model = await _storage.getModel(provider: provider, modelType: 'image');
 
       if (mounted) {
@@ -253,8 +260,8 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('video_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider);
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
       final model = await _storage.getModel(provider: provider, modelType: 'video');
 
       if (mounted) {
@@ -274,8 +281,8 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('upload_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider);
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'upload');
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'upload');
 
       if (mounted) {
         setState(() {
@@ -306,16 +313,24 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// ✅ 防抖保存包装器 - 避免频繁保存
+  void _debouncedSave(VoidCallback saveFunction) {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(seconds: 1), () {
+      saveFunction();
+    });
+  }
+
   Future<void> _saveLLMConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('llm_provider', _llmProvider);
       
       if (_llmApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _llmProvider, apiKey: _llmApiKeyController.text);
+        await _storage.saveApiKey(provider: _llmProvider, apiKey: _llmApiKeyController.text, modelType: 'llm');
       }
       if (_llmBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _llmProvider, baseUrl: _llmBaseUrlController.text);
+        await _storage.saveBaseUrl(provider: _llmProvider, baseUrl: _llmBaseUrlController.text, modelType: 'llm');
       }
       if (_llmModelController.text.isNotEmpty) {
         await _storage.saveModel(provider: _llmProvider, modelType: 'llm', model: _llmModelController.text);
@@ -335,10 +350,10 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setString('image_provider', _imageProvider);
       
       if (_imageApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _imageProvider, apiKey: _imageApiKeyController.text);
+        await _storage.saveApiKey(provider: _imageProvider, apiKey: _imageApiKeyController.text, modelType: 'image');
       }
       if (_imageBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _imageProvider, baseUrl: _imageBaseUrlController.text);
+        await _storage.saveBaseUrl(provider: _imageProvider, baseUrl: _imageBaseUrlController.text, modelType: 'image');
       }
       if (_imageModelController.text.isNotEmpty) {
         await _storage.saveModel(provider: _imageProvider, modelType: 'image', model: _imageModelController.text);
@@ -358,10 +373,10 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setString('video_provider', _videoProvider);
       
       if (_videoApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _videoProvider, apiKey: _videoApiKeyController.text);
+        await _storage.saveApiKey(provider: _videoProvider, apiKey: _videoApiKeyController.text, modelType: 'video');
       }
       if (_videoBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _videoProvider, baseUrl: _videoBaseUrlController.text);
+        await _storage.saveBaseUrl(provider: _videoProvider, baseUrl: _videoBaseUrlController.text, modelType: 'video');
       }
       if (_videoModelController.text.isNotEmpty) {
         await _storage.saveModel(provider: _videoProvider, modelType: 'video', model: _videoModelController.text);
@@ -381,10 +396,10 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setString('upload_provider', _uploadProvider);
       
       if (_uploadApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _uploadProvider, apiKey: _uploadApiKeyController.text);
+        await _storage.saveApiKey(provider: _uploadProvider, apiKey: _uploadApiKeyController.text, modelType: 'upload');
       }
       if (_uploadBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _uploadProvider, baseUrl: _uploadBaseUrlController.text);
+        await _storage.saveBaseUrl(provider: _uploadProvider, baseUrl: _uploadBaseUrlController.text, modelType: 'upload');
       }
 
       _logger.success('保存上传API配置成功', module: '设置', extra: {'provider': _uploadProvider});
@@ -487,18 +502,22 @@ class _SettingsPageState extends State<SettingsPage> {
           color: AppTheme.scaffoldBackground,
           child: Column(
             children: [
+              // 顶部返回栏
               Container(
-                height: 60,
+                height: 50,
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Row(
                   children: [
                     _buildIconButton(Icons.arrow_back_ios_new_rounded, '返回工作台', widget.onBack),
-                    const SizedBox(width: 40),
-                    ...List.generate(_mainTabs.length, (index) {
-                      final isSelected = _mainTabIndex == index;
-                      return _buildMainTab(index, isSelected);
-                    }),
-                    const Spacer(),
+                    const SizedBox(width: 20),
+                    Text(
+                      '设置',
+                      style: TextStyle(
+                        color: AppTheme.textColor,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -508,20 +527,20 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_mainTabIndex == 0)
-                      Container(
-                        width: 180,
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        decoration: BoxDecoration(
-                          border: Border(right: BorderSide(color: AppTheme.dividerColor)),
-                        ),
-                        child: Column(
-                          children: List.generate(_apiSubTabs.length, (index) {
-                            return _buildSubTab(index, _apiSubTabIndex == index);
-                          }),
-                        ),
+                    // 左侧导航菜单
+                    Container(
+                      width: 200,
+                      decoration: BoxDecoration(
+                        border: Border(right: BorderSide(color: AppTheme.dividerColor)),
                       ),
+                      child: Column(
+                        children: List.generate(_mainTabs.length, (index) {
+                          return _buildLeftNavItem(index, _mainTabIndex == index);
+                        }),
+                      ),
+                    ),
                     
+                    // 右侧内容区域
                     Expanded(
                       child: _buildContentArea(currentThemeIndex),
                     ),
@@ -532,6 +551,50 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         );
       },
+    );
+  }
+
+  /// 左侧导航项
+  Widget _buildLeftNavItem(int index, bool isSelected) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () {
+          // 切换前清除焦点
+          FocusScope.of(context).unfocus();
+          setState(() => _mainTabIndex = index);
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          decoration: BoxDecoration(
+            color: isSelected ? AppTheme.sideBarItemHover : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color: isSelected ? AppTheme.accentColor : Colors.transparent,
+                width: 3,
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                index == 0 ? Icons.api : index == 1 ? Icons.palette : Icons.save,
+                size: 18,
+                color: isSelected ? AppTheme.textColor : AppTheme.subTextColor,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                _mainTabs[index],
+                style: TextStyle(
+                  color: isSelected ? AppTheme.textColor : AppTheme.subTextColor,
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -855,8 +918,6 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildApiConfigurationForm() {
-    String currentTitle = _apiSubTabs[_apiSubTabIndex];
-    
     // 根据不同的子标签显示不同的API配置表单
     Widget formContent;
     switch (_apiSubTabIndex) {
@@ -876,16 +937,58 @@ class _SettingsPageState extends State<SettingsPage> {
         formContent = _buildPlaceholderView();
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildFormHeader(currentTitle),
-          const SizedBox(height: 40),
-          formContent,
-        ],
-      ),
+    return Column(
+      children: [
+        // 顶部：4个模型标签
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppTheme.dividerColor)),
+          ),
+          child: Row(
+            children: List.generate(_apiSubTabs.length, (index) {
+              final isSelected = _apiSubTabIndex == index;
+              return Padding(
+                padding: const EdgeInsets.only(right: 24),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () {
+                      FocusScope.of(context).unfocus();
+                      setState(() => _apiSubTabIndex = index);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? AppTheme.sideBarItemHover : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: isSelected ? AppTheme.accentColor.withValues(alpha: 0.5) : Colors.transparent,
+                        ),
+                      ),
+                      child: Text(
+                        _apiSubTabs[index],
+                        style: TextStyle(
+                          color: isSelected ? AppTheme.textColor : AppTheme.subTextColor,
+                          fontSize: 13,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+        // 表单内容区域
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(40),
+            child: formContent,
+          ),
+        ),
+      ],
     );
   }
 
@@ -917,13 +1020,17 @@ class _SettingsPageState extends State<SettingsPage> {
             await Clipboard.setData(ClipboardData(text: _llmApiKeyController.text));
             _showMessage('API Key 已复制', isError: false);
           },
-          onSave: _saveLLMConfig,
+          onSave: () => _debouncedSave(_saveLLMConfig), // ✅ 自动保存（带防抖）
         ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_llmBaseUrlController, 'https://api.openai.com/v1', onSave: _saveLLMConfig),
+        _buildEditableTextField(
+          _llmBaseUrlController, 
+          'https://api.openai.com/v1',
+          onSave: () => _debouncedSave(_saveLLMConfig), // ✅ 自动保存（带防抖）
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('选择推理模型'),
@@ -936,7 +1043,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildSaveButton(_saveLLMConfig),
+        _buildTestButton(() => _testLLMConnection()),
         
         const SizedBox(height: 20),
         Text(
@@ -975,13 +1082,17 @@ class _SettingsPageState extends State<SettingsPage> {
             await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
             _showMessage('API Key 已复制', isError: false);
           },
-          onSave: _saveImageConfig,
+          onSave: () => _debouncedSave(_saveImageConfig), // ✅ 自动保存（带防抖）
         ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_imageBaseUrlController, 'https://api.openai.com/v1', onSave: _saveImageConfig),
+        _buildEditableTextField(
+          _imageBaseUrlController, 
+          'https://api.openai.com/v1',
+          onSave: () => _debouncedSave(_saveImageConfig), // ✅ 自动保存（带防抖）
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('选择推理模型'),
@@ -994,7 +1105,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildSaveButton(_saveImageConfig),
+        _buildTestButton(() => _testImageConnection()),
         
         const SizedBox(height: 20),
         Text(
@@ -1033,13 +1144,17 @@ class _SettingsPageState extends State<SettingsPage> {
             await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
             _showMessage('API Key 已复制', isError: false);
           },
-          onSave: _saveVideoConfig,
+          onSave: () => _debouncedSave(_saveVideoConfig), // ✅ 自动保存（带防抖）
         ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_videoBaseUrlController, 'https://api.openai.com/v1', onSave: _saveVideoConfig),
+        _buildEditableTextField(
+          _videoBaseUrlController, 
+          'https://api.openai.com/v1',
+          onSave: () => _debouncedSave(_saveVideoConfig), // ✅ 自动保存（带防抖）
+        ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('选择推理模型'),
@@ -1052,7 +1167,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildSaveButton(_saveVideoConfig),
+        _buildTestButton(() => _testVideoConnection()),
         
         const SizedBox(height: 20),
         Text(
@@ -1091,63 +1206,24 @@ class _SettingsPageState extends State<SettingsPage> {
             await Clipboard.setData(ClipboardData(text: _uploadApiKeyController.text));
             _showMessage('API Key 已复制', isError: false);
           },
-          onSave: _saveUploadConfig,
+          onSave: () => _debouncedSave(_saveUploadConfig), // ✅ 自动保存（带防抖）
         ),
         
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
         const SizedBox(height: 10),
-        _buildEditableTextField(_uploadBaseUrlController, 'https://api.openai.com/v1', onSave: _saveUploadConfig),
+        _buildEditableTextField(
+          _uploadBaseUrlController, 
+          'https://api.openai.com/v1',
+          onSave: () => _debouncedSave(_saveUploadConfig), // ✅ 自动保存（带防抖）
+        ),
         
         const SizedBox(height: 40),
-        _buildSaveButton(_saveUploadConfig),
-        
-        const SizedBox(height: 20),
-        Text(
-          '* 提示：文件上传用于图像引用、素材管理等场景。',
-          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
-        ),
-        
-        const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppTheme.accentColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.accentColor.withOpacity(0.3)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.info_outline, color: AppTheme.accentColor, size: 20),
-                  const SizedBox(width: 10),
-                  Text(
-                    '上传功能说明',
-                    style: TextStyle(color: AppTheme.textColor, fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '文件上传（通用）:\n'
-                '• GeekNow: /v1/files - 上传图片素材\n'
-                '• Midjourney: /mj/submit/upload-discord-images - 上传到Discord\n'
-                '• 用途: 图生图、参考图等\n\n'
-                'Sora 角色创建（专用）:\n'
-                '• GeekNow Sora: /sora/v1/characters - 创建角色\n'
-                '• 从视频URL或任务ID提取角色\n'
-                '• 时间范围: 1-3秒（差值最大3秒，最小1秒）\n'
-                '• 用途: 角色引用，保持角色一致性',
-                style: TextStyle(color: AppTheme.subTextColor, fontSize: 13, height: 1.6),
-              ),
-            ],
-          ),
-        ),
+        _buildTestButton(() => _testUploadConnection()),
       ],
     );
   }
+
 
   Widget _buildProviderDropdown({required String value, required Function(String) onChanged}) {
     final providers = ['openai', 'geeknow', 'yunwu', 'azure', 'anthropic'];
@@ -1206,7 +1282,19 @@ class _SettingsPageState extends State<SettingsPage> {
       child: TextField(
         controller: controller,
         obscureText: shouldObscure,
+        enabled: true,
+        enableInteractiveSelection: true,
+        enableSuggestions: true,
+        autocorrect: false,
+        keyboardType: TextInputType.url, // 🔧 使用 url 类型以获得更好的输入支持
+        textInputAction: TextInputAction.done,
         style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+        // 🔧 添加自定义右键菜单，确保复制粘贴可用
+        contextMenuBuilder: (context, editableTextState) {
+          return AdaptiveTextSelectionToolbar.editableText(
+            editableTextState: editableTextState,
+          );
+        },
         decoration: InputDecoration(
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -1216,6 +1304,37 @@ class _SettingsPageState extends State<SettingsPage> {
               ? Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // 粘贴按钮（密码字段）
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: () async {
+                          try {
+                            final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+                            if (clipboardData?.text != null && clipboardData!.text!.isNotEmpty) {
+                              controller.text = clipboardData.text!;
+                              controller.selection = TextSelection.collapsed(
+                                offset: controller.text.length,
+                              );
+                              // 触发自动保存
+                              onSave?.call();
+                              _showMessage('已粘贴', isError: false);
+                            } else {
+                              _showMessage('剪贴板为空', isError: true);
+                            }
+                          } catch (e) {
+                            _showMessage('粘贴失败: $e', isError: true);
+                          }
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Tooltip(
+                            message: '粘贴',
+                            child: Icon(Icons.content_paste, color: AppTheme.subTextColor, size: 18),
+                          ),
+                        ),
+                      ),
+                    ),
                     // 复制按钮
                     if (onCopy != null)
                       MouseRegion(
@@ -1224,7 +1343,10 @@ class _SettingsPageState extends State<SettingsPage> {
                           onTap: onCopy,
                           child: Padding(
                             padding: const EdgeInsets.all(8),
-                            child: Icon(Icons.copy, color: AppTheme.subTextColor, size: 18),
+                            child: Tooltip(
+                              message: '复制',
+                              child: Icon(Icons.copy, color: AppTheme.subTextColor, size: 18),
+                            ),
                           ),
                         ),
                       ),
@@ -1236,21 +1358,65 @@ class _SettingsPageState extends State<SettingsPage> {
                           onTap: onToggleVisibility,
                           child: Padding(
                             padding: const EdgeInsets.all(8),
-                            child: Icon(
-                              (isVisible ?? false) ? Icons.visibility_rounded : Icons.visibility_off_rounded,
-                              color: AppTheme.subTextColor,
-                              size: 18,
+                            child: Tooltip(
+                              message: (isVisible ?? false) ? '隐藏' : '显示',
+                              child: Icon(
+                                (isVisible ?? false) ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                                color: AppTheme.subTextColor,
+                                size: 18,
+                              ),
                             ),
                           ),
                         ),
                       ),
                   ],
                 )
-              : null,
+              // 🔧 为非密码字段添加粘贴按钮
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: () async {
+                          try {
+                            final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+                            if (clipboardData?.text != null && clipboardData!.text!.isNotEmpty) {
+                              final selection = controller.selection;
+                              final text = controller.text;
+                              final newText = text.replaceRange(
+                                selection.start,
+                                selection.end,
+                                clipboardData.text!,
+                              );
+                              controller.text = newText;
+                              controller.selection = TextSelection.collapsed(
+                                offset: selection.start + clipboardData.text!.length,
+                              );
+                              // 触发自动保存
+                              onSave?.call();
+                            } else {
+                              _showMessage('剪贴板为空', isError: true);
+                            }
+                          } catch (e) {
+                            _showMessage('粘贴失败: $e', isError: true);
+                          }
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Tooltip(
+                            message: '粘贴',
+                            child: Icon(Icons.content_paste, color: AppTheme.subTextColor, size: 18),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
         ),
         onChanged: (v) {
-          // 可以选择是否在每次输入时自动保存
-          // onSave?.call();
+          // ✅ 触发自动保存（已在外部使用防抖包装）
+          onSave?.call();
         },
       ),
     );
@@ -1320,7 +1486,7 @@ class _SettingsPageState extends State<SettingsPage> {
           decoration: BoxDecoration(
             gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -1331,6 +1497,373 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildTestButton(Future<void> Function() onTest) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTest,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.accentColor.withValues(alpha: 0.5), width: 2),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_find, color: AppTheme.textColor, size: 18),
+              const SizedBox(width: 8),
+              Text('测试', style: TextStyle(color: AppTheme.textColor, fontSize: 14, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _testLLMConnection() async {
+    // 验证必填项
+    if (_llmApiKeyController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: 'LLM连接测试',
+        success: false,
+        message: '请先填写API Key',
+      );
+      return;
+    }
+
+    if (_llmBaseUrlController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: 'LLM连接测试',
+        success: false,
+        message: '请先填写Base URL',
+      );
+      return;
+    }
+
+    _showTestResultDialog(
+      title: 'LLM连接测试',
+      success: null,
+      message: '正在测试连接...\n\n服务商: $_llmProvider\nBase URL: ${_llmBaseUrlController.text}\nModel: ${_llmModelController.text}',
+    );
+
+    final startTime = DateTime.now();
+
+    try {
+      // 真实API测试
+      final baseUrl = _llmBaseUrlController.text.trim();
+      final apiKey = _llmApiKeyController.text.trim();
+      final model = _llmModelController.text.trim().isEmpty ? 'gpt-3.5-turbo' : _llmModelController.text.trim();
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/chat/completions'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: jsonEncode({
+          'model': model,
+          'messages': [
+            {'role': 'user', 'content': '测试连接'}
+          ],
+          'max_tokens': 10,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      final elapsed = DateTime.now().difference(startTime);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        
+        if (response.statusCode == 200) {
+          // 连接成功，解析响应（不需要使用 data）
+          _showTestResultDialog(
+            title: 'LLM连接测试',
+            success: true,
+            message: '✅ 连接成功！\n\n服务商: $_llmProvider\nBase URL: $baseUrl\nModel: $model\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+          );
+          _logger.success('LLM连接测试成功', module: '设置', extra: {'provider': _llmProvider, 'elapsed': elapsed.inMilliseconds});
+        } else {
+          _showTestResultDialog(
+            title: 'LLM连接测试',
+            success: false,
+            message: '❌ 连接失败\n\n状态码: ${response.statusCode}\n错误: ${response.body}',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTestResultDialog(
+          title: 'LLM连接测试',
+          success: false,
+          message: '❌ 测试失败\n\n错误类型: ${e.runtimeType}\n错误信息: $e\n\n请检查：\n1. API Key是否正确\n2. Base URL是否正确\n3. 网络连接是否正常',
+        );
+      }
+      _logger.error('LLM连接测试失败: $e', module: '设置');
+    }
+  }
+
+  Future<void> _testImageConnection() async {
+    if (_imageApiKeyController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: '图片API连接测试',
+        success: false,
+        message: '请先填写API Key',
+      );
+      return;
+    }
+
+    if (_imageBaseUrlController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: '图片API连接测试',
+        success: false,
+        message: '请先填写Base URL',
+      );
+      return;
+    }
+
+    _showTestResultDialog(
+      title: '图片API连接测试',
+      success: null,
+      message: '正在测试连接...\n\n服务商: $_imageProvider',
+    );
+
+    final startTime = DateTime.now();
+
+    try {
+      final baseUrl = _imageBaseUrlController.text.trim();
+      final apiKey = _imageApiKeyController.text.trim();
+
+      // 测试端点可访问性
+      final response = await http.get(
+        Uri.parse(baseUrl),
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      final elapsed = DateTime.now().difference(startTime);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        
+        if (response.statusCode < 500) {  // 任何非服务器错误都算连接成功
+          _showTestResultDialog(
+            title: '图片API连接测试',
+            success: true,
+            message: '✅ 连接成功！\n\n服务商: $_imageProvider\nBase URL: $baseUrl\nModel: ${_imageModelController.text}\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+          );
+          _logger.success('图片API连接测试成功', module: '设置');
+        } else {
+          _showTestResultDialog(
+            title: '图片API连接测试',
+            success: false,
+            message: '❌ 服务器错误\n\n状态码: ${response.statusCode}',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTestResultDialog(
+          title: '图片API连接测试',
+          success: false,
+          message: '❌ 连接失败\n\n错误: $e\n\n请检查API配置和网络连接',
+        );
+      }
+    }
+  }
+
+  Future<void> _testVideoConnection() async {
+    if (_videoApiKeyController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: '视频API连接测试',
+        success: false,
+        message: '请先填写API Key',
+      );
+      return;
+    }
+
+    if (_videoBaseUrlController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: '视频API连接测试',
+        success: false,
+        message: '请先填写Base URL',
+      );
+      return;
+    }
+
+    _showTestResultDialog(
+      title: '视频API连接测试',
+      success: null,
+      message: '正在测试连接...\n\n服务商: $_videoProvider',
+    );
+
+    final startTime = DateTime.now();
+
+    try {
+      final baseUrl = _videoBaseUrlController.text.trim();
+      final apiKey = _videoApiKeyController.text.trim();
+
+      final response = await http.get(
+        Uri.parse(baseUrl),
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      final elapsed = DateTime.now().difference(startTime);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        
+        if (response.statusCode < 500) {
+          _showTestResultDialog(
+            title: '视频API连接测试',
+            success: true,
+            message: '✅ 连接成功！\n\n服务商: $_videoProvider\nBase URL: $baseUrl\nModel: ${_videoModelController.text}\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+          );
+          _logger.success('视频API连接测试成功', module: '设置');
+        } else {
+          _showTestResultDialog(
+            title: '视频API连接测试',
+            success: false,
+            message: '❌ 服务器错误\n\n状态码: ${response.statusCode}',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTestResultDialog(
+          title: '视频API连接测试',
+          success: false,
+          message: '❌ 连接失败\n\n错误: $e\n\n请检查API配置和网络连接',
+        );
+      }
+    }
+  }
+
+  Future<void> _testUploadConnection() async {
+    if (_uploadApiKeyController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: '上传API连接测试',
+        success: false,
+        message: '请先填写API Key',
+      );
+      return;
+    }
+
+    if (_uploadBaseUrlController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: '上传API连接测试',
+        success: false,
+        message: '请先填写Base URL',
+      );
+      return;
+    }
+
+    _showTestResultDialog(
+      title: '上传API连接测试',
+      success: null,
+      message: '正在测试连接...\n\n服务商: $_uploadProvider',
+    );
+
+    final startTime = DateTime.now();
+
+    try {
+      final baseUrl = _uploadBaseUrlController.text.trim();
+      final apiKey = _uploadApiKeyController.text.trim();
+
+      final response = await http.get(
+        Uri.parse(baseUrl),
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      final elapsed = DateTime.now().difference(startTime);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        
+        if (response.statusCode < 500) {
+          _showTestResultDialog(
+            title: '上传API连接测试',
+            success: true,
+            message: '✅ 连接成功！\n\n服务商: $_uploadProvider\nBase URL: $baseUrl\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+          );
+          _logger.success('上传API连接测试成功', module: '设置');
+        } else {
+          _showTestResultDialog(
+            title: '上传API连接测试',
+            success: false,
+            message: '❌ 服务器错误\n\n状态码: ${response.statusCode}',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTestResultDialog(
+          title: '上传API连接测试',
+          success: false,
+          message: '❌ 连接失败\n\n错误: $e\n\n请检查API配置和网络连接',
+        );
+      }
+    }
+  }
+
+  void _showTestResultDialog({
+    required String title,
+    required bool? success,  // null表示测试中
+    required String message,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: success != null,  // 测试中不可关闭
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (success == null)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              style: TextStyle(
+                color: success == null 
+                    ? const Color(0xFF888888)
+                    : success 
+                        ? Colors.green 
+                        : Colors.red,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+        actions: success != null
+            ? [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭', style: TextStyle(color: Color(0xFF888888))),
+                ),
+              ]
+            : null,
       ),
     );
   }

@@ -517,8 +517,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // 读取视频 API 配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('video_provider') ?? 'geeknow';
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
-      final apiKey = await _storage.getApiKey(provider: provider);
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
       
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置视频 API');
@@ -1407,7 +1407,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       spacing: 6,  // 减小间距
       runSpacing: 6,
       children: [
-        _compactModelSelector(),  // 紧凑型模型选择器
+        // 模型选择器已删除，使用设置中的全局配置
         _dropdown(null, widget.task.ratio, _ratios, (v) => _update(widget.task.copyWith(ratio: v))),
         _dropdown(null, widget.task.quality, _qualities, (v) => _update(widget.task.copyWith(quality: v))),
         _dropdown(null, widget.task.seconds, _secondsOptions, (v) => _update(widget.task.copyWith(seconds: v))),  // 时长选择器

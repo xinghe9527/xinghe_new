@@ -320,9 +320,9 @@ class _AssetLibraryState extends State<AssetLibrary> {
     try {
       // 获取 API 配置
       final prefs = await SharedPreferences.getInstance();
-      final provider = prefs.getString('video_provider') ?? 'geeknow';
-      final baseUrl = await _storage.getBaseUrl(provider: provider);
-      final apiKey = await _storage.getApiKey(provider: provider);
+      final provider = prefs.getString('upload_provider') ?? 'geeknow';
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'upload');
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'upload');
       
       if (baseUrl == null || apiKey == null) {
         _showMessage('未配置视频 API，请先在设置中配置', isError: true);

@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'widgets/custom_title_bar.dart';
 import 'prompt_preset_manager.dart';
 import 'workspace_page.dart';
+import '../data/real_ai_service.dart';
+import '../domain/models/script_line.dart';
 
 /// 故事输入页面（故事→剧本）
 class StoryInputPage extends StatefulWidget {
@@ -25,6 +27,7 @@ class StoryInputPage extends StatefulWidget {
 class _StoryInputPageState extends State<StoryInputPage> {
   final TextEditingController _storyController = TextEditingController();
   final TextEditingController _scriptController = TextEditingController();
+  final RealAIService _aiService = RealAIService(); // ✅ 真实 AI 服务
   
   String _selectedPresetName = '默认';
   String _selectedPresetContent = '';
@@ -299,54 +302,37 @@ class _StoryInputPageState extends State<StoryInputPage> {
     setState(() => _isGenerating = true);
 
     try {
-      // TODO: 调用LLM API生成剧本
-      // 这里使用Mock数据模拟
-      await Future.delayed(const Duration(seconds: 2));
+      // ✅ 调用真实 LLM API 生成剧本
+      final scriptLines = await _aiService.generateScript(theme: story);
       
-      // Mock生成的剧本
-      final mockScript = '''第一幕：都市之夜
-
-【场景：未来都市的高楼天台，夜晚，霓虹灯闪烁】
-
-主角站在天台边缘，俯瞰着这座充满科技感的城市。全息广告在空中漂浮，飞行器穿梭于摩天大楼之间。
-
-主角（独白）：又是一个无眠之夜。这座城市从不睡觉，就像我一样。
-
-【主角转身，走向天台门口】
-
-第二幕：黑客任务
-
-【场景：主角的地下工作室】
-
-多个全息屏幕环绕着主角，显示着复杂的代码和数据流。主角快速敲击着虚拟键盘。
-
-主角：终于找到了...这个防火墙的漏洞。
-
-【警报声突然响起】
-
-主角：什么？被追踪了？
-
-【屏幕上出现红色警告】
-
-第三幕：追逐
-
-【场景：城市街道】
-
-主角匆忙离开工作室，消失在霓虹灯闪烁的街道中。机械警察开始搜索...
-
-【待续】''';
+      // 将生成的剧本行转换为文本格式
+      final scriptText = scriptLines.map((line) {
+        String prefix = line.type == ScriptLineType.dialogue ? '【对白】' : '【场景】';
+        return '$prefix${line.content}\nAI提示词：${line.aiPrompt}\n';
+      }).join('\n');
 
       if (mounted) {
         setState(() {
-          _scriptController.text = mockScript;
+          _scriptController.text = scriptText;
         });
         // 自动保存
         await _saveWorkData();
+        
+        // 显示成功提示
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 成功生成剧本（${scriptLines.length} 个场景）'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('生成失败：$e')),
+          SnackBar(
+            content: Text('❌ 生成失败：$e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {

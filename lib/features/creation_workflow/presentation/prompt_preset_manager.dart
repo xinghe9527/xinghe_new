@@ -71,6 +71,13 @@ class _PromptPresetManagerState extends State<PromptPresetManager> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('prompt_presets', jsonEncode(_presets));
+      
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已保存'), duration: Duration(seconds: 1)),
+        );
+      }
     } catch (e) {
       debugPrint('保存提示词预设失败: $e');
     }
@@ -182,7 +189,7 @@ class _PromptPresetManagerState extends State<PromptPresetManager> {
             title: Text(
               preset['name'] ?? '',
               style: TextStyle(
-                color: isSelected ? const Color(0xFF888888) : Colors.white,
+                color: isSelected ? Colors.white : const Color(0xFF888888),
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -206,6 +213,7 @@ class _PromptPresetManagerState extends State<PromptPresetManager> {
       );
     }
 
+    if (_selectedIndex >= _presets.length) _selectedIndex = 0;
     final preset = _presets[_selectedIndex];
     
     return Container(
@@ -244,11 +252,18 @@ class _PromptPresetManagerState extends State<PromptPresetManager> {
                 ),
               ),
               const SizedBox(width: 12),
-              // 删除按钮
               IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
+                icon: const Icon(Icons.save, size: 20),
+                color: const Color(0xFF888888),
+                onPressed: _savePresets,
+                tooltip: '保存',
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.delete, size: 20),
+                color: const Color(0xFF888888),
                 onPressed: _deletePreset,
-                tooltip: '删除此预设',
+                tooltip: '删除',
               ),
             ],
           ),

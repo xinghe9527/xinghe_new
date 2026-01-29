@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/main.dart';
-import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'dart:convert';
-import 'widgets/custom_title_bar.dart';
+import 'dart:io';
 import 'storyboard_prompt_manager.dart';
+import 'character_generation_page.dart';
+import 'scene_generation_page.dart';
+import 'item_generation_page.dart';
+import '../data/real_ai_service.dart';
 
 /// 分镜空间页面（分镜生成和管理 - Excel风格）
 class ProductionSpacePage extends StatefulWidget {
@@ -30,9 +33,9 @@ class ProductionSpacePage extends StatefulWidget {
 }
 
 class _ProductionSpacePageState extends State<ProductionSpacePage> {
-  bool _showSettings = false;
   List<StoryboardRow> _storyboards = [];
   bool _isGenerating = false;
+  final RealAIService _aiService = RealAIService(); // ✅ 真实 AI 服务
   
   // 全局主题提示词
   String _globalImageTheme = '';  // 图片全局主题
@@ -47,6 +50,53 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   void initState() {
     super.initState();
     _loadProductionData();
+    _initMockAssets();  // 初始化Mock资产用于演示
+  }
+
+  /// 初始化Mock资产（用于演示）
+  void _initMockAssets() {
+    if (_characters.isEmpty) {
+      _characters = [
+        AssetReference(
+          id: 'char_001',
+          name: '主角',
+          imageUrl: 'https://picsum.photos/200/300',
+          type: AssetType.character,
+        ),
+      ];
+    }
+    if (_scenes.isEmpty) {
+      _scenes = [
+        AssetReference(
+          id: 'scene_001',
+          name: '天台',
+          imageUrl: 'https://picsum.photos/400/300',
+          type: AssetType.scene,
+        ),
+        AssetReference(
+          id: 'scene_002',
+          name: '工作室',
+          imageUrl: 'https://picsum.photos/400/301',
+          type: AssetType.scene,
+        ),
+        AssetReference(
+          id: 'scene_003',
+          name: '街道',
+          imageUrl: 'https://picsum.photos/400/302',
+          type: AssetType.scene,
+        ),
+      ];
+    }
+    if (_items.isEmpty) {
+      _items = [
+        AssetReference(
+          id: 'item_001',
+          name: '飞行摩托',
+          imageUrl: 'https://picsum.photos/200/200',
+          type: AssetType.item,
+        ),
+      ];
+    }
   }
 
   /// 加载分镜数据
@@ -158,20 +208,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.scaffoldBackground,
-      appBar: CustomTitleBar(
-        subtitle: widget.workName,
-        onBack: () => Navigator.pop(context),
-        onSettings: () => setState(() => _showSettings = true),
-      ),
-      body: _showSettings
-          ? SettingsPage(onBack: () => setState(() => _showSettings = false))
-          : _buildContent(),
-    );
-  }
-
-  Widget _buildContent() {
+    // 直接返回内容，不需要 Scaffold（因为已经在 workspace_page 中了）
     return Column(
       children: [
         // 顶部工具栏
@@ -206,6 +243,27 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               fontWeight: FontWeight.bold,
             ),
           ),
+          const SizedBox(width: 24),
+          // 角色按钮 - 浅色渐变
+          _buildLightGradientButton(
+            icon: Icons.person,
+            label: '角色',
+            onTap: _openCharacterGeneration,
+          ),
+          const SizedBox(width: 8),
+          // 场景按钮 - 浅色渐变
+          _buildLightGradientButton(
+            icon: Icons.landscape,
+            label: '场景',
+            onTap: _openSceneGeneration,
+          ),
+          const SizedBox(width: 8),
+          // 物品按钮 - 浅色渐变
+          _buildLightGradientButton(
+            icon: Icons.category,
+            label: '物品',
+            onTap: _openItemGeneration,
+          ),
           const Spacer(),
           // 分镜提示词按钮（小书图标）
           IconButton(
@@ -218,27 +276,239 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             ),
           ),
           const SizedBox(width: 12),
-          OutlinedButton.icon(
-            onPressed: _isGenerating ? null : _generateStoryboards,
-            icon: _isGenerating
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Color(0xFF888888)),
-                    ),
-                  )
-                : const Icon(Icons.auto_awesome, size: 16),
-            label: Text(_isGenerating ? '生成中...' : '生成分镜'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF888888),
-              side: const BorderSide(color: Color(0xFF3A3A3C)),
-            ),
+          // 批量图片生成按钮 - 浅色渐变
+          _buildLightGradientButton(
+            icon: Icons.collections,
+            label: '批量图片',
+            onTap: _isGenerating ? null : _batchGenerateImages,
+          ),
+          const SizedBox(width: 8),
+          // 批量视频生成按钮 - 浅色渐变
+          _buildLightGradientButton(
+            icon: Icons.video_library,
+            label: '批量视频',
+            onTap: _isGenerating ? null : _batchGenerateVideos,
+          ),
+          const SizedBox(width: 8),
+          // 生成分镜按钮 - 主题渐变色
+          _buildPrimaryGradientButton(
+            icon: _isGenerating ? null : Icons.auto_awesome,
+            label: _isGenerating ? '生成中...' : '生成分镜',
+            onTap: _isGenerating ? null : _generateStoryboards,
+            isLoading: _isGenerating,
           ),
         ],
       ),
     );
+  }
+
+  /// 工具按钮（旧版本，保留备用）
+  Widget _buildToolButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF888888),
+        side: const BorderSide(color: Color(0xFF3A3A3C)),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      ),
+    );
+  }
+
+  /// 浅色渐变按钮（角色、场景、物品、批量操作）
+  Widget _buildLightGradientButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+  }) {
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: onTap != null
+                  ? [
+                      const Color(0xFFE0E0E0).withOpacity(0.15),
+                      const Color(0xFFBDBDBD).withOpacity(0.1),
+                    ]
+                  : [
+                      const Color(0xFF555555).withOpacity(0.1),
+                      const Color(0xFF444444).withOpacity(0.05),
+                    ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: onTap != null 
+                  ? const Color(0xFFFFFFFF).withOpacity(0.1)
+                  : const Color(0xFF555555).withOpacity(0.1),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: onTap != null 
+                    ? const Color(0xFFCCCCCC)
+                    : const Color(0xFF666666),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: onTap != null 
+                      ? const Color(0xFFCCCCCC)
+                      : const Color(0xFF666666),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 主题渐变色按钮（生成分镜）
+  Widget _buildPrimaryGradientButton({
+    IconData? icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool isLoading = false,
+  }) {
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: onTap != null
+                  ? [
+                      const Color(0xFF2AFADF), // 青绿色
+                      const Color(0xFF4C83FF), // 蓝色
+                    ]
+                  : [
+                      const Color(0xFF555555),
+                      const Color(0xFF444444),
+                    ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: onTap != null
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF2AFADF).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isLoading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(Colors.white),
+                  ),
+                )
+              else if (icon != null)
+                Icon(
+                  icon,
+                  size: 16,
+                  color: Colors.white,
+                ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 打开角色生成页面
+  Future<void> _openCharacterGeneration() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CharacterGenerationPage(
+          workId: widget.workId,
+          workName: widget.workName,
+          scriptContent: widget.scriptContent,  // 使用剧本内容
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+    // 返回后重新加载资产
+    if (mounted) {
+      await _loadAssetReferences();
+      setState(() {});
+    }
+  }
+
+  /// 打开场景生成页面
+  Future<void> _openSceneGeneration() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => SceneGenerationPage(
+          workId: widget.workId,
+          workName: widget.workName,
+          scriptContent: widget.scriptContent,  // 使用剧本内容
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+    // 返回后重新加载资产
+    if (mounted) {
+      await _loadAssetReferences();
+      setState(() {});
+    }
+  }
+
+  /// 打开物品生成页面
+  Future<void> _openItemGeneration() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ItemGenerationPage(
+          workId: widget.workId,
+          workName: widget.workName,
+          scriptContent: widget.scriptContent,  // 使用剧本内容
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+    // 返回后重新加载资产
+    if (mounted) {
+      await _loadAssetReferences();
+      setState(() {});
+    }
   }
 
   /// 打开分镜提示词管理器
@@ -338,6 +608,137 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 8),
+                // 资产标签（检测所有提示词中的资产）
+                ...(() {
+                  final combinedPrompt = '${row.imagePrompt} ${row.videoPrompt}';
+                  // 自动收集当前分镜涉及的所有资产ID
+                  final autoDetectedAssets = <String>[];
+                  
+                  // 检测角色
+                  for (final char in _characters) {
+                    if (combinedPrompt.contains(char.name)) {
+                      autoDetectedAssets.add(char.id);
+                    }
+                  }
+                  // 检测场景
+                  for (final scene in _scenes) {
+                    if (combinedPrompt.contains(scene.name)) {
+                      autoDetectedAssets.add(scene.id);
+                    }
+                  }
+                  // 检测物品
+                  for (final item in _items) {
+                    if (combinedPrompt.contains(item.name)) {
+                      autoDetectedAssets.add(item.id);
+                    }
+                  }
+                  
+                  // 如果selectedAssets为空，自动选中所有检测到的资产
+                  final currentSelected = row.selectedImageAssets.isEmpty && row.selectedVideoAssets.isEmpty
+                      ? autoDetectedAssets
+                      : [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
+                  
+                  final tags = <Widget>[];
+                  
+                  // 生成角色标签
+                  for (final char in _characters) {
+                    if (combinedPrompt.contains(char.name)) {
+                      final isSelected = currentSelected.contains(char.id);
+                      tags.add(_buildAssetTag(
+                        char.name,
+                        char.type,
+                        isSelected,
+                        () {
+                          final newSelected = List<String>.from(currentSelected);
+                          if (newSelected.contains(char.id)) {
+                            newSelected.remove(char.id);
+                          } else {
+                            newSelected.add(char.id);
+                          }
+                          setState(() {
+                            _storyboards[index] = row.copyWith(
+                              selectedImageAssets: newSelected,
+                              selectedVideoAssets: newSelected,
+                            );
+                          });
+                          _saveProductionData();
+                        },
+                      ));
+                    }
+                  }
+                  
+                  // 生成场景标签
+                  for (final scene in _scenes) {
+                    if (combinedPrompt.contains(scene.name)) {
+                      final isSelected = currentSelected.contains(scene.id);
+                      tags.add(_buildAssetTag(
+                        scene.name,
+                        scene.type,
+                        isSelected,
+                        () {
+                          final newSelected = List<String>.from(currentSelected);
+                          if (newSelected.contains(scene.id)) {
+                            newSelected.remove(scene.id);
+                          } else {
+                            newSelected.add(scene.id);
+                          }
+                          setState(() {
+                            _storyboards[index] = row.copyWith(
+                              selectedImageAssets: newSelected,
+                              selectedVideoAssets: newSelected,
+                            );
+                          });
+                          _saveProductionData();
+                        },
+                      ));
+                    }
+                  }
+                  
+                  // 生成物品标签
+                  for (final item in _items) {
+                    if (combinedPrompt.contains(item.name)) {
+                      final isSelected = currentSelected.contains(item.id);
+                      tags.add(_buildAssetTag(
+                        item.name,
+                        item.type,
+                        isSelected,
+                        () {
+                          final newSelected = List<String>.from(currentSelected);
+                          if (newSelected.contains(item.id)) {
+                            newSelected.remove(item.id);
+                          } else {
+                            newSelected.add(item.id);
+                          }
+                          setState(() {
+                            _storyboards[index] = row.copyWith(
+                              selectedImageAssets: newSelected,
+                              selectedVideoAssets: newSelected,
+                            );
+                          });
+                          _saveProductionData();
+                        },
+                      ));
+                    }
+                  }
+                  
+                  // 如果自动检测到资产但未选中，自动选中它们
+                  if (autoDetectedAssets.isNotEmpty && currentSelected.isEmpty) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() {
+                          _storyboards[index] = row.copyWith(
+                            selectedImageAssets: autoDetectedAssets,
+                            selectedVideoAssets: autoDetectedAssets,
+                          );
+                        });
+                        _saveProductionData();
+                      }
+                    });
+                  }
+                  
+                  return tags;
+                })(),
                 const Spacer(),
                 // 插入按钮（向上插入）
                 IconButton(
@@ -367,8 +768,9 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               ],
             ),
           ),
-          // 4列内容
-          IntrinsicHeight(
+          // 4列内容（固定高度）
+          SizedBox(
+            height: 270,  // 缩小三分之一（400 → 270）
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -448,117 +850,197 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             ],
           ),
           const SizedBox(height: 12),
-          // 提示词文本框
-          TextField(
-            controller: TextEditingController(text: row.imagePrompt),
-            maxLines: 8,
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.all(12),
-              filled: true,
-              fillColor: Color(0xFF252629),
+          // 提示词文本框（可滚动，独立滚动）
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFF3A3A3C)),
+                borderRadius: BorderRadius.circular(4),
+                color: const Color(0xFF252629),
+              ),
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),  // 阻止滚动冒泡
+                child: TextField(
+                  controller: TextEditingController(text: row.imagePrompt),
+                  maxLines: null,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.all(12),
+                  ),
+                  onChanged: (value) {
+                    _storyboards[index] = row.copyWith(imagePrompt: value);
+                    _saveProductionData();
+                  },
+                ),
+              ),
             ),
-            onChanged: (value) {
-              _storyboards[index] = row.copyWith(imagePrompt: value);
-              _saveProductionData();
-            },
           ),
         ],
       ),
     );
   }
 
-  /// 列2：图片生成区
+  /// 列2：图片生成区（四宫格）
   Widget _buildImageGenerationColumn(StoryboardRow row, int index) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(8),
       decoration: const BoxDecoration(
         border: Border(right: BorderSide(color: Color(0xFF3A3A3C), width: 1)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          const Text(
-            '图片生成区',
-            style: TextStyle(
-              color: Color(0xFF888888),
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
+          // 四宫格布局
+          GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              childAspectRatio: 1,
+              crossAxisSpacing: 4,
+              mainAxisSpacing: 4,
             ),
-          ),
-          const SizedBox(height: 12),
-          // 生成按钮
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _generateImage(index),
-              icon: const Icon(Icons.auto_awesome, size: 16),
-              label: const Text('生成图片'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF888888),
-                side: const BorderSide(color: Color(0xFF3A3A3C)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          // 资产标签
-          const Text(
-            '参考资产',
-            style: TextStyle(color: Color(0xFF666666), fontSize: 11),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _buildAssetTags(row.imagePrompt, row.selectedImageAssets, (assets) {
-              _storyboards[index] = row.copyWith(selectedImageAssets: assets);
-              _saveProductionData();
-            }),
-          ),
-          const SizedBox(height: 16),
-          // 图片预览
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1C),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF3A3A3C)),
-              ),
-              child: row.imageUrl != null && row.imageUrl!.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: Image.network(
-                        row.imageUrl!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                      ),
-                    )
-                  : Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
+            itemCount: 4,
+            itemBuilder: (context, gridIndex) {
+              final hasImage = gridIndex < row.imageUrls.length;
+              final imageUrl = hasImage ? row.imageUrls[gridIndex] : null;
+              final isSelected = row.selectedImageIndex == gridIndex;
+              
+              return GestureDetector(
+                onTap: () {
+                  // 所有格子都可以选中（包括空白格子）
+                  setState(() {
+                    _storyboards[index] = row.copyWith(selectedImageIndex: gridIndex);
+                  });
+                  _saveProductionData();
+                  
+                  // 提示用户当前选择
+                  final mode = hasImage ? '图生视频' : '文生视频';
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('已选择格子${gridIndex + 1}（$mode模式）'),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                onSecondaryTapDown: hasImage ? (details) => _showImageContextMenu(
+                  context, details, imageUrl!, index, gridIndex,
+                ) : null,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A1C),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: isSelected ? const Color(0xFF888888) : const Color(0xFF3A3A3C),
+                      width: isSelected ? 2 : 1,
+                    ),
+                  ),
+                  child: hasImage
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: Image.network(
+                            imageUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
+                          ),
+                        )
+                      : Center(
+                          child: Icon(
                             Icons.image_outlined,
-                            size: 48,
+                            size: 24,
                             color: Colors.white.withValues(alpha: 0.1),
                           ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            '待生成',
-                            style: TextStyle(
-                              color: Color(0xFF666666),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                        ),
+                ),
+              );
+            },
+          ),
+          // 右上角生成按钮
+          Positioned(
+            top: 4,
+            right: 4,
+            child: IconButton(
+              onPressed: () => _generateImage(index),
+              icon: const Icon(Icons.auto_awesome, size: 14),
+              color: const Color(0xFF888888),
+              tooltip: '生成图片',
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.black.withValues(alpha: 0.7),
+                padding: const EdgeInsets.all(6),
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// 显示图片右键菜单
+  void _showImageContextMenu(BuildContext context, TapDownDetails details, String imageUrl, int storyboardIndex, int gridIndex) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('删除图片', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'folder') {
+        _openImageFolder();
+      } else if (value == 'delete') {
+        _deleteImage(storyboardIndex, gridIndex);
+      }
+    });
+  }
+
+  void _openImageFolder() {
+    final savePath = imageSavePathNotifier.value;
+    if (savePath != '未设置' && savePath.isNotEmpty) {
+      try {
+        if (Platform.isWindows) {
+          Process.run('explorer', [savePath]);
+        }
+      } catch (e) {
+        debugPrint('打开文件夹失败: $e');
+      }
+    }
+  }
+
+  void _deleteImage(int storyboardIndex, int gridIndex) {
+    setState(() {
+      final row = _storyboards[storyboardIndex];
+      final newUrls = List<String>.from(row.imageUrls);
+      newUrls.removeAt(gridIndex);
+      _storyboards[storyboardIndex] = row.copyWith(
+        imageUrls: newUrls,
+        selectedImageIndex: 0,
+      );
+    });
+    _saveProductionData();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('✅ 已删除图片')),
     );
   }
 
@@ -610,127 +1092,193 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             ],
           ),
           const SizedBox(height: 12),
-          // 提示词文本框
-          TextField(
-            controller: TextEditingController(text: row.videoPrompt),
-            maxLines: 8,
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.all(12),
-              filled: true,
-              fillColor: Color(0xFF252629),
+          // 提示词文本框（可滚动，独立滚动）
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFF3A3A3C)),
+                borderRadius: BorderRadius.circular(4),
+                color: const Color(0xFF252629),
+              ),
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),  // 阻止滚动冒泡
+                child: TextField(
+                  controller: TextEditingController(text: row.videoPrompt),
+                  maxLines: null,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.all(12),
+                  ),
+                  onChanged: (value) {
+                    _storyboards[index] = row.copyWith(videoPrompt: value);
+                    _saveProductionData();
+                  },
+                ),
+              ),
             ),
-            onChanged: (value) {
-              _storyboards[index] = row.copyWith(videoPrompt: value);
-              _saveProductionData();
-            },
           ),
         ],
       ),
     );
   }
 
-  /// 列4：视频生成区
+  /// 列4：视频生成区（四宫格）
   Widget _buildVideoGenerationColumn(StoryboardRow row, int index) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.all(8),
+      child: Stack(
         children: [
-          const Text(
-            '视频生成区',
-            style: TextStyle(
-              color: Color(0xFF888888),
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
+          // 四宫格布局
+          GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              childAspectRatio: 1,
+              crossAxisSpacing: 4,
+              mainAxisSpacing: 4,
             ),
-          ),
-          const SizedBox(height: 12),
-          // 生成按钮
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: row.imageUrl != null ? () => _generateVideo(index) : null,
-              icon: const Icon(Icons.auto_awesome, size: 16),
-              label: const Text('生成视频'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF888888),
-                side: const BorderSide(color: Color(0xFF3A3A3C)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          // 资产标签
-          const Text(
-            '参考资产',
-            style: TextStyle(color: Color(0xFF666666), fontSize: 11),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _buildAssetTags(row.videoPrompt, row.selectedVideoAssets, (assets) {
-              _storyboards[index] = row.copyWith(selectedVideoAssets: assets);
-              _saveProductionData();
-            }),
-          ),
-          const SizedBox(height: 16),
-          // 视频预览
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1C),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF3A3A3C)),
-              ),
-              child: row.videoUrl != null && row.videoUrl!.isNotEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.play_circle_outline,
-                            size: 56,
-                            color: Color(0xFF888888),
+            itemCount: 4,
+            itemBuilder: (context, gridIndex) {
+              final hasVideo = gridIndex < row.videoUrls.length;
+              final videoUrl = hasVideo ? row.videoUrls[gridIndex] : null;
+              
+              return GestureDetector(
+                onTap: hasVideo ? () => _playVideo(videoUrl!) : null,
+                onSecondaryTapDown: hasVideo ? (details) => _showVideoContextMenu(
+                  context, details, videoUrl!, index, gridIndex,
+                ) : null,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A1C),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFF3A3A3C)),
+                  ),
+                  child: hasVideo
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.play_circle_outline,
+                                size: 32,
+                                color: Color(0xFF888888),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                videoUrl!.split('/').last,
+                                style: const TextStyle(
+                                  color: Color(0xFF666666),
+                                  fontSize: 9,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            row.videoUrl!,
-                            style: const TextStyle(
-                              color: Color(0xFF666666),
-                              fontSize: 11,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    )
-                  : Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
+                        )
+                      : Center(
+                          child: Icon(
                             Icons.videocam_outlined,
-                            size: 48,
+                            size: 24,
                             color: Colors.white.withValues(alpha: 0.1),
                           ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            '待生成',
-                            style: TextStyle(
-                              color: Color(0xFF666666),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                        ),
+                ),
+              );
+            },
+          ),
+          // 右上角生成按钮
+          Positioned(
+            top: 4,
+            right: 4,
+            child: IconButton(
+              onPressed: row.selectedImageIndex < row.imageUrls.length 
+                  ? () => _generateVideo(index) 
+                  : null,
+              icon: const Icon(Icons.auto_awesome, size: 14),
+              color: const Color(0xFF888888),
+              tooltip: '生成视频',
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.black.withValues(alpha: 0.7),
+                padding: const EdgeInsets.all(6),
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  void _showVideoContextMenu(BuildContext context, TapDownDetails details, String videoUrl, int storyboardIndex, int gridIndex) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('删除视频', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'folder') {
+        _openVideoFolder();
+      } else if (value == 'delete') {
+        _deleteVideo(storyboardIndex, gridIndex);
+      }
+    });
+  }
+
+  void _playVideo(String videoUrl) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('播放视频: $videoUrl')),
+    );
+  }
+
+  void _openVideoFolder() {
+    final savePath = videoSavePathNotifier.value;
+    if (savePath != '未设置' && savePath.isNotEmpty) {
+      try {
+        if (Platform.isWindows) {
+          Process.run('explorer', [savePath]);
+        }
+      } catch (e) {
+        debugPrint('打开视频文件夹失败: $e');
+      }
+    }
+  }
+
+  void _deleteVideo(int storyboardIndex, int gridIndex) {
+    setState(() {
+      final row = _storyboards[storyboardIndex];
+      final newUrls = List<String>.from(row.videoUrls);
+      newUrls.removeAt(gridIndex);
+      _storyboards[storyboardIndex] = row.copyWith(videoUrls: newUrls);
+    });
+    _saveProductionData();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('✅ 已删除视频')),
     );
   }
 
@@ -813,13 +1361,14 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: isSelected
-              ? const Color(0xFF3A3A3C)
-              : const Color(0xFF2A2A2C),
+              ? const Color(0xFF3A3A3C)  // 选中：灰色背景
+              : const Color(0xFF1A1A1C),  // 未选中：黑色背景
           borderRadius: BorderRadius.circular(4),
           border: Border.all(
             color: isSelected
-                ? const Color(0xFF888888)
-                : const Color(0xFF3A3A3C),
+                ? const Color(0xFF888888)  // 选中：灰色边框
+                : const Color(0xFF2A2A2C),  // 未选中：深黑边框
+            width: 1.5,
           ),
         ),
         child: Row(
@@ -872,16 +1421,22 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           id: DateTime.now().millisecondsSinceEpoch.toString(),
           imagePrompt: '主角站在未来都市天台，俯瞰城市，夜景，霓虹灯闪烁。主角的银白短发在风中飘动。',
           videoPrompt: '主角转身眺望，镜头从远景推进到中景，展现城市全貌和主角的背影',
+          selectedImageAssets: ['char_001', 'scene_001'],  // 默认选中：主角、天台
+          selectedVideoAssets: ['char_001', 'scene_001'],
         ),
         StoryboardRow(
           id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
           imagePrompt: '地下工作室内，主角操作全息屏幕，多个屏幕显示代码和数据流',
           videoPrompt: '主角手指快速滑动，屏幕数据流动，镜头特写手部动作，紧张氛围',
+          selectedImageAssets: ['char_001', 'scene_002'],  // 默认选中：主角、工作室
+          selectedVideoAssets: ['char_001', 'scene_002'],
         ),
         StoryboardRow(
           id: (DateTime.now().millisecondsSinceEpoch + 2).toString(),
           imagePrompt: '城市街道，主角匆忙穿行，霓虹灯光影交错，背景有飞行摩托',
           videoPrompt: '追逐镜头，快速移动，光影闪烁，动感强烈，第一人称视角',
+          selectedImageAssets: ['char_001', 'scene_003', 'item_001'],  // 默认选中：主角、街道、飞行摩托
+          selectedVideoAssets: ['char_001', 'scene_003', 'item_001'],
         ),
       ];
 
@@ -889,6 +1444,10 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         setState(() {
           _storyboards = mockStoryboards;
         });
+        
+        // 自动为每个分镜选中检测到的资产
+        _autoSelectAssets();
+        
         await _saveProductionData();
         
         if (mounted) {
@@ -908,6 +1467,221 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         setState(() => _isGenerating = false);
       }
     }
+  }
+
+  /// 🔥 批量生成所有分镜的图片
+  Future<void> _batchGenerateImages() async {
+    if (_storyboards.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先生成分镜')),
+      );
+      return;
+    }
+
+    setState(() => _isGenerating = true);
+    
+    int successCount = 0;
+    int failCount = 0;
+    
+    try {
+      // 找出所有还没有图片的分镜
+      final storyboardsToGenerate = _storyboards.where((sb) => sb.imageUrls.isEmpty).toList();
+      
+      if (storyboardsToGenerate.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('所有分镜都已生成图片')),
+          );
+        }
+        return;
+      }
+      
+      // 并发生成图片（每批 3 个）
+      for (int i = 0; i < storyboardsToGenerate.length; i += 3) {
+        final batch = storyboardsToGenerate.skip(i).take(3).toList();
+        final futures = batch.map((sb) async {
+          try {
+            // 构建完整提示词（包含全局主题）
+            String fullPrompt = sb.imagePrompt;
+            if (_globalImageTheme.isNotEmpty) {
+              fullPrompt = '$_globalImageTheme, $fullPrompt';
+            }
+            
+            // 调用 API 生成图片
+            final imageUrl = await _aiService.generateStoryboardImage(prompt: fullPrompt);
+            
+            // 更新分镜数据
+            final index = _storyboards.indexWhere((s) => s.id == sb.id);
+            if (index != -1) {
+              setState(() {
+                _storyboards[index] = _storyboards[index].copyWith(
+                  imageUrls: [imageUrl],
+                  selectedImageIndex: 0,
+                );
+              });
+            }
+            
+            successCount++;
+          } catch (e) {
+            failCount++;
+            debugPrint('生成图片失败 [${sb.id}]: $e');
+          }
+        });
+        
+        await Future.wait(futures);
+        
+        // 每批完成后保存
+        await _saveProductionData();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 批量图片生成完成：成功 $successCount 个，失败 $failCount 个'),
+            backgroundColor: successCount > 0 ? Colors.green : Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ 批量生成失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGenerating = false);
+      }
+    }
+  }
+
+  /// 🔥 批量生成所有分镜的视频
+  Future<void> _batchGenerateVideos() async {
+    if (_storyboards.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先生成分镜')),
+      );
+      return;
+    }
+
+    setState(() => _isGenerating = true);
+    
+    int successCount = 0;
+    int failCount = 0;
+    
+    try {
+      // 找出所有有图片但没有视频的分镜
+      final storyboardsToGenerate = _storyboards.where((sb) {
+        return sb.imageUrls.isNotEmpty && sb.videoUrls.isEmpty;
+      }).toList();
+      
+      if (storyboardsToGenerate.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('没有可生成视频的分镜（需要先生成图片）')),
+          );
+        }
+        return;
+      }
+      
+      // 并发生成视频（每批 2 个，因为视频生成较慢）
+      for (int i = 0; i < storyboardsToGenerate.length; i += 2) {
+        final batch = storyboardsToGenerate.skip(i).take(2).toList();
+        final futures = batch.map((sb) async {
+          try {
+            // 构建完整提示词（包含全局主题）
+            String fullPrompt = sb.videoPrompt.isNotEmpty ? sb.videoPrompt : sb.imagePrompt;
+            if (_globalVideoTheme.isNotEmpty) {
+              fullPrompt = '$_globalVideoTheme, $fullPrompt';
+            }
+            
+            // 获取参考图片
+            final referenceImage = sb.imageUrls.isNotEmpty ? sb.imageUrls[sb.selectedImageIndex] : null;
+            
+            // 调用 API 生成视频
+            final videoUrl = await _aiService.generateVideoClip(
+              prompt: fullPrompt,
+              imageUrl: referenceImage,
+            );
+            
+            // 更新分镜数据
+            final index = _storyboards.indexWhere((s) => s.id == sb.id);
+            if (index != -1) {
+              setState(() {
+                _storyboards[index] = _storyboards[index].copyWith(
+                  videoUrls: [videoUrl],
+                );
+              });
+            }
+            
+            successCount++;
+          } catch (e) {
+            failCount++;
+            debugPrint('生成视频失败 [${sb.id}]: $e');
+          }
+        });
+        
+        await Future.wait(futures);
+        
+        // 每批完成后保存
+        await _saveProductionData();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 批量视频生成完成：成功 $successCount 个，失败 $failCount 个'),
+            backgroundColor: successCount > 0 ? Colors.green : Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ 批量生成失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGenerating = false);
+      }
+    }
+  }
+
+  /// 自动为所有分镜选中检测到的资产
+  void _autoSelectAssets() {
+    for (int i = 0; i < _storyboards.length; i++) {
+      final row = _storyboards[i];
+      final combinedPrompt = '${row.imagePrompt} ${row.videoPrompt}';
+      final detectedAssets = <String>[];
+      
+      // 检测所有资产
+      for (final char in _characters) {
+        if (combinedPrompt.contains(char.name)) {
+          detectedAssets.add(char.id);
+        }
+      }
+      for (final scene in _scenes) {
+        if (combinedPrompt.contains(scene.name)) {
+          detectedAssets.add(scene.id);
+        }
+      }
+      for (final item in _items) {
+        if (combinedPrompt.contains(item.name)) {
+          detectedAssets.add(item.id);
+        }
+      }
+      
+      // 自动选中检测到的资产
+      if (detectedAssets.isNotEmpty) {
+        _storyboards[i] = row.copyWith(
+          selectedImageAssets: detectedAssets,
+          selectedVideoAssets: detectedAssets,
+        );
+      }
+    }
+    
+    debugPrint('✅ 自动选中资产完成');
   }
 
   /// 插入空白分镜（向上插入）
@@ -1150,17 +1924,29 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   Future<void> _generateImage(int index) async {
     final row = _storyboards[index];
     
+    if (row.imageUrls.length >= 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('最多生成4张图片')),
+      );
+      return;
+    }
+    
     // TODO: 调用图片生成API
-    // 输入：图片提示词 + 选中的角色/场景/物品的图片
     await Future.delayed(const Duration(seconds: 2));
 
     if (mounted) {
+      final newImageUrl = 'https://picsum.photos/seed/${row.id}_${row.imageUrls.length}/800/450';
       setState(() {
-        _storyboards[index] = row.copyWith(
-          imageUrl: 'https://picsum.photos/seed/${row.id}/800/450',
-        );
+        final newUrls = List<String>.from(row.imageUrls)..add(newImageUrl);
+        _storyboards[index] = row.copyWith(imageUrls: newUrls);
       });
       await _saveProductionData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✅ 已生成图片 ${row.imageUrls.length + 1}/4')),
+        );
+      }
     }
   }
 
@@ -1168,17 +1954,38 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   Future<void> _generateVideo(int index) async {
     final row = _storyboards[index];
     
+    if (row.videoUrls.length >= 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('最多生成4个视频')),
+      );
+      return;
+    }
+    
+    // 检查选中的格子
+    final selectedImageUrl = row.selectedImageIndex < row.imageUrls.length
+        ? row.imageUrls[row.selectedImageIndex]
+        : null;
+    
+    final mode = selectedImageUrl != null ? '图生视频' : '文生视频';
+    
     // TODO: 调用视频生成API
-    // 输入：视频提示词 + 生成的图片 + 选中的资产图片
+    // 如果 selectedImageUrl 不为null：图生视频（使用图片作为参考）
+    // 如果 selectedImageUrl 为null：文生视频（只使用提示词）
     await Future.delayed(const Duration(seconds: 3));
 
     if (mounted) {
+      final newVideoUrl = 'video_${row.id}_${row.videoUrls.length}_$mode.mp4';
       setState(() {
-        _storyboards[index] = row.copyWith(
-          videoUrl: 'video_${row.id}.mp4',
-        );
+        final newUrls = List<String>.from(row.videoUrls)..add(newVideoUrl);
+        _storyboards[index] = row.copyWith(videoUrls: newUrls);
       });
       await _saveProductionData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✅ 已生成视频 ${row.videoUrls.length + 1}/4（$mode）')),
+        );
+      }
     }
   }
 }
@@ -1188,8 +1995,9 @@ class StoryboardRow {
   final String id;
   final String imagePrompt;
   final String videoPrompt;
-  final String? imageUrl;
-  final String? videoUrl;
+  final List<String> imageUrls;         // 多个图片URL（最多4个）
+  final List<String> videoUrls;         // 多个视频URL（最多4个）
+  final int selectedImageIndex;         // 选中的图片索引
   final List<String> selectedImageAssets;
   final List<String> selectedVideoAssets;
 
@@ -1197,17 +2005,23 @@ class StoryboardRow {
     required this.id,
     required this.imagePrompt,
     required this.videoPrompt,
-    this.imageUrl,
-    this.videoUrl,
+    this.imageUrls = const [],
+    this.videoUrls = const [],
+    this.selectedImageIndex = 0,
     this.selectedImageAssets = const [],
     this.selectedVideoAssets = const [],
   });
 
+  // 兼容旧数据
+  String? get imageUrl => imageUrls.isNotEmpty ? imageUrls[selectedImageIndex] : null;
+  String? get videoUrl => videoUrls.isNotEmpty ? videoUrls.first : null;
+
   StoryboardRow copyWith({
     String? imagePrompt,
     String? videoPrompt,
-    String? imageUrl,
-    String? videoUrl,
+    List<String>? imageUrls,
+    List<String>? videoUrls,
+    int? selectedImageIndex,
     List<String>? selectedImageAssets,
     List<String>? selectedVideoAssets,
   }) {
@@ -1215,8 +2029,9 @@ class StoryboardRow {
       id: id,
       imagePrompt: imagePrompt ?? this.imagePrompt,
       videoPrompt: videoPrompt ?? this.videoPrompt,
-      imageUrl: imageUrl ?? this.imageUrl,
-      videoUrl: videoUrl ?? this.videoUrl,
+      imageUrls: imageUrls ?? this.imageUrls,
+      videoUrls: videoUrls ?? this.videoUrls,
+      selectedImageIndex: selectedImageIndex ?? this.selectedImageIndex,
       selectedImageAssets: selectedImageAssets ?? this.selectedImageAssets,
       selectedVideoAssets: selectedVideoAssets ?? this.selectedVideoAssets,
     );
@@ -1226,8 +2041,9 @@ class StoryboardRow {
         'id': id,
         'imagePrompt': imagePrompt,
         'videoPrompt': videoPrompt,
-        'imageUrl': imageUrl,
-        'videoUrl': videoUrl,
+        'imageUrls': imageUrls,
+        'videoUrls': videoUrls,
+        'selectedImageIndex': selectedImageIndex,
         'selectedImageAssets': selectedImageAssets,
         'selectedVideoAssets': selectedVideoAssets,
       };
@@ -1237,8 +2053,11 @@ class StoryboardRow {
       id: json['id'] as String,
       imagePrompt: json['imagePrompt'] as String,
       videoPrompt: json['videoPrompt'] as String,
-      imageUrl: json['imageUrl'] as String?,
-      videoUrl: json['videoUrl'] as String?,
+      imageUrls: (json['imageUrls'] as List<dynamic>?)?.cast<String>() ?? 
+                 (json['imageUrl'] != null ? [json['imageUrl'] as String] : []),  // 兼容旧数据
+      videoUrls: (json['videoUrls'] as List<dynamic>?)?.cast<String>() ?? 
+                 (json['videoUrl'] != null ? [json['videoUrl'] as String] : []),  // 兼容旧数据
+      selectedImageIndex: json['selectedImageIndex'] as int? ?? 0,
       selectedImageAssets: (json['selectedImageAssets'] as List<dynamic>?)?.cast<String>() ?? [],
       selectedVideoAssets: (json['selectedVideoAssets'] as List<dynamic>?)?.cast<String>() ?? [],
     );

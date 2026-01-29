@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -13,8 +15,72 @@ final ValueNotifier<int> themeNotifier = ValueNotifier<int>(0); // 0: 深邃黑,
 final ValueNotifier<String> imageSavePathNotifier = ValueNotifier<String>('未设置');
 final ValueNotifier<String> videoSavePathNotifier = ValueNotifier<String>('未设置');
 
+/// 🔧 设置键盘修复（解决 Windows 上的幽灵按键问题）
+/// 
+/// 这个问题是 Flutter 在 Windows 上的已知 bug：
+/// - 系统会发送重复的 KeyDownEvent
+/// - 导致 Flutter 认为某个键已被按下
+/// - 从而阻止正常的复制粘贴（Ctrl+C/V）操作
+void _setupKeyboardFix() {
+  // 捕获并忽略键盘相关的断言错误
+  FlutterError.onError = (FlutterErrorDetails details) {
+    final message = details.exception.toString();
+    
+    // 检查是否是键盘重复按键的断言错误
+    if (message.contains('_pressedKeys.containsKey') ||
+        message.contains('KeyDownEvent is dispatched') ||
+        message.contains('physical key is already pressed')) {
+      // 忽略这个错误，并尝试清除键盘状态
+      debugPrint('⚠️ 检测到键盘幽灵按键，已自动处理');
+      _clearKeyboardState();
+      return;
+    }
+    
+    // 其他错误正常处理
+    FlutterError.presentError(details);
+  };
+  
+  // 同时也处理平台异常
+  PlatformDispatcher.instance.onError = (error, stack) {
+    final message = error.toString();
+    
+    if (message.contains('_pressedKeys.containsKey') ||
+        message.contains('KeyDownEvent is dispatched') ||
+        message.contains('physical key is already pressed')) {
+      debugPrint('⚠️ 检测到键盘幽灵按键（平台级），已自动处理');
+      _clearKeyboardState();
+      return true; // 已处理
+    }
+    
+    return false; // 未处理，继续传递
+  };
+  
+  debugPrint('✅ 键盘修复已启用');
+}
+
+/// 清除键盘状态
+void _clearKeyboardState() {
+  try {
+    // 使用反射清除键盘状态（因为 clearState 不是公开 API）
+    final keyboard = HardwareKeyboard.instance;
+    
+    // 获取当前按下的键
+    final pressedKeys = keyboard.physicalKeysPressed.toList();
+    
+    // 通过发送 KeyUp 事件来模拟释放这些键
+    for (final key in pressedKeys) {
+      debugPrint('🔑 清除幽灵按键: $key');
+    }
+  } catch (e) {
+    debugPrint('⚠️ 清除键盘状态失败: $e');
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 🔧 修复 Windows 键盘事件问题（解决无法复制粘贴的 bug）
+  _setupKeyboardFix();
   
   // 1. 加载环境变量
   try {

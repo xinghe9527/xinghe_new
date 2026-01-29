@@ -52,13 +52,26 @@ class StoryboardView extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          // 批量图片生成按钮
           ElevatedButton.icon(
-            onPressed: () => _generateAllStoryboards(),
-            icon: const Icon(Icons.auto_awesome, size: 18),
-            label: const Text('批量生成全部'),
+            onPressed: () => _batchGenerateImages(),
+            icon: const Icon(Icons.collections, size: 18),
+            label: const Text('批量图片生成'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF888888),
-              foregroundColor: Colors.black,
+              backgroundColor: const Color(0xFF00A8FF),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // 批量视频生成按钮
+          ElevatedButton.icon(
+            onPressed: () => _batchGenerateVideos(),
+            icon: const Icon(Icons.video_library, size: 18),
+            label: const Text('批量视频生成'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF6B6B),
+              foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
             ),
           ),
@@ -358,14 +371,13 @@ class StoryboardView extends StatelessWidget {
     );
   }
 
-  void _generateAllStoryboards() {
-    final project = controller.project;
-    for (final scriptLine in project.scriptLines) {
-      final hasStoryboard = project.storyboards
-          .any((sb) => sb.scriptLineId == scriptLine.id && sb.imageUrl.isNotEmpty);
-      if (!hasStoryboard) {
-        controller.generateStoryboard(scriptLine.id);
-      }
-    }
+  /// 批量生成所有分镜图片
+  void _batchGenerateImages() {
+    controller.batchGenerateAllStoryboardImages();
+  }
+
+  /// 批量生成所有分镜视频
+  void _batchGenerateVideos() {
+    controller.batchGenerateAllStoryboardVideos();
   }
 }

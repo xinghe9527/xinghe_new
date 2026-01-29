@@ -53,12 +53,13 @@ class CustomTitleBar extends StatelessWidget implements PreferredSizeWidget {
                   ),
                 if (subtitle != null)
                   Padding(
-                    padding: const EdgeInsets.only(left: 8, top: 8),
+                    padding: const EdgeInsets.only(left: 8, top: 6),
                     child: Text(
                       subtitle!,
                       style: TextStyle(
                         color: AppTheme.subTextColor,
-                        fontSize: 10,
+                        fontSize: 16, // ✅ 16号字体
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),

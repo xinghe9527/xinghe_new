@@ -33,36 +33,47 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
       
       if (presetsJson != null && presetsJson.isNotEmpty) {
         final List<dynamic> list = jsonDecode(presetsJson);
-        setState(() {
-          _presets = list.map((e) => Map<String, String>.from(e)).toList();
-          // 恢复当前选择的预设
-          if (widget.currentPresetName != null) {
-            _selectedIndex = _presets.indexWhere(
-              (p) => p['name'] == widget.currentPresetName,
-            );
-            if (_selectedIndex == -1) _selectedIndex = 0;
-          }
-        });
+        if (mounted) {
+          setState(() {
+            _presets = list.map((e) => Map<String, String>.from(e)).toList();
+            // 恢复当前选择的预设
+            if (widget.currentPresetName != null) {
+              _selectedIndex = _presets.indexWhere(
+                (p) => p['name'] == widget.currentPresetName,
+              );
+              if (_selectedIndex == -1) _selectedIndex = 0;
+            }
+          });
+        }
       } else {
         // 默认预设
-        _presets = [
-          {
-            'name': '默认',
-            'content': '请从以下剧本中提取所有出现的角色，并为每个角色提供详细的外貌描述。格式要求：\n角色名称：[名字]\n外貌描述：[详细的外貌特征]\n性格特点：[简要性格]',
-          },
-          {
-            'name': '动漫风格',
-            'content': '请从剧本中提取角色，并以动漫/漫画风格描述他们的外貌。重点包括：发型、发色、眼睛颜色、服装风格、配饰等视觉元素。',
-          },
-          {
-            'name': '写实风格',
-            'content': '请从剧本中提取角色，并以写实风格描述他们的外貌。包括：年龄、身高、体型、面部特征、穿着打扮等。',
-          },
-        ];
+        if (mounted) {
+          setState(() {
+            _presets = [
+              {
+                'name': '默认',
+                'content': '请从以下剧本中提取所有出现的角色，并为每个角色提供详细的外貌描述。格式要求：\n角色名称：[名字]\n外貌描述：[详细的外貌特征]\n性格特点：[简要性格]',
+              },
+              {
+                'name': '动漫风格',
+                'content': '请从剧本中提取角色，并以动漫/漫画风格描述他们的外貌。重点包括：发型、发色、眼睛颜色、服装风格、配饰等视觉元素。',
+              },
+              {
+                'name': '写实风格',
+                'content': '请从剧本中提取角色，并以写实风格描述他们的外貌。包括：年龄、身高、体型、面部特征、穿着打扮等。',
+              },
+            ];
+          });
+        }
         await _savePresets();
       }
     } catch (e) {
       debugPrint('加载角色提示词预设失败: $e');
+      if (mounted) {
+        setState(() {
+          _presets = [];
+        });
+      }
     }
   }
 
@@ -74,6 +85,17 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
         'character_prompt_presets',
         jsonEncode(_presets),
       );
+      
+      // 触发UI更新，刷新列表显示
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 已保存'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('保存角色提示词预设失败: $e');
     }
@@ -184,7 +206,7 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
             title: Text(
               preset['name'] ?? '',
               style: TextStyle(
-                color: isSelected ? const Color(0xFF888888) : Colors.white,
+                color: isSelected ? Colors.white : const Color(0xFF888888),
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -205,6 +227,11 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
           style: TextStyle(color: Color(0xFF666666)),
         ),
       );
+    }
+
+    // 安全检查索引
+    if (_selectedIndex >= _presets.length) {
+      _selectedIndex = 0;
     }
 
     final preset = _presets[_selectedIndex];
@@ -245,11 +272,18 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
                 ),
               ),
               const SizedBox(width: 12),
-              // 删除按钮
               IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
+                icon: const Icon(Icons.save, size: 20),
+                color: const Color(0xFF888888),
+                onPressed: _savePresets,
+                tooltip: '保存',
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.delete, size: 20),
+                color: const Color(0xFF888888),
                 onPressed: _deletePreset,
-                tooltip: '删除此预设',
+                tooltip: '删除',
               ),
             ],
           ),
@@ -281,6 +315,7 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
   }
 
   void _addPreset() {
+    if (!mounted) return;
     setState(() {
       _presets.add({
         'name': '新预设 ${_presets.length + 1}',
@@ -293,12 +328,15 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
 
   void _deletePreset() {
     if (_presets.length <= 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('至少保留一个预设')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('至少保留一个预设')),
+        );
+      }
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       _presets.removeAt(_selectedIndex);
       if (_selectedIndex >= _presets.length) {
@@ -310,6 +348,7 @@ class _CharacterPromptManagerState extends State<CharacterPromptManager> {
 
   void _confirmSelection() {
     if (_presets.isEmpty) return;
+    if (_selectedIndex >= _presets.length) _selectedIndex = 0;
     
     final selected = _presets[_selectedIndex];
     Navigator.pop(context, selected);

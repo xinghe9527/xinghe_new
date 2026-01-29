@@ -6,7 +6,7 @@ import '../domain/models/script_line.dart';
 import '../domain/models/entity.dart';
 import '../domain/models/storyboard.dart';
 import '../domain/models/video_clip.dart';
-import '../data/mock_ai_service.dart';
+import '../data/real_ai_service.dart';
 
 /// 工作流控制器（使用 ValueNotifier 进行状态管理）
 class WorkflowController {
@@ -16,7 +16,7 @@ class WorkflowController {
   final ValueNotifier<String?> errorMessageNotifier;
   final String? projectId;  // 作品ID，用于保存/加载
   
-  final MockAIService _aiService = MockAIService();
+  final RealAIService _aiService = RealAIService(); // ✅ 使用真实 AI 服务
 
   WorkflowController({
     required Project initialProject,
@@ -269,6 +269,99 @@ class WorkflowController {
   void confirmStoryboard(String id) {
     final storyboard = project.storyboards.firstWhere((sb) => sb.id == id);
     updateStoryboard(id, storyboard.copyWith(isConfirmed: true));
+  }
+
+  /// 🔥 批量生成所有分镜图片
+  Future<void> batchGenerateAllStoryboardImages() async {
+    try {
+      isLoadingNotifier.value = true;
+      errorMessageNotifier.value = null;
+      
+      int successCount = 0;
+      int failCount = 0;
+      
+      // 找出所有还没有图片的剧本行
+      final scriptLinesToGenerate = project.scriptLines.where((line) {
+        final hasImage = project.storyboards.any(
+          (sb) => sb.scriptLineId == line.id && sb.imageUrl.isNotEmpty,
+        );
+        return !hasImage;
+      }).toList();
+      
+      if (scriptLinesToGenerate.isEmpty) {
+        errorMessageNotifier.value = '所有分镜都已生成图片';
+        return;
+      }
+      
+      // 并发生成所有图片（限制并发数为 3）
+      for (int i = 0; i < scriptLinesToGenerate.length; i += 3) {
+        final batch = scriptLinesToGenerate.skip(i).take(3).toList();
+        final futures = batch.map((line) async {
+          try {
+            await generateStoryboard(line.id);
+            successCount++;
+          } catch (e) {
+            failCount++;
+            debugPrint('生成分镜失败 [${line.id}]: $e');
+          }
+        });
+        await Future.wait(futures);
+      }
+      
+      errorMessageNotifier.value = '批量生成完成：成功 $successCount 个，失败 $failCount 个';
+    } catch (e) {
+      errorMessageNotifier.value = '批量生成失败：$e';
+    } finally {
+      isLoadingNotifier.value = false;
+    }
+  }
+
+  /// 🔥 批量生成所有分镜视频
+  Future<void> batchGenerateAllStoryboardVideos() async {
+    try {
+      isLoadingNotifier.value = true;
+      errorMessageNotifier.value = null;
+      
+      int successCount = 0;
+      int failCount = 0;
+      
+      // 找出所有已确认的分镜（有图片）但还没有视频的
+      final storyboardsToGenerate = project.storyboards.where((sb) {
+        final hasVideo = project.videoClips.any(
+          (clip) => clip.storyboardId == sb.id,
+        );
+        return sb.imageUrl.isNotEmpty && !hasVideo;
+      }).toList();
+      
+      if (storyboardsToGenerate.isEmpty) {
+        errorMessageNotifier.value = '没有可生成视频的分镜（需要先生成图片）';
+        return;
+      }
+      
+      // 并发生成所有视频（限制并发数为 2，因为视频生成较慢）
+      for (int i = 0; i < storyboardsToGenerate.length; i += 2) {
+        final batch = storyboardsToGenerate.skip(i).take(2).toList();
+        final futures = batch.map((sb) async {
+          try {
+            await generateVideoClip(
+              storyboardId: sb.id,
+              mode: VideoGenerationMode.imageToVideo,
+            );
+            successCount++;
+          } catch (e) {
+            failCount++;
+            debugPrint('生成视频失败 [${sb.id}]: $e');
+          }
+        });
+        await Future.wait(futures);
+      }
+      
+      errorMessageNotifier.value = '批量生成完成：成功 $successCount 个，失败 $failCount 个';
+    } catch (e) {
+      errorMessageNotifier.value = '批量生成失败：$e';
+    } finally {
+      isLoadingNotifier.value = false;
+    }
   }
 
   // ==================== 第4步：视频生成 ====================

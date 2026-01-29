@@ -203,27 +203,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
                       fontWeight: FontWeight.bold,
                     ),
                 ),
-                const Spacer(),
-                // 角色按钮
-                _buildToolButton(
-                  icon: Icons.person,
-                  label: '角色',
-                  onTap: _openCharacterGeneration,
-                ),
-                  const SizedBox(width: 12),
-                  // 场景按钮
-                  _buildToolButton(
-                    icon: Icons.landscape,
-                    label: '场景',
-                    onTap: _openSceneGeneration,
-                  ),
-                  const SizedBox(width: 12),
-                  // 物品按钮
-                  _buildToolButton(
-                    icon: Icons.category,
-                    label: '物品',
-                    onTap: _openItemGeneration,
-                  ),
                 ],
               ),
             ),

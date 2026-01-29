@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/features/home/presentation/settings_page.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
+import 'dart:io';
 import 'widgets/custom_title_bar.dart';
 import 'scene_prompt_manager.dart';
 import 'style_reference_dialog.dart';
+import 'asset_library_selector.dart';
 
 /// 场景生成页面
 class SceneGenerationPage extends StatefulWidget {
@@ -294,21 +297,38 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> {
                       bottomRight: Radius.circular(12),
                     ),
                   ),
-                  child: scene.imageUrl != null && scene.imageUrl!.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: const BorderRadius.only(
-                            topRight: Radius.circular(12),
-                            bottomRight: Radius.circular(12),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: scene.imageUrl != null && scene.imageUrl!.isNotEmpty
+                            ? GestureDetector(
+                                onTap: () => _viewImage(scene.imageUrl!),
+                                onSecondaryTapDown: (details) => _showImageContextMenu(context, details, scene.imageUrl!),
+                                child: ClipRRect(
+                                  borderRadius: const BorderRadius.only(
+                                    topRight: Radius.circular(12),
+                                    bottomRight: Radius.circular(12),
+                                  ),
+                                  child: _buildImageWidget(scene.imageUrl!),
+                                ),
+                              )
+                            : _buildImagePlaceholder(),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: IconButton(
+                          icon: const Icon(Icons.add_photo_alternate, size: 20),
+                          color: const Color(0xFF888888),
+                          onPressed: () => _showImageSourceMenu(context, index),
+                          tooltip: '添加图片',
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black.withValues(alpha: 0.6),
                           ),
-                          child: Image.network(
-                            scene.imageUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return _buildImagePlaceholder();
-                            },
-                          ),
-                        )
-                      : _buildImagePlaceholder(),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -428,9 +448,9 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> {
     if (mounted) {
       setState(() {
         for (var i = 0; i < _scenes.length; i++) {
-          _scenes[i] = _scenes[i].copyWith(
-            imageUrl: 'https://picsum.photos/seed/${_scenes[i].id}/800/450',
-          );
+          final imageUrl = 'https://picsum.photos/seed/${_scenes[i].id}/800/450';
+          _scenes[i] = _scenes[i].copyWith(imageUrl: imageUrl);
+          _saveImageToLocal(imageUrl, 'scene_${_scenes[i].id}');
         }
       });
       await _saveSceneData();
@@ -440,6 +460,168 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> {
           SnackBar(content: Text('✅ 已为 ${_scenes.length} 个场景生成图片')),
         );
       }
+    }
+  }
+
+  void _showImageSourceMenu(BuildContext context, int index) {
+    showMenu(
+      context: context,
+      position: const RelativeRect.fromLTRB(100, 100, 0, 0),
+      items: const [
+        PopupMenuItem(
+          value: 'library',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('场景素材库', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'local',
+          child: Row(
+            children: [
+              Icon(Icons.file_upload, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('本地图片', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'library') {
+        _selectFromLibrary(index);
+      } else if (value == 'local') {
+        _insertLocalImage(index);
+      }
+    });
+  }
+
+  Future<void> _selectFromLibrary(int index) async {
+    final selectedPath = await showDialog<String>(
+      context: context,
+      builder: (context) => const AssetLibrarySelector(
+        category: AssetCategory.scene,  // 只显示场景素材
+      ),
+    );
+
+    if (selectedPath != null && mounted) {
+      setState(() {
+        _scenes[index] = _scenes[index].copyWith(imageUrl: selectedPath);
+      });
+      await _saveSceneData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已从素材库选择图片')),
+        );
+      }
+    }
+  }
+
+  Future<void> _insertLocalImage(int index) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.isNotEmpty && mounted) {
+      final filePath = result.files.first.path!;
+      setState(() {
+        _scenes[index] = _scenes[index].copyWith(imageUrl: filePath);
+      });
+      await _saveSceneData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已插入图片')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveImageToLocal(String imageUrl, String filename) async {
+    try {
+      final savePath = imageSavePathNotifier.value;
+      if (savePath == '未设置' || savePath.isEmpty) return;
+      debugPrint('保存图片到: $savePath/$filename.png');
+    } catch (e) {
+      debugPrint('保存图片失败: $e');
+    }
+  }
+
+  void _viewImage(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: InteractiveViewer(
+            child: _buildImageWidget(imageUrl),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showImageContextMenu(BuildContext context, TapDownDetails details, String imageUrl) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'open_folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'open_folder') {
+        _openSaveFolder();
+      }
+    });
+  }
+
+  void _openSaveFolder() async {
+    final savePath = imageSavePathNotifier.value;
+    if (savePath != '未设置' && savePath.isNotEmpty) {
+      try {
+        if (Platform.isWindows) {
+          Process.run('explorer', [savePath]);
+        } else if (Platform.isMacOS) {
+          Process.run('open', [savePath]);
+        } else if (Platform.isLinux) {
+          Process.run('xdg-open', [savePath]);
+        }
+      } catch (e) {
+        debugPrint('打开文件夹失败: $e');
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请先在设置中配置图片保存路径')),
+        );
+      }
+    }
+  }
+
+  Widget _buildImageWidget(String imageUrl) {
+    if (imageUrl.startsWith('http')) {
+      return Image.network(imageUrl, fit: BoxFit.cover);
+    } else {
+      return Image.file(File(imageUrl), fit: BoxFit.cover);
     }
   }
 }

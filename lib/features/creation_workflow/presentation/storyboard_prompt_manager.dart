@@ -62,6 +62,13 @@ class _StoryboardPromptManagerState extends State<StoryboardPromptManager> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('storyboard_prompt_presets', jsonEncode(_presets));
+      
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已保存'), duration: Duration(seconds: 1)),
+        );
+      }
     } catch (e) {
       debugPrint('保存分镜提示词失败: $e');
     }
@@ -151,7 +158,7 @@ class _StoryboardPromptManagerState extends State<StoryboardPromptManager> {
             title: Text(
               _presets[index]['name'] ?? '',
               style: TextStyle(
-                color: index == _selectedIndex ? const Color(0xFF888888) : Colors.white,
+                color: index == _selectedIndex ? Colors.white : const Color(0xFF888888),
                 fontWeight: index == _selectedIndex ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -169,6 +176,7 @@ class _StoryboardPromptManagerState extends State<StoryboardPromptManager> {
       return const Center(child: Text('请先创建一个预设', style: TextStyle(color: Color(0xFF666666))));
     }
 
+    if (_selectedIndex >= _presets.length) _selectedIndex = 0;
     final preset = _presets[_selectedIndex];
     
     return Container(
@@ -201,8 +209,17 @@ class _StoryboardPromptManagerState extends State<StoryboardPromptManager> {
               ),
               const SizedBox(width: 12),
               IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
+                icon: const Icon(Icons.save, size: 20),
+                color: const Color(0xFF888888),
+                onPressed: _savePresets,
+                tooltip: '保存',
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.delete, size: 20),
+                color: const Color(0xFF888888),
                 onPressed: _deletePreset,
+                tooltip: '删除',
               ),
             ],
           ),
