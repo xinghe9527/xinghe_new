@@ -145,7 +145,7 @@ class _AssetLibrarySelectorState extends State<AssetLibrarySelector> {
               Icon(
                 Icons.inventory_outlined,
                 size: 80,
-                color: Colors.white.withValues(alpha: 0.1),
+                color: Colors.white.withOpacity( 0.1),
               ),
               const SizedBox(height: 16),
               Text(

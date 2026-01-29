@@ -272,7 +272,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             color: const Color(0xFF888888),
             tooltip: '分镜提示词',
             style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFF3A3A3C).withValues(alpha: 0.3),
+              backgroundColor: const Color(0xFF3A3A3C).withOpacity( 0.3),
             ),
           ),
           const SizedBox(width: 12),
@@ -539,7 +539,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.movie_outlined, size: 80, color: Colors.white.withValues(alpha: 0.1)),
+          Icon(Icons.movie_outlined, size: 80, color: Colors.white.withOpacity( 0.1)),
           const SizedBox(height: 24),
           const Text('还没有分镜', style: TextStyle(color: Color(0xFF666666), fontSize: 16)),
           const SizedBox(height: 12),
@@ -573,7 +573,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         border: Border.all(color: const Color(0xFF3A3A3C), width: 2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
+            color: Colors.black.withOpacity( 0.3),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -843,7 +843,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF3A3A3C).withValues(alpha: 0.3),
+                  backgroundColor: const Color(0xFF3A3A3C).withOpacity( 0.3),
                   padding: const EdgeInsets.all(8),
                 ),
               ),
@@ -947,7 +947,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                           child: Icon(
                             Icons.image_outlined,
                             size: 24,
-                            color: Colors.white.withValues(alpha: 0.1),
+                            color: Colors.white.withOpacity( 0.1),
                           ),
                         ),
                 ),
@@ -964,7 +964,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               color: const Color(0xFF888888),
               tooltip: '生成图片',
               style: IconButton.styleFrom(
-                backgroundColor: Colors.black.withValues(alpha: 0.7),
+                backgroundColor: Colors.black.withOpacity( 0.7),
                 padding: const EdgeInsets.all(6),
               ),
             ),
@@ -1085,7 +1085,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF3A3A3C).withValues(alpha: 0.3),
+                  backgroundColor: const Color(0xFF3A3A3C).withOpacity( 0.3),
                   padding: const EdgeInsets.all(8),
                 ),
               ),
@@ -1181,7 +1181,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                           child: Icon(
                             Icons.videocam_outlined,
                             size: 24,
-                            color: Colors.white.withValues(alpha: 0.1),
+                            color: Colors.white.withOpacity( 0.1),
                           ),
                         ),
                 ),
@@ -1200,7 +1200,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               color: const Color(0xFF888888),
               tooltip: '生成视频',
               style: IconButton.styleFrom(
-                backgroundColor: Colors.black.withValues(alpha: 0.7),
+                backgroundColor: Colors.black.withOpacity( 0.7),
                 padding: const EdgeInsets.all(6),
               ),
             ),

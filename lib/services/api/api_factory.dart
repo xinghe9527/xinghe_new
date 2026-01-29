@@ -1,6 +1,10 @@
 import 'base/api_service_base.dart';
 import 'base/api_config.dart';
 import 'providers/openai_service.dart';
+import 'providers/geeknow_service.dart';
+import 'providers/yunwu_service.dart';
+import 'providers/deepseek_service.dart';
+import 'providers/aliyun_service.dart';  // ✅ 导入 AliyunService
 import 'providers/custom_service.dart';
 import 'providers/gemini_image_service.dart';
 import 'providers/gemini_pro_image_service.dart';
@@ -23,13 +27,26 @@ class ApiFactory {
       case 'openai':
         return OpenAIService(config);
       
+      case 'geeknow':
+        return GeekNowService(config);
+      
+      case 'yunwu':
+        return YunwuService(config);
+      
+      case 'deepseek':
+        return DeepSeekService(config);
+      
+      case 'aliyun':  // ✅ 添加阿里云支持
+      case 'qwen':
+      case 'tongyi':
+        return AliyunService(config);
+      
       case 'gemini':
       case 'gemini-image':
         return GeminiImageService(config);
       
       case 'gemini-3-pro-image':
       case 'gemini-pro-image':
-      case 'yunwu':
         return GeminiProImageService(config);
       
       case 'midjourney':

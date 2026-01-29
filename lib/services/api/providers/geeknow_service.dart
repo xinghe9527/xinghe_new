@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../base/api_service_base.dart';
 import '../base/api_response.dart';
@@ -24,21 +25,55 @@ class GeekNowService extends ApiServiceBase {
 
   @override
   String get providerName => 'GeekNow';
+  
+  // 日志辅助方法
+  void _logRequest(String endpoint, Map<String, dynamic> body) {
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    debugPrint('🔵 GeekNow API 请求');
+    debugPrint('📍 URL: ${config.baseUrl}$endpoint');
+    debugPrint('🔑 API Key: ${config.apiKey.substring(0, 10)}...');
+    debugPrint('📦 请求体: ${jsonEncode(body)}');
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
+  
+  void _logResponse(int statusCode, String body) {
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    debugPrint('🟢 GeekNow API 响应');
+    debugPrint('📊 状态码: $statusCode');
+    debugPrint('📄 响应体: ${body.length > 500 ? "${body.substring(0, 500)}..." : body}');
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
 
   @override
   Future<ApiResponse<bool>> testConnection() async {
     try {
-      // 测试连接
+      // ✅ 清理 Base URL，去除末尾的斜杠
+      final cleanBaseUrl = config.baseUrl.endsWith('/') 
+          ? config.baseUrl.substring(0, config.baseUrl.length - 1)
+          : config.baseUrl;
+      
+      final testUrl = '$cleanBaseUrl/models';  // ← 去掉 /v1
+      debugPrint('🔍 测试连接: $testUrl');
+      
       final response = await http.get(
-        Uri.parse('${config.baseUrl}/v1/models'),
+        Uri.parse(testUrl),
         headers: {'Authorization': 'Bearer ${config.apiKey}'},
       ).timeout(const Duration(seconds: 10));
 
-      return ApiResponse.success(
-        response.statusCode == 200,
-        statusCode: response.statusCode,
-      );
+      debugPrint('📊 测试响应: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        debugPrint('✅ 测试成功');
+        return ApiResponse.success(true, statusCode: response.statusCode);
+      } else {
+        debugPrint('❌ 测试失败: ${response.body}');
+        return ApiResponse.failure(
+          '测试失败: ${response.statusCode}',
+          statusCode: response.statusCode,
+        );
+      }
     } catch (e) {
+      debugPrint('💥 测试异常: $e');
       return ApiResponse.failure('连接测试失败: $e');
     }
   }
@@ -46,51 +81,162 @@ class GeekNowService extends ApiServiceBase {
   // ==================== LLM 区域 ====================
 
   @override
-  Future<ApiResponse<LlmResponse>> generateText({
-    required String prompt,
+  Future<ApiResponse<LlmResponse>> generateTextWithMessages({
+    required List<Map<String, String>> messages,
     String? model,
     Map<String, dynamic>? parameters,
   }) async {
     try {
+      final useModel = model ?? config.model ?? 'gpt-4';
       final requestBody = {
-        'model': model ?? config.model ?? 'gpt-4',
-        'messages': [
-          {'role': 'user', 'content': prompt}
-        ],
+        'model': useModel,
+        'messages': messages,  // ✅ 直接使用传入的 messages 数组
         ...?parameters,
       };
 
+      // ✅ 完全使用用户配置的 Base URL，只添加端点路径
+      final cleanBaseUrl = config.baseUrl.endsWith('/') 
+          ? config.baseUrl.substring(0, config.baseUrl.length - 1)
+          : config.baseUrl;
+      
+      // 📋 直接使用端点路径，不添加 /v1（用户的 Base URL 已包含）
+      final endpoint = '/chat/completions';  // ← 去掉 /v1
+      final fullUrl = '$cleanBaseUrl$endpoint';
+      
+      // ✅ 使用 print 确保输出到控制台
+      print('\n');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🚀 GeekNow LLM 请求');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('📍 原始 Base URL: ${config.baseUrl}');
+      print('📍 清理后 Base URL: $cleanBaseUrl');
+      print('📍 端点路径: $endpoint');
+      print('📍 完整 URL: $fullUrl');
+      print('🔑 API Key: ${config.apiKey.substring(0, 15)}...');
+      print('🎯 模型: $useModel');
+      print('📝 Messages 数量: ${messages.length} 条');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      _logRequest(endpoint, requestBody);
+      
+      print('🌐 开始发送 HTTP POST 请求...');
+      final uri = Uri.parse(fullUrl);
+      print('🔗 URI 对象: $uri');
+      print('   - scheme: ${uri.scheme}');
+      print('   - host: ${uri.host}');
+      print('   - port: ${uri.port}');
+      print('   - path: ${uri.path}');
+      
+      final startTime = DateTime.now();
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/v1/chat/completions'),
+        uri,
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
         },
         body: jsonEncode(requestBody),
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          debugPrint('⏰ 请求超时（30秒）');
+          throw Exception('请求超时');
+        },
       );
+      
+      final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+      print('✅ HTTP 请求已返回，耗时: ${elapsed}ms');
+      
+      print('\n');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('📨 GeekNow 响应');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('⏱️ 请求耗时: ${elapsed}ms');
+      print('📊 状态码: ${response.statusCode}');
+      print('📋 Content-Type: ${response.headers['content-type']}');
+      print('📄 响应体前500字符:');
+      print(response.body.substring(0, response.body.length > 500 ? 500 : response.body.length));
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      _logResponse(response.statusCode, response.body);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final text = data['choices'][0]['message']['content'] as String;
-        final tokensUsed = data['usage']?['total_tokens'] as int?;
+      // ✅ 接受所有 2xx 状态码为成功
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          debugPrint('📄 开始解析响应...');
+          debugPrint('响应体类型: ${response.headers['content-type']}');
+          debugPrint('响应体长度: ${response.body.length}');
+          debugPrint('响应体内容: ${response.body.substring(0, response.body.length > 1000 ? 1000 : response.body.length)}');
+          
+          final data = jsonDecode(response.body);
+          debugPrint('✅ JSON 解析成功');
+          debugPrint('数据结构: ${data.keys}');
+          
+          final text = data['choices'][0]['message']['content'] as String;
+          final tokensUsed = data['usage']?['total_tokens'] as int?;
 
-        return ApiResponse.success(
-          LlmResponse(
-            text: text,
-            tokensUsed: tokensUsed,
-            metadata: data,
-          ),
-          statusCode: 200,
-        );
+          debugPrint('✅ LLM 生成成功，返回文本长度: ${text.length}');
+          
+          return ApiResponse.success(
+            LlmResponse(
+              text: text,
+              tokensUsed: tokensUsed,
+              metadata: data,
+            ),
+            statusCode: response.statusCode,
+          );
+        } catch (e) {
+          debugPrint('❌ 解析响应失败: $e');
+          debugPrint('原始响应: ${response.body}');
+          return ApiResponse.failure(
+            '解析响应失败: $e\n状态码: ${response.statusCode}\n响应体前500字符: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}',
+            statusCode: response.statusCode,
+          );
+        }
       } else {
+        debugPrint('❌ LLM 生成失败');
+        debugPrint('状态码: ${response.statusCode}');
+        debugPrint('完整URL: $fullUrl');
+        debugPrint('响应体: ${response.body}');
+        
+        // ✅ 返回详细的错误信息给用户
+        String errorDetail = '状态码: ${response.statusCode}\n'
+            '请求URL: $fullUrl\n'
+            '使用模型: $useModel\n';
+        
+        // 如果响应是 HTML（通常是 404 页面），提取有用信息
+        if (response.body.toLowerCase().contains('<!doctype html>') || 
+            response.body.toLowerCase().contains('<html>')) {
+          errorDetail += '响应: 返回了 HTML 页面（可能端点不存在）';
+        } else {
+          errorDetail += '响应: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}...';
+        }
+        
         return ApiResponse.failure(
-          'LLM 生成失败: ${response.statusCode} - ${response.body}',
+          errorDetail,
           statusCode: response.statusCode,
         );
       }
     } catch (e) {
-      return ApiResponse.failure('LLM 生成错误: $e');
+      debugPrint('💥 LLM 生成异常: $e');
+      debugPrint('完整错误堆栈: ${e.toString()}');
+      return ApiResponse.failure('网络请求异常: $e');
     }
+  }
+
+  /// ✅ 简单接口：单个 prompt 转为 messages 格式
+  @override
+  Future<ApiResponse<LlmResponse>> generateText({
+    required String prompt,
+    String? model,
+    Map<String, dynamic>? parameters,
+  }) async {
+    return await generateTextWithMessages(
+      messages: [
+        {'role': 'user', 'content': prompt}
+      ],
+      model: model,
+      parameters: parameters,
+    );
   }
 
   // ==================== 图片生成区域 ====================
@@ -132,8 +278,9 @@ class GeekNowService extends ApiServiceBase {
         ...?parameters,
       };
 
+      // ✅ 直接使用用户配置的 baseUrl
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/v1/chat/completions'),
+        Uri.parse('${config.baseUrl}/chat/completions'),  // ← 去掉 /v1
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -252,7 +399,7 @@ class GeekNowService extends ApiServiceBase {
       // 使用 multipart/form-data 格式
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('${config.baseUrl}/v1/videos'),
+        Uri.parse('${config.baseUrl}/videos'),  // ← 去掉 /v1
       );
 
       request.headers['Authorization'] = 'Bearer ${config.apiKey}';
@@ -334,7 +481,7 @@ class GeekNowService extends ApiServiceBase {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('${config.baseUrl}/v1/videos/$taskId'),
+        Uri.parse('${config.baseUrl}/videos/$taskId'),  // ← 去掉 /v1
         headers: {'Authorization': 'Bearer ${config.apiKey}'},
       );
 
@@ -373,7 +520,7 @@ class GeekNowService extends ApiServiceBase {
       };
 
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/v1/videos/$videoId/remix'),
+        Uri.parse('${config.baseUrl}/videos/$videoId/remix'),  // ← 去掉 /v1
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -420,7 +567,7 @@ class GeekNowService extends ApiServiceBase {
       if (fromTask != null) requestBody['from_task'] = fromTask;
 
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/sora/v1/characters'),
+        Uri.parse('${config.baseUrl}/sora/characters'),
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -490,7 +637,7 @@ class GeekNowService extends ApiServiceBase {
     try {
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('${config.baseUrl}/v1/files'),
+        Uri.parse('${config.baseUrl}/files'),  // ← 去掉 /v1
       );
 
       request.headers['Authorization'] = 'Bearer ${config.apiKey}';
@@ -529,7 +676,7 @@ class GeekNowService extends ApiServiceBase {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('${config.baseUrl}/v1/models'),
+        Uri.parse('${config.baseUrl}/models'),  // ← 去掉 /v1
         headers: {'Authorization': 'Bearer ${config.apiKey}'},
       );
 

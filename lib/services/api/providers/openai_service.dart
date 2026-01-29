@@ -36,17 +36,15 @@ class OpenAIService extends ApiServiceBase {
   }
 
   @override
-  Future<ApiResponse<LlmResponse>> generateText({
-    required String prompt,
+  Future<ApiResponse<LlmResponse>> generateTextWithMessages({
+    required List<Map<String, String>> messages,
     String? model,
     Map<String, dynamic>? parameters,
   }) async {
     try {
       final requestBody = {
         'model': model ?? config.model ?? 'gpt-4',
-        'messages': [
-          {'role': 'user', 'content': prompt}
-        ],
+        'messages': messages,  // ✅ 直接使用传入的 messages
         ...?parameters,
       };
 
@@ -81,6 +79,21 @@ class OpenAIService extends ApiServiceBase {
     } catch (e) {
       return ApiResponse.failure('生成错误: $e');
     }
+  }
+
+  @override
+  Future<ApiResponse<LlmResponse>> generateText({
+    required String prompt,
+    String? model,
+    Map<String, dynamic>? parameters,
+  }) async {
+    return await generateTextWithMessages(
+      messages: [
+        {'role': 'user', 'content': prompt}
+      ],
+      model: model,
+      parameters: parameters,
+    );
   }
 
   @override

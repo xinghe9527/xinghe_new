@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 import '../../../creation_workflow/presentation/creation_mode_selector.dart';
 import '../../../creation_workflow/presentation/workspace_page.dart';
+import '../../../creation_workflow/presentation/story_input_page.dart';  // ✅ 导入故事输入页
 
 class CreationSpace extends StatefulWidget {
   const CreationSpace({super.key});
@@ -500,35 +501,67 @@ class _CreationSpaceState extends State<CreationSpace> {
 
   /// 打开作品空间
   Future<void> _openManualMode(Work work) async {
-    // 检查作品是否已经完成了选择步骤
-    final hasSelectedMode = await _checkWorkHasSelectedMode(work.id);
-    
-    if (!mounted) return;
-    
-    if (hasSelectedMode) {
-      // 已选择创作方式，直接打开作品空间
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => WorkspacePage(
-            initialScript: '',  // 从保存的数据加载
-            sourceType: '已有作品',
-            workId: work.id,
-            workName: work.title,
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final workJson = prefs.getString('work_${work.id}');
+      
+      String? currentPage;
+      String? sourceType;
+      
+      if (workJson != null && workJson.isNotEmpty) {
+        final data = jsonDecode(workJson) as Map<String, dynamic>;
+        currentPage = data['currentPage'] as String?;
+        sourceType = data['sourceType'] as String?;
+      }
+      
+      if (!mounted) return;
+      
+      debugPrint('📖 打开作品: ${work.title}');
+      debugPrint('   currentPage: $currentPage');
+      debugPrint('   sourceType: $sourceType');
+      
+      // ✅ 根据 currentPage 决定打开哪个页面
+      if (currentPage == 'story_input') {
+        // 还在故事输入阶段，返回故事输入页
+        debugPrint('   → 打开故事输入页');
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => StoryInputPage(
+              workId: work.id,
+              workName: work.title,
+            ),
+            fullscreenDialog: true,
           ),
-          fullscreenDialog: true,
-        ),
-      );
-    } else {
-      // 未选择创作方式，打开选择界面
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => CreationModeSelector(
-            workId: work.id,
-            workName: work.title,
+        );
+      } else if (currentPage == 'workspace' || sourceType != null) {
+        // 已进入剧本空间，或有任何保存数据，打开剧本空间
+        debugPrint('   → 打开剧本空间');
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => WorkspacePage(
+              initialScript: '',  // 从保存的数据加载
+              sourceType: '已有作品',
+              workId: work.id,
+              workName: work.title,
+            ),
+            fullscreenDialog: true,
           ),
-          fullscreenDialog: true,
-        ),
-      );
+        );
+      } else {
+        // 全新作品，打开创作模式选择器
+        debugPrint('   → 打开创作模式选择器');
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => CreationModeSelector(
+              workId: work.id,
+              workName: work.title,
+            ),
+            fullscreenDialog: true,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('打开作品失败: $e');
     }
     
     // 返回后重新加载作品列表（可能有更新）
@@ -537,23 +570,6 @@ class _CreationSpaceState extends State<CreationSpace> {
     }
   }
 
-  /// 检查作品是否已经选择了创作方式
-  Future<bool> _checkWorkHasSelectedMode(String workId) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final workJson = prefs.getString('work_$workId');
-      
-      if (workJson != null && workJson.isNotEmpty) {
-        final data = jsonDecode(workJson) as Map<String, dynamic>;
-        // 如果有剧本内容，说明已经选择了创作方式
-        final script = data['script'] as String?;
-        return script != null && script.isNotEmpty;
-      }
-    } catch (e) {
-      debugPrint('检查作品状态失败: $e');
-    }
-    return false;
-  }
 
   /// 显示作品右键菜单
   void _showWorkContextMenu(BuildContext context, TapDownDetails details, Work work) {

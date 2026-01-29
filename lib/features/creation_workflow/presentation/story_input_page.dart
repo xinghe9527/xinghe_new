@@ -3,11 +3,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'widgets/custom_title_bar.dart';
 import 'prompt_preset_manager.dart';
 import 'workspace_page.dart';
 import '../data/real_ai_service.dart';
-import '../domain/models/script_line.dart';
 
 /// 故事输入页面（故事→剧本）
 class StoryInputPage extends StatefulWidget {
@@ -33,6 +33,7 @@ class _StoryInputPageState extends State<StoryInputPage> {
   String _selectedPresetContent = '';
   bool _isGenerating = false;
   bool _showSettings = false;
+  Timer? _saveDebounceTimer; // ✅ 防抖定时器
 
   @override
   void initState() {
@@ -73,12 +74,14 @@ class _StoryInputPageState extends State<StoryInputPage> {
         'story': _storyController.text,
         'script': _scriptController.text,
         'sourceType': '故事输入',
+        'currentPage': 'story_input',  // ✅ 记录当前在故事输入页
         // 保存当前作品选择的提示词预设
         'selectedPresetName': _selectedPresetName,
         'selectedPresetContent': _selectedPresetContent,
         'updatedAt': DateTime.now().toIso8601String(),
       };
       await prefs.setString('work_${widget.workId}', jsonEncode(data));
+      debugPrint('💾 保存故事输入状态: currentPage = story_input');
     } catch (e) {
       debugPrint('保存作品数据失败: $e');
     }
@@ -86,9 +89,19 @@ class _StoryInputPageState extends State<StoryInputPage> {
 
   @override
   void dispose() {
+    _saveDebounceTimer?.cancel(); // ✅ 取消防抖定时器
     _storyController.dispose();
     _scriptController.dispose();
     super.dispose();
+  }
+
+  /// ✅ 防抖保存 - 避免频繁保存
+  void _debouncedSave() {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(seconds: 1), () {
+      _saveWorkData();
+      debugPrint('💾 故事内容已自动保存');
+    });
   }
 
   @override
@@ -161,6 +174,7 @@ class _StoryInputPageState extends State<StoryInputPage> {
                 border: InputBorder.none,
                 contentPadding: EdgeInsets.all(16),
               ),
+              onChanged: (_) => _debouncedSave(), // ✅ 添加自动保存（防抖1秒）
             ),
           ),
         ],
@@ -302,14 +316,14 @@ class _StoryInputPageState extends State<StoryInputPage> {
     setState(() => _isGenerating = true);
 
     try {
-      // ✅ 调用真实 LLM API 生成剧本
-      final scriptLines = await _aiService.generateScript(theme: story);
+      // ✅ 调用真实 LLM API 生成剧本（传递提示词预设）
+      final scriptLines = await _aiService.generateScript(
+        theme: story,
+        presetPrompt: _selectedPresetContent.isNotEmpty ? _selectedPresetContent : null,  // ✅ 传递提示词
+      );
       
-      // 将生成的剧本行转换为文本格式
-      final scriptText = scriptLines.map((line) {
-        String prefix = line.type == ScriptLineType.dialogue ? '【对白】' : '【场景】';
-        return '$prefix${line.content}\nAI提示词：${line.aiPrompt}\n';
-      }).join('\n');
+      // ✅ 直接使用 API 返回的内容（不添加任何前缀）
+      final scriptText = scriptLines.map((line) => line.content).join('\n\n');
 
       if (mounted) {
         setState(() {
@@ -328,12 +342,99 @@ class _StoryInputPageState extends State<StoryInputPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ 生成失败：$e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        // ✅ 检查是否是内容过长的特定错误
+        if (e.toString().contains('CONTENT_TOO_LONG')) {
+          // 显示内容过长的提示
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E20),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_rounded, color: Color(0xFFFFA726), size: 28),
+                  SizedBox(width: 12),
+                  Text(
+                    '⚠️ 生成内容过多',
+                    style: TextStyle(color: Color(0xFFFFA726)),
+                  ),
+                ],
+              ),
+              content: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '您的故事内容生成的剧本过长，已达到最大限制（8000 tokens）。',
+                    style: TextStyle(color: Colors.white, fontSize: 14, height: 1.5),
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    '📌 提示：',
+                    style: TextStyle(color: Color(0xFF00E5FF), fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '过长的剧本不利于后续的分镜制作和视频生成。',
+                    style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    '💡 建议：',
+                    style: TextStyle(color: Color(0xFF00E5FF), fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '1. 精简故事内容，保留核心情节\n'
+                    '2. 去掉不必要的细节描写\n'
+                    '3. 或将故事分成多个章节，分别制作',
+                    style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('我知道了', style: TextStyle(color: Color(0xFF00E5FF))),
+                ),
+              ],
+            ),
+          );
+        } else {
+          // 显示其他错误
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E20),
+              title: const Text(
+                '❌ 生成失败',
+                style: TextStyle(color: Colors.red),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '错误详情：',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      e.toString(),
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('确定'),
+                ),
+              ],
+            ),
+          );
+        }
       }
     } finally {
       if (mounted) {

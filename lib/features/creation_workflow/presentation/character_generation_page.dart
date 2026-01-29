@@ -163,7 +163,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                           color: const Color(0xFF888888),
                           tooltip: '角色提示词（当前：$_selectedPromptName）',
                           style: IconButton.styleFrom(
-                            backgroundColor: const Color(0xFF3A3A3C).withValues(alpha: 0.3),
+                            backgroundColor: const Color(0xFF3A3A3C).withOpacity(0.3),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -235,7 +235,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
           Icon(
             Icons.person_outline,
             size: 80,
-            color: Colors.white.withValues(alpha: 0.1),
+            color: Colors.white.withOpacity(0.1),
           ),
           const SizedBox(height: 24),
           const Text(
@@ -371,7 +371,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                           onPressed: () => _showImageSourceMenu(context, index),
                           tooltip: '添加图片',
                           style: IconButton.styleFrom(
-                            backgroundColor: Colors.black.withValues(alpha: 0.6),
+                            backgroundColor: Colors.black.withOpacity(0.6),
                           ),
                         ),
                       ),
@@ -393,7 +393,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
           Icon(
             Icons.image_outlined,
             size: 60,
-            color: Colors.white.withValues(alpha: 0.1),
+            color: Colors.white.withOpacity(0.1),
           ),
           const SizedBox(height: 12),
           const Text(

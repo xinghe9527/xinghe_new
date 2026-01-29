@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'widgets/custom_title_bar.dart';
 import 'workspace_page.dart';
 
@@ -24,6 +25,7 @@ class ScriptInputPage extends StatefulWidget {
 class _ScriptInputPageState extends State<ScriptInputPage> {
   final TextEditingController _scriptController = TextEditingController();
   bool _showSettings = false;
+  Timer? _saveDebounceTimer; // ✅ 防抖定时器
 
   @override
   void initState() {
@@ -69,8 +71,18 @@ class _ScriptInputPageState extends State<ScriptInputPage> {
 
   @override
   void dispose() {
+    _saveDebounceTimer?.cancel(); // ✅ 取消防抖定时器
     _scriptController.dispose();
     super.dispose();
+  }
+
+  /// ✅ 防抖保存 - 避免频繁保存
+  void _debouncedSave() {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(seconds: 1), () {
+      _saveWorkData();
+      debugPrint('💾 剧本内容已自动保存');
+    });
   }
 
   @override
@@ -147,7 +159,7 @@ class _ScriptInputPageState extends State<ScriptInputPage> {
                   ),
                   onChanged: (_) {
                     setState(() {});
-                    _saveWorkData();  // 自动保存
+                    _debouncedSave();  // ✅ 自动保存（防抖1秒）
                   },
                 ),
               ),

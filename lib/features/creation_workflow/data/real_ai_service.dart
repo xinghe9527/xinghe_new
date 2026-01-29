@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
+import '../../../core/logger/log_manager.dart';
 import '../domain/models/script_line.dart';
 import '../domain/models/entity.dart';
 
@@ -9,6 +10,7 @@ import '../domain/models/entity.dart';
 class RealAIService {
   final ApiRepository _apiRepository = ApiRepository();
   final SecureStorageManager _storage = SecureStorageManager();
+  final LogManager _logger = LogManager();
   final Random _random = Random();
 
   /// 获取配置的 provider 和 model
@@ -46,137 +48,181 @@ class RealAIService {
   }
 
   /// 生成中文剧本
-  Future<List<ScriptLine>> generateScript({required String theme}) async {
+  Future<List<ScriptLine>> generateScript({
+    required String theme,
+    String? presetPrompt,  // ✅ 新增：剧本提示词预设
+  }) async {
+    _logger.info('🎬 开始生成剧本', module: 'RealAIService', extra: {'theme': theme});
+    
     final config = await _getLLMConfig();
     final provider = config['provider']!;
     final model = config['model'];
+    
+    // 读取完整配置用于日志
+    final apiKey = await _storage.getApiKey(provider: provider, modelType: 'llm');
+    final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'llm');
+    
+    _logger.info('📋 LLM配置信息', module: 'RealAIService', extra: {
+      'provider': provider,
+      'model': model ?? '未设置',
+      'baseUrl': baseUrl ?? '未配置',
+      'apiKey': apiKey != null ? '${apiKey.substring(0, 10)}...' : '未配置',
+    });
 
-    // 构建提示词
-    final prompt = '''你是一个专业的编剧。请根据以下主题创作一个简短的动画剧本（5-8个场景）。
+    // ✅ 简洁的提示词，不添加任何额外要求
+    final prompt = '''请根据以下主题创作一个动画剧本。
 
 主题：$theme
 
-要求：
-1. 使用中文创作
-2. 每个场景包含：场景描述（动作）或角色对白
-3. 格式：每行一个场景，明确标注【场景】或【对白】
-4. 为每个场景生成适合 AI 绘画的提示词（英文，赛博朋克/动漫风格）
-5. 添加上下文标签，帮助理解剧情
-
-示例格式：
-【场景】黎明时分，紫色的天空下，一座未来都市的轮廓渐渐清晰。
-AI提示词：Purple dawn sky, futuristic city silhouette, cyberpunk style
-标签：开场,都市,黎明
-
-【对白】主角：「又是新的一天，今天会发生什么呢？」
-AI提示词：Young protagonist on balcony, overlooking city, thoughtful expression
-标签：主角,独白,思考
+格式要求：
+- 使用中文创作
+- 每个场景用【场景】或【对白】标注
 
 现在开始创作：''';
 
+    _logger.info('📝 提示词长度', module: 'RealAIService', extra: {'length': prompt.length});
+
     try {
-      // 调用 LLM API
-      final response = await _apiRepository.generateText(
+      final startTime = DateTime.now();
+      _logger.info('🚀 开始调用 API', module: 'RealAIService');
+      
+      // ✅ 清除缓存，确保使用最新配置
+      _apiRepository.clearCache();
+      _logger.info('🔄 已清除 API 缓存', module: 'RealAIService');
+      
+      // ✅ 构建 messages 数组（提示词预设融入 user message 前面）
+      final messages = <Map<String, String>>[];
+      
+      // ✅ 将提示词预设作为用户消息的一部分（而不是 system message）
+      String fullUserPrompt = '';
+      
+      if (presetPrompt != null && presetPrompt.isNotEmpty) {
+        // 提示词预设放在最前面，作为强制指令
+        fullUserPrompt = '''【重要指令 - 必须严格遵守】
+$presetPrompt
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$prompt''';
+        
+        _logger.info('✨ 使用提示词预设（融入用户消息）', module: 'RealAIService', extra: {'preset': presetPrompt});
+        print('\n🎨 提示词预设（作为强制指令）:');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print(presetPrompt);
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      } else {
+        fullUserPrompt = prompt;
+        _logger.info('⚠️ 没有提示词预设', module: 'RealAIService');
+      }
+      
+      // 添加用户消息（包含提示词预设）
+      messages.add({
+        'role': 'user',
+        'content': fullUserPrompt,
+      });
+      
+      print('📨 完整 Messages 数组:');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      for (int i = 0; i < messages.length; i++) {
+        print('Message ${i + 1}:');
+        print('  Role: ${messages[i]['role']}');
+        print('  Content: ${messages[i]['content']!.substring(0, messages[i]['content']!.length > 200 ? 200 : messages[i]['content']!.length)}...');
+      }
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // 调用 LLM API（直接传递 messages）
+      final response = await _apiRepository.generateTextWithMessages(
         provider: provider,
-        prompt: prompt,
+        messages: messages,
         model: model,
         parameters: {
           'temperature': 0.7,
-          'max_tokens': 2000,
+          'max_tokens': 8000,  // ✅ 增加到 8000
         },
       );
+      
+      final elapsed = DateTime.now().difference(startTime).inSeconds;
+      _logger.info('⏱️ API 响应时间', module: 'RealAIService', extra: {'seconds': elapsed});
 
       if (response.isSuccess && response.data != null) {
+        final responseText = response.data!.text;
+        
+        _logger.success('✅ API 调用成功', module: 'RealAIService', extra: {
+          'responseLength': responseText.length,
+          'tokensUsed': response.data!.tokensUsed ?? 0,
+        });
+        
+        // 📄 打印 API 实际返回的完整内容
+        print('\n📄 API 返回的原始文本:');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print(responseText);
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        
+        // ✅ 检查是否因为 max_tokens 被截断
+        final metadata = response.data!.metadata;
+        if (metadata != null && metadata['choices'] != null) {
+          final finishReason = metadata['choices'][0]['finish_reason'];
+          if (finishReason == 'length') {
+            print('⚠️ 警告：剧本被截断（达到 max_tokens 限制）\n');
+            _logger.warning('剧本被截断', module: 'RealAIService', extra: {
+              'finishReason': 'length',
+              'tokensUsed': response.data!.tokensUsed,
+            });
+            // ✅ 抛出特定异常，让界面显示提示
+            throw Exception('CONTENT_TOO_LONG');
+          } else {
+            print('✅ 剧本生成完整，finish_reason: $finishReason\n');
+          }
+        }
+        
         // 解析响应文本，提取剧本行
-        return _parseScriptFromResponse(response.data!.text);
+        final scriptLines = _parseScriptFromResponse(responseText);
+        _logger.success('🎉 剧本生成成功', module: 'RealAIService', extra: {'lines': scriptLines.length});
+        
+        return scriptLines;
       } else {
-        throw Exception('生成剧本失败: ${response.error ?? "未知错误"}');
+        final errorDetail = response.error ?? '未知错误';
+        _logger.error('❌ API 返回错误', module: 'RealAIService', extra: {
+          'error': errorDetail,
+          'statusCode': response.statusCode ?? 0,
+          'provider': provider,
+          'baseUrl': baseUrl,
+          'model': model ?? '未设置',
+        });
+        
+        // ✅ 抛出包含详细调试信息的异常
+        throw Exception(
+          '生成剧本失败\n\n'
+          '【配置信息】\n'
+          'Provider: $provider\n'
+          'Model: ${model ?? "未设置"}\n'
+          'Base URL: $baseUrl\n\n'
+          '【错误详情】\n'
+          '$errorDetail'
+        );
       }
     } catch (e) {
+      _logger.error('💥 调用 API 异常', module: 'RealAIService', extra: {'exception': e.toString()});
       throw Exception('调用 API 失败: $e');
     }
   }
 
-  /// 解析 LLM 返回的剧本文本
+  /// ✅ 简化解析：直接返回 API 原始文本，不做任何解析
   List<ScriptLine> _parseScriptFromResponse(String responseText) {
-    final lines = <ScriptLine>[];
-    final sections = responseText.split('\n\n');
-
-    for (final section in sections) {
-      if (section.trim().isEmpty) continue;
-
-      final sectionLines = section.split('\n');
-      String? content;
-      String? aiPrompt;
-      List<String> tags = [];
-      ScriptLineType type = ScriptLineType.action;
-
-      for (final line in sectionLines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-
-        if (trimmed.startsWith('【场景】') || trimmed.startsWith('【动作】')) {
-          content = trimmed.replaceFirst(RegExp(r'【[^】]+】'), '').trim();
-          type = ScriptLineType.action;
-        } else if (trimmed.startsWith('【对白】') || trimmed.contains('：「')) {
-          content = trimmed.replaceFirst(RegExp(r'【[^】]+】'), '').trim();
-          type = ScriptLineType.dialogue;
-        } else if (trimmed.startsWith('AI提示词：') || trimmed.toLowerCase().startsWith('prompt:')) {
-          aiPrompt = trimmed.replaceFirst(RegExp(r'AI提示词：|prompt:', caseSensitive: false), '').trim();
-        } else if (trimmed.startsWith('标签：') || trimmed.toLowerCase().startsWith('tags:')) {
-          final tagString = trimmed.replaceFirst(RegExp(r'标签：|tags:', caseSensitive: false), '').trim();
-          tags = tagString.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-        } else if (content == null) {
-          // 如果还没有内容，将这行作为内容
-          content = trimmed;
-        }
-      }
-
-      if (content != null && content.isNotEmpty) {
-        lines.add(ScriptLine(
-          id: _generateId(),
-          content: content,
-          type: type,
-          aiPrompt: aiPrompt ?? content,
-          contextTags: tags.isEmpty ? ['未分类'] : tags,
-        ));
-      }
-    }
-
-    // 如果解析失败或结果太少，返回默认的简单剧本
-    if (lines.length < 3) {
-      return _getDefaultScript();
-    }
-
-    return lines;
-  }
-
-  /// 获取默认剧本（作为后备）
-  List<ScriptLine> _getDefaultScript() {
+    print('✅ 使用 API 原始文本作为剧本（不做任何解析和修改）\n');
+    
+    // ✅ 直接返回原始文本，不做任何解析、拆分或修改
     return [
       ScriptLine(
         id: _generateId(),
-        content: '故事开始，镜头缓缓推进。',
+        content: responseText,  // ✅ 完整的原始文本
         type: ScriptLineType.action,
-        aiPrompt: 'Opening scene, camera slowly pushing forward, cinematic',
-        contextTags: ['开场'],
-      ),
-      ScriptLine(
-        id: _generateId(),
-        content: '主角登场。',
-        type: ScriptLineType.action,
-        aiPrompt: 'Main character appears, dramatic entrance',
-        contextTags: ['主角', '登场'],
-      ),
-      ScriptLine(
-        id: _generateId(),
-        content: '故事发展，情节推进。',
-        type: ScriptLineType.action,
-        aiPrompt: 'Story development, plot progression',
-        contextTags: ['剧情'],
+        aiPrompt: '',  // 不需要 AI 提示词
+        contextTags: [],  // 不需要标签
       ),
     ];
   }
+
 
   /// 扩写剧本（在指定位置插入新内容）
   Future<ScriptLine> expandScript({

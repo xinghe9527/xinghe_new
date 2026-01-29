@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'base/api_service_base.dart';
 import 'base/api_config.dart';
 import 'base/api_response.dart';
@@ -20,21 +21,38 @@ class ApiRepository {
   /// 获取API服务实例
   /// 
   /// provider: 服务商名称
+  /// modelType: 模型类型 (llm/image/video/upload)
   /// forceRefresh: 是否强制刷新（重新从存储加载配置）
   Future<ApiServiceBase?> getService({
     required String provider,
+    required String modelType,  // ✅ 新增：必须指定模型类型
     bool forceRefresh = false,
   }) async {
+    final cacheKey = '${provider}_$modelType';
+    
+    debugPrint('🔧 [ApiRepository.getService]');
+    debugPrint('   Provider: $provider');
+    debugPrint('   ModelType: $modelType');
+    debugPrint('   CacheKey: $cacheKey');
+    debugPrint('   ForceRefresh: $forceRefresh');
+    
     // 如果不强制刷新且缓存中有实例，直接返回
-    if (!forceRefresh && _serviceCache.containsKey(provider)) {
-      return _serviceCache[provider];
+    if (!forceRefresh && _serviceCache.containsKey(cacheKey)) {
+      debugPrint('   ✅ 使用缓存的服务实例');
+      return _serviceCache[cacheKey];
     }
 
-    // 从安全存储中加载配置
-    final apiKey = await _storage.getApiKey(provider: provider);
-    final baseUrl = await _storage.getBaseUrl(provider: provider);
+    debugPrint('   📖 从存储读取配置...');
+    
+    // ✅ 从安全存储中加载配置（传递 modelType）
+    final apiKey = await _storage.getApiKey(provider: provider, modelType: modelType);
+    final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: modelType);
+
+    debugPrint('   🔑 API Key: ${apiKey != null ? "${apiKey.substring(0, 10)}..." : "null"}');
+    debugPrint('   🌐 Base URL: ${baseUrl ?? "null"}');
 
     if (apiKey == null || baseUrl == null) {
+      debugPrint('   ❌ 配置不完整，返回 null');
       return null; // 配置不完整
     }
 
@@ -45,11 +63,15 @@ class ApiRepository {
       baseUrl: baseUrl,
     );
 
+    debugPrint('   🏭 使用工厂创建服务实例...');
+    
     // 使用工厂创建服务实例
     final service = _factory.createService(provider, config);
     
-    // 缓存实例
-    _serviceCache[provider] = service;
+    debugPrint('   ✅ 服务实例已创建: ${service.providerName}');
+    
+    // ✅ 缓存实例（使用 provider_modelType 作为 key）
+    _serviceCache[cacheKey] = service;
     
     return service;
   }
@@ -57,8 +79,9 @@ class ApiRepository {
   /// 测试API连接
   Future<ApiResponse<bool>> testConnection({
     required String provider,
+    required String modelType,  // ✅ 添加 modelType
   }) async {
-    final service = await getService(provider: provider);
+    final service = await getService(provider: provider, modelType: modelType);
     if (service == null) {
       return ApiResponse.failure('API未配置');
     }
@@ -66,23 +89,66 @@ class ApiRepository {
     return await service.testConnection();
   }
 
-  /// LLM文本生成
+  /// LLM文本生成（简单接口）
   Future<ApiResponse<LlmResponse>> generateText({
     required String provider,
     required String prompt,
     String? model,
     Map<String, dynamic>? parameters,
   }) async {
-    final service = await getService(provider: provider);
-    if (service == null) {
-      return ApiResponse.failure('API未配置');
-    }
-
-    return await service.generateText(
-      prompt: prompt,
+    // 转换为 messages 格式
+    final messages = [
+      {'role': 'user', 'content': prompt}
+    ];
+    
+    return await generateTextWithMessages(
+      provider: provider,
+      messages: messages,
       model: model,
       parameters: parameters,
     );
+  }
+
+  /// LLM文本生成（支持完整 messages 数组）
+  Future<ApiResponse<LlmResponse>> generateTextWithMessages({
+    required String provider,
+    required List<Map<String, String>> messages,
+    String? model,
+    Map<String, dynamic>? parameters,
+  }) async {
+    try {
+      debugPrint('\n🔵 [ApiRepository] 开始获取服务实例');
+      debugPrint('   Provider: $provider');
+      debugPrint('   ModelType: llm');
+      debugPrint('   Messages: ${messages.length} 条');
+      
+      final service = await getService(provider: provider, modelType: 'llm');
+      
+      if (service == null) {
+        debugPrint('❌ [ApiRepository] 服务实例为 null（配置不完整）');
+        return ApiResponse.failure('LLM API未配置');
+      }
+
+      debugPrint('✅ [ApiRepository] 服务实例已获取: ${service.providerName}');
+      
+      // ✅ 使用 messages 格式调用
+      final result = await service.generateTextWithMessages(
+        messages: messages,
+        model: model,
+        parameters: parameters,
+      );
+      
+      debugPrint('\n📨 [ApiRepository] 生成返回');
+      debugPrint('   Success: ${result.isSuccess}');
+      if (!result.isSuccess) {
+        debugPrint('   Error: ${result.error}');
+      }
+      
+      return result;
+    } catch (e) {
+      debugPrint('\n💥 [ApiRepository] 异常: $e');
+      return ApiResponse.failure('ApiRepository 异常: $e');
+    }
   }
 
   /// 图片生成
@@ -96,9 +162,9 @@ class ApiRepository {
     List<String>? referenceImages,
     Map<String, dynamic>? parameters,
   }) async {
-    final service = await getService(provider: provider);
+    final service = await getService(provider: provider, modelType: 'image');  // ✅ 固定为 image
     if (service == null) {
-      return ApiResponse.failure('API未配置');
+      return ApiResponse.failure('图片 API未配置');
     }
 
     return await service.generateImages(
@@ -123,9 +189,9 @@ class ApiRepository {
     List<String>? referenceImages,
     Map<String, dynamic>? parameters,
   }) async {
-    final service = await getService(provider: provider);
+    final service = await getService(provider: provider, modelType: 'video');  // ✅ 固定为 video
     if (service == null) {
-      return ApiResponse.failure('API未配置');
+      return ApiResponse.failure('视频 API未配置');
     }
 
     return await service.generateVideos(
@@ -146,9 +212,9 @@ class ApiRepository {
     String? assetType,
     Map<String, dynamic>? metadata,
   }) async {
-    final service = await getService(provider: provider);
+    final service = await getService(provider: provider, modelType: 'upload');  // ✅ 固定为 upload
     if (service == null) {
-      return ApiResponse.failure('API未配置');
+      return ApiResponse.failure('上传 API未配置');
     }
 
     return await service.uploadAsset(
@@ -161,9 +227,9 @@ class ApiRepository {
   /// 获取可用模型列表
   Future<ApiResponse<List<String>>> getAvailableModels({
     required String provider,
-    String? modelType,
+    required String modelType,  // ✅ 改为必需参数
   }) async {
-    final service = await getService(provider: provider);
+    final service = await getService(provider: provider, modelType: modelType);
     if (service == null) {
       return ApiResponse.failure('API未配置');
     }

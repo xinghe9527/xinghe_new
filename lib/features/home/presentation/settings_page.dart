@@ -66,28 +66,15 @@ class _SettingsPageState extends State<SettingsPage> {
   // GeekNow 模型列表
   final Map<String, List<String>> _geekNowModels = {
     'llm': [
-      // OpenAI 系列
-      'gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo',
-      // DeepSeek 系列
-      'deepseek-chat', 'deepseek-coder',
-      // Claude 系列
-      'claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku',
-      // Gemini 系列
-      'gemini-pro', 'gemini-pro-vision',
-      // Llama 系列
-      'llama-3-70b', 'llama-3-8b',
-      // 其他常用模型
-      'mixtral-8x7b', 'qwen-turbo', 'qwen-plus',
+      // ✅ 只保留 DeepSeek 系列
+      'deepseek-chat',
+      'deepseek-coder',
     ],
     'image': [
-      // OpenAI 系列
-      'gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2',
-      // Gemini 图像生成系列
-      'gemini-3-pro-image-preview', 'gemini-3-pro-image-preview-lite', 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-image', 'gemini-pro-vision',
-      // Stable Diffusion 系列
-      'stable-diffusion-xl', 'stable-diffusion-3',
-      // Midjourney 风格
-      'midjourney-v6', 'midjourney-niji',
+      // ✅ 只保留 Gemini 图像生成系列
+      'gemini-3-pro-image-preview',
+      'gemini-3-pro-image-preview-lite',
+      'gemini-2.5-flash-image-preview',
     ],
     'video': [
       // VEO 系列
@@ -105,6 +92,15 @@ class _SettingsPageState extends State<SettingsPage> {
       // Grok
       'grok-video-3',
     ],
+  };
+
+  // DeepSeek 模型列表
+  final Map<String, List<String>> _deepseekModels = {
+    'llm': [
+      'deepseek-chat',      // DeepSeek-V3.2 非思考模式
+      'deepseek-reasoner',  // DeepSeek-V3.2 思考模式
+    ],
+    // DeepSeek 不支持图片、视频
   };
 
   // Yunwu（云雾）模型列表
@@ -301,9 +297,15 @@ class _SettingsPageState extends State<SettingsPage> {
       case 'openai':
         return 'https://api.openai.com/v1';
       case 'geeknow':
-        return 'https://api.geeknow.ai/v1';
+        return 'https://www.geeknow.top/v1';  // ✅ 用户的标准配置（包含 /v1）
       case 'yunwu':
-        return 'https://yunwu.ai';  // Yunwu API 地址（根据文档）
+        return 'https://api.yunwu.ai/v1';
+      case 'deepseek':
+        return 'https://api.deepseek.com';
+      case 'aliyun':  // ✅ 添加阿里云默认地址
+      case 'qwen':
+      case 'tongyi':
+        return 'https://dashscope.aliyuncs.com/compatible-mode/v1';
       case 'azure':
         return 'https://your-resource.openai.azure.com';
       case 'anthropic':
@@ -1005,6 +1007,7 @@ class _SettingsPageState extends State<SettingsPage> {
             _llmBaseUrlController.text = _getDefaultBaseUrl(v);
             _saveLLMConfig();
           },
+          modelType: 'llm',  // ✅ 传递模型类型
         ),
         
         const SizedBox(height: 30),
@@ -1043,7 +1046,14 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildTestButton(() => _testLLMConnection()),
+        // 测试和保存按钮
+        Row(
+          children: [
+            Expanded(child: _buildSaveButton(() => _saveLLMConfig())),
+            const SizedBox(width: 12),
+            Expanded(child: _buildTestButton(() => _testLLMConnection())),
+          ],
+        ),
         
         const SizedBox(height: 20),
         Text(
@@ -1105,7 +1115,14 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildTestButton(() => _testImageConnection()),
+        // 测试和保存按钮
+        Row(
+          children: [
+            Expanded(child: _buildSaveButton(() => _saveImageConfig())),
+            const SizedBox(width: 12),
+            Expanded(child: _buildTestButton(() => _testImageConnection())),
+          ],
+        ),
         
         const SizedBox(height: 20),
         Text(
@@ -1167,7 +1184,14 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildTestButton(() => _testVideoConnection()),
+        // 测试和保存按钮
+        Row(
+          children: [
+            Expanded(child: _buildSaveButton(() => _saveVideoConfig())),
+            const SizedBox(width: 12),
+            Expanded(child: _buildTestButton(() => _testVideoConnection())),
+          ],
+        ),
         
         const SizedBox(height: 20),
         Text(
@@ -1219,18 +1243,40 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         
         const SizedBox(height: 40),
-        _buildTestButton(() => _testUploadConnection()),
+        // 测试和保存按钮
+        Row(
+          children: [
+            Expanded(child: _buildSaveButton(() => _saveUploadConfig())),
+            const SizedBox(width: 12),
+            Expanded(child: _buildTestButton(() => _testUploadConnection())),
+          ],
+        ),
       ],
     );
   }
 
 
-  Widget _buildProviderDropdown({required String value, required Function(String) onChanged}) {
-    final providers = ['openai', 'geeknow', 'yunwu', 'azure', 'anthropic'];
+  Widget _buildProviderDropdown({
+    required String value,
+    required Function(String) onChanged,
+    String? modelType,  // ✅ 新增：根据模型类型显示不同的服务商
+  }) {
+    // ✅ 根据模型类型选择服务商列表
+    List<String> providers;
+    if (modelType == 'llm') {
+      // LLM 模型包含 DeepSeek 和阿里云
+      providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun', 'azure', 'anthropic'];
+    } else {
+      // 图片、视频、上传不包含 DeepSeek 和阿里云
+      providers = ['openai', 'geeknow', 'yunwu', 'azure', 'anthropic'];
+    }
+    
     final displayNames = {
       'openai': 'OpenAI',
       'geeknow': 'GeekNow',
       'yunwu': 'Yunwu（云雾）',
+      'deepseek': 'DeepSeek',
+      'aliyun': '阿里云',  // ✅ 添加阿里云
       'azure': 'Azure',
       'anthropic': 'Anthropic',
     };
@@ -1422,6 +1468,24 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// 根据 modelType 调用对应的保存方法
+  void _saveModelByType(String modelType) {
+    switch (modelType) {
+      case 'llm':
+        _debouncedSave(_saveLLMConfig);
+        break;
+      case 'image':
+        _debouncedSave(_saveImageConfig);
+        break;
+      case 'video':
+        _debouncedSave(_saveVideoConfig);
+        break;
+      case 'upload':
+        _debouncedSave(_saveUploadConfig);
+        break;
+    }
+  }
+
   /// 智能模型选择器（支持 GeekNow 和 Yunwu）
   Widget _buildModelSelector({
     required String provider,
@@ -1436,6 +1500,21 @@ class _SettingsPageState extends State<SettingsPage> {
       models = _geekNowModels[modelType] ?? [];
     } else if (provider == 'yunwu') {
       models = _yunwuModels[modelType] ?? [];
+    } else if (provider == 'deepseek') {
+      models = _deepseekModels[modelType] ?? [];
+    } else if (provider == 'aliyun' || provider == 'qwen' || provider == 'tongyi') {
+      // ✅ 阿里云使用文本输入框（允许手动输入模型名称）
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildEditableTextField(controller, hint),
+          const SizedBox(height: 8),
+          Text(
+            '常用模型: qwen-plus, qwen-max, qwen-turbo, qwen-long',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+          ),
+        ],
+      );
     } else {
       // 其他服务商使用普通文本输入
       return _buildEditableTextField(controller, hint);
@@ -1469,6 +1548,8 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() {
                 controller.text = v;
               });
+              // ✅ 添加自动保存（根据 modelType 调用对应的保存方法）
+              _saveModelByType(modelType);
             }
           },
         ),
@@ -1484,16 +1565,29 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFF2AFADF), // 青绿色
+                Color(0xFF4C83FF), // 蓝色
+              ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2AFADF).withOpacity(0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          child: Row(
+          child: const Row(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.save_rounded, color: Colors.white, size: 20),
-              SizedBox(width: 10),
-              Text('保存配置', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+            children: [
+              Icon(Icons.save_rounded, color: Colors.white, size: 18),
+              SizedBox(width: 8),
+              Text('保存', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
             ],
           ),
         ),
@@ -1511,7 +1605,7 @@ class _SettingsPageState extends State<SettingsPage> {
           decoration: BoxDecoration(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.accentColor.withValues(alpha: 0.5), width: 2),
+            border: Border.all(color: AppTheme.accentColor.withOpacity(0.5), width: 2),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
