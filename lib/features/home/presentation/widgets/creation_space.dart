@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:io';
+import '../../../creation_workflow/presentation/creation_mode_selector.dart';
+import '../../../creation_workflow/presentation/workspace_page.dart';
 
 class CreationSpace extends StatefulWidget {
   const CreationSpace({super.key});
@@ -259,18 +261,85 @@ class _CreationSpaceState extends State<CreationSpace> {
     );
   }
 
-  /// 创建新作品
-  void _createNewWork() {
+  /// 创建新作品 - 先命名再选择方式
+  Future<void> _createNewWork() async {
+    // 1. 弹出输入框，让用户输入作品名称
+    final workName = await _showWorkNameDialog();
+    if (workName == null || workName.isEmpty) return;
+
+    // 2. 立即创建作品并添加到列表
+    final workId = DateTime.now().millisecondsSinceEpoch.toString();
+    final newWork = Work(
+      id: workId,
+      title: workName,
+      createdAt: DateTime.now(),
+      coverImage: _defaultCoverImage,
+    );
+    
+    if (!mounted) return;
     setState(() {
-      _works.add(Work(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: '作品 ${_works.length + 1}',
-        createdAt: DateTime.now(),
-        coverImage: _defaultCoverImage,  // 使用全局默认封面
-      ));
+      _works.add(newWork);
     });
-    _saveWorks();  // 自动保存
-    debugPrint('创建新作品，当前作品数：${_works.length}，使用默认封面：${_defaultCoverImage != null}');
+    await _saveWorks();
+    debugPrint('✅ 创建新作品：$workName (ID: $workId)');
+
+    // 3. 打开创作模式选择界面
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CreationModeSelector(
+          workId: workId,
+          workName: workName,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+    
+    // 4. 返回后重新加载作品列表
+    if (mounted) {
+      _loadWorks();
+    }
+  }
+
+  /// 显示作品命名对话框
+  Future<String?> _showWorkNameDialog() async {
+    final controller = TextEditingController(text: '作品 ${_works.length + 1}');
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('创建新作品', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: '输入作品名称',
+            hintStyle: TextStyle(color: Color(0xFF666666)),
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (value) {
+            if (value.trim().isNotEmpty) {
+              Navigator.pop(context, value.trim());
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消', style: TextStyle(color: Color(0xFF888888))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF3A3A3C),
+              foregroundColor: const Color(0xFF888888),
+            ),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 作品网格
@@ -429,14 +498,61 @@ class _CreationSpaceState extends State<CreationSpace> {
     );
   }
 
-  /// 打开手动模式
-  void _openManualMode(Work work) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ManualModeScreen(work: work),
-      ),
-    );
+  /// 打开作品空间
+  Future<void> _openManualMode(Work work) async {
+    // 检查作品是否已经完成了选择步骤
+    final hasSelectedMode = await _checkWorkHasSelectedMode(work.id);
+    
+    if (!mounted) return;
+    
+    if (hasSelectedMode) {
+      // 已选择创作方式，直接打开作品空间
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => WorkspacePage(
+            initialScript: '',  // 从保存的数据加载
+            sourceType: '已有作品',
+            workId: work.id,
+            workName: work.title,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+    } else {
+      // 未选择创作方式，打开选择界面
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => CreationModeSelector(
+            workId: work.id,
+            workName: work.title,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+    }
+    
+    // 返回后重新加载作品列表（可能有更新）
+    if (mounted) {
+      _loadWorks();
+    }
+  }
+
+  /// 检查作品是否已经选择了创作方式
+  Future<bool> _checkWorkHasSelectedMode(String workId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final workJson = prefs.getString('work_$workId');
+      
+      if (workJson != null && workJson.isNotEmpty) {
+        final data = jsonDecode(workJson) as Map<String, dynamic>;
+        // 如果有剧本内容，说明已经选择了创作方式
+        final script = data['script'] as String?;
+        return script != null && script.isNotEmpty;
+      }
+    } catch (e) {
+      debugPrint('检查作品状态失败: $e');
+    }
+    return false;
   }
 
   /// 显示作品右键菜单
