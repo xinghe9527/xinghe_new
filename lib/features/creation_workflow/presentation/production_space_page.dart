@@ -2278,17 +2278,28 @@ ${widget.scriptContent}
   /// 下载并保存单张图片到本地
   Future<String> _downloadAndSaveImage(String imageUrl, String prefix) async {
     try {
-      // 从设置中读取保存路径
-      final savePath = imageSavePathNotifier.value;
+      // ✅ 优先使用作品保存路径，如果没设置则使用图片保存路径
+      final workPath = workSavePathNotifier.value;
+      final imagePath = imageSavePathNotifier.value;
       
-      if (savePath == '未设置' || savePath.isEmpty) {
-        debugPrint('⚠️ 未设置图片保存路径，使用在线 URL');
+      String savePath;
+      if (workPath != '未设置' && workPath.isNotEmpty) {
+        // 使用作品路径 + 作品名称
+        savePath = path.join(workPath, widget.workName);
+        debugPrint('📁 使用作品保存路径: $savePath');
+      } else if (imagePath != '未设置' && imagePath.isNotEmpty) {
+        // 使用图片保存路径
+        savePath = imagePath;
+        debugPrint('📁 使用图片保存路径: $savePath');
+      } else {
+        debugPrint('⚠️ 未设置保存路径，使用在线 URL');
         return imageUrl;
       }
       
       final saveDir = Directory(savePath);
       if (!await saveDir.exists()) {
         await saveDir.create(recursive: true);
+        debugPrint('✅ 创建目录: $savePath');
       }
       
       // 重试最多3次下载图片
@@ -3015,17 +3026,28 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
   /// 下载并保存视频到本地
   Future<String> _downloadAndSaveVideo(String videoUrl, String prefix) async {
     try {
-      // 从设置中读取保存路径
-      final savePath = videoSavePathNotifier.value;
+      // ✅ 优先使用作品保存路径，如果没设置则使用视频保存路径
+      final workPath = workSavePathNotifier.value;
+      final videoPath = videoSavePathNotifier.value;
       
-      if (savePath == '未设置' || savePath.isEmpty) {
-        debugPrint('⚠️ 未设置视频保存路径，使用在线 URL');
+      String savePath;
+      if (workPath != '未设置' && workPath.isNotEmpty) {
+        // 使用作品路径 + 作品名称
+        savePath = path.join(workPath, widget.workName);
+        debugPrint('📁 使用作品保存路径: $savePath');
+      } else if (videoPath != '未设置' && videoPath.isNotEmpty) {
+        // 使用视频保存路径
+        savePath = videoPath;
+        debugPrint('📁 使用视频保存路径: $savePath');
+      } else {
+        debugPrint('⚠️ 未设置保存路径，使用在线 URL');
         return videoUrl;
       }
       
       final saveDir = Directory(savePath);
       if (!await saveDir.exists()) {
         await saveDir.create(recursive: true);
+        debugPrint('✅ 创建目录: $savePath');
       }
       
       // 重试最多3次下载视频

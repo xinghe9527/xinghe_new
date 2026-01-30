@@ -144,6 +144,7 @@ Future<void> _loadSavePaths() async {
     final prefs = await SharedPreferences.getInstance();
     final imagePath = prefs.getString('image_save_path');
     final videoPath = prefs.getString('video_save_path');
+    final workPath = prefs.getString('work_save_path');
 
     if (imagePath != null && imagePath.isNotEmpty) {
       imageSavePathNotifier.value = imagePath;
@@ -153,6 +154,11 @@ Future<void> _loadSavePaths() async {
     if (videoPath != null && videoPath.isNotEmpty) {
       videoSavePathNotifier.value = videoPath;
       debugPrint('✅ 加载视频保存路径: $videoPath');
+    }
+
+    if (workPath != null && workPath.isNotEmpty) {
+      workSavePathNotifier.value = workPath;
+      debugPrint('✅ 加载作品保存路径: $workPath');
     }
   } catch (e) {
     debugPrint('⚠️ 加载保存路径失败: $e');

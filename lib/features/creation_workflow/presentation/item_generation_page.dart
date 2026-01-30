@@ -777,6 +777,70 @@ ${widget.scriptContent}
     }
   }
 
+  /// 下载并保存单张图片到本地
+  Future<String> _downloadAndSaveImage(String imageUrl, String prefix) async {
+    try {
+      // ✅ 优先使用作品保存路径，如果没设置则使用图片保存路径
+      final workPath = workSavePathNotifier.value;
+      final imagePath = imageSavePathNotifier.value;
+      
+      String savePath;
+      if (workPath != '未设置' && workPath.isNotEmpty) {
+        // 使用作品路径 + 作品名称
+        savePath = path.join(workPath, widget.workName);
+        debugPrint('📁 使用作品保存路径: $savePath');
+      } else if (imagePath != '未设置' && imagePath.isNotEmpty) {
+        // 使用图片保存路径
+        savePath = imagePath;
+        debugPrint('📁 使用图片保存路径: $savePath');
+      } else {
+        debugPrint('⚠️ 未设置保存路径，使用在线 URL');
+        return imageUrl;
+      }
+      
+      final saveDir = Directory(savePath);
+      if (!await saveDir.exists()) {
+        await saveDir.create(recursive: true);
+        debugPrint('✅ 创建目录: $savePath');
+      }
+      
+      // 重试最多3次下载图片
+      for (var retry = 0; retry < 3; retry++) {
+        try {
+          final response = await http.get(
+            Uri.parse(imageUrl),
+            headers: {'Connection': 'keep-alive'},
+          ).timeout(const Duration(seconds: 30));
+          
+          if (response.statusCode == 200) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final fileName = '${prefix}_$timestamp.png';
+            final filePath = path.join(savePath, fileName);
+            
+            final file = File(filePath);
+            await file.writeAsBytes(response.bodyBytes);
+            
+            debugPrint('✅ 物品图片已保存: $filePath');
+            return filePath;
+          } else {
+            debugPrint('⚠️ 下载失败 (重试 $retry/3): HTTP ${response.statusCode}');
+          }
+        } catch (e) {
+          debugPrint('⚠️ 下载异常 (重试 $retry/3): $e');
+          if (retry < 2) {
+            await Future.delayed(Duration(seconds: retry + 1));
+          }
+        }
+      }
+      
+      debugPrint('❌ 下载失败，使用在线 URL');
+      return imageUrl;
+    } catch (e) {
+      debugPrint('💥 保存图片失败: $e');
+      return imageUrl;
+    }
+  }
+
   /// 生成单个物品图片
   Future<void> _generateSingleItem(int index) async {
     final item = _items[index];
@@ -842,9 +906,18 @@ ${widget.scriptContent}
 
       if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
         final imageUrl = response.data!.first.imageUrl;
+        
+        print('✅ 图片生成成功: $imageUrl');
+        print('💾 下载并保存到本地...');
+        
+        // ✅ 下载并保存图片到本地
+        final savedPath = await _downloadAndSaveImage(imageUrl, 'item_${item.name}');
+        
+        print('✅ 保存完成（使用本地路径）');
+        
         if (mounted) {
           setState(() {
-            _items[index] = _items[index].copyWith(imageUrl: imageUrl);
+            _items[index] = _items[index].copyWith(imageUrl: savedPath);
           });
         }
         await _saveItemData();

@@ -23,6 +23,7 @@ class _SettingsPageState extends State<SettingsPage> {
   int _apiSubTabIndex = 0;
   bool _isPickingImagePath = false;
   bool _isPickingVideoPath = false;
+  bool _isPickingWorkPath = false;  // ✅ 作品路径选择状态
   
   // 密码可见性状态
   bool _llmApiKeyVisible = false;
@@ -195,6 +196,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final prefs = await SharedPreferences.getInstance();
       final imagePath = prefs.getString('image_save_path');
       final videoPath = prefs.getString('video_save_path');
+      final workPath = prefs.getString('work_save_path');
 
       if (imagePath != null && imagePath.isNotEmpty) {
         imageSavePathNotifier.value = imagePath;
@@ -204,6 +206,11 @@ class _SettingsPageState extends State<SettingsPage> {
       if (videoPath != null && videoPath.isNotEmpty) {
         videoSavePathNotifier.value = videoPath;
         _logger.info('加载视频保存路径: $videoPath', module: '设置');
+      }
+
+      if (workPath != null && workPath.isNotEmpty) {
+        workSavePathNotifier.value = workPath;
+        _logger.info('加载作品保存路径: $workPath', module: '设置');
       }
     } catch (e) {
       _logger.error('加载保存路径配置失败: $e', module: '设置');
@@ -495,6 +502,41 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 选择作品保存路径
+  Future<void> _pickWorkDirectory() async {
+    if (_isPickingWorkPath) return;
+    
+    setState(() => _isPickingWorkPath = true);
+    
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择作品保存根目录',
+        lockParentWindow: true,
+      );
+      
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        workSavePathNotifier.value = selectedDirectory;
+        
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('work_save_path', selectedDirectory);
+        
+        _logger.success('设置作品保存路径', module: '设置', extra: {'path': selectedDirectory});
+        if (mounted) {
+          _showMessage('作品保存路径已更新\n每个作品将在此路径下创建独立文件夹');
+        }
+      }
+    } catch (e) {
+      _logger.error('选择作品路径失败: $e', module: '设置');
+      if (mounted) {
+        _showMessage('选择文件夹时出错', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingWorkPath = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
@@ -695,6 +737,16 @@ class _SettingsPageState extends State<SettingsPage> {
             isLoading: _isPickingVideoPath,
           ),
 
+          const SizedBox(height: 32),
+
+          _buildPathSelector(
+            title: '作品保存路径（推荐）',
+            subtitle: '每个作品将在此路径下创建独立文件夹，集中管理该作品的所有资源',
+            notifier: workSavePathNotifier,
+            onPick: _pickWorkDirectory,
+            isLoading: _isPickingWorkPath,
+          ),
+
           const SizedBox(height: 60),
           Container(
             padding: const EdgeInsets.all(20),
@@ -723,6 +775,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildPathSelector({
     required String title,
+    String? subtitle,  // ✅ 可选的副标题
     required ValueNotifier<String> notifier,
     required VoidCallback onPick,
     bool isLoading = false,
@@ -731,6 +784,16 @@ class _SettingsPageState extends State<SettingsPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildFieldLabel(title),
+        if (subtitle != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: AppTheme.subTextColor,
+              fontSize: 12,
+            ),
+          ),
+        ],
         const SizedBox(height: 10),
         Row(
           children: [
