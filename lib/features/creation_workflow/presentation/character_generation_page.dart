@@ -288,11 +288,11 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // 生成图片按钮
+                        // 批量生成按钮
                         OutlinedButton.icon(
                           onPressed: _characters.isEmpty ? null : _generateImages,
-                          icon: const Icon(Icons.image, size: 16),
-                          label: const Text('生成图片'),
+                          icon: const Icon(Icons.collections, size: 16),
+                          label: const Text('批量生成'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF888888),
                             side: const BorderSide(color: Color(0xFF3A3A3C)),
@@ -1082,65 +1082,87 @@ ${widget.scriptContent}
     int successCount = 0;
     int failCount = 0;
 
-    for (var i = 0; i < _characters.length; i++) {
-      try {
-        final character = _characters[i];
+    // ✅ 并发生成（每批 3 个，避免API限流）
+    for (var batchStart = 0; batchStart < _characters.length; batchStart += 3) {
+      final batchEnd = (batchStart + 3 > _characters.length) ? _characters.length : batchStart + 3;
+      final batch = _characters.sublist(batchStart, batchEnd);
+      
+      print('📦 批次 ${batchStart ~/ 3 + 1}: 生成 ${batch.length} 个角色');
+      
+      // ✅ 并发生成当前批次的所有角色
+      final futures = batch.asMap().entries.map((entry) async {
+        final localIndex = entry.key;
+        final globalIndex = batchStart + localIndex;
+        final character = entry.value;
         
-        // ✅ 构建完整提示词（风格参考 + 角色描述）
-        String prompt = character.description;
-        if (_styleReferenceText.isNotEmpty) {
-          prompt = '$_styleReferenceText, $prompt';
-        }
-        
-        // ✅ 如果有风格参考图片，在提示词中明确说明
-        final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
-        if (hasStyleImage) {
-          prompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$prompt';
-        }
-        
-        print('📸 生成角色 ${i + 1}/${_characters.length}: ${character.name}');
-        print('   提示词: ${prompt.substring(0, prompt.length > 100 ? 100 : prompt.length)}...');
-        print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}');
-        
-        // ✅ 准备参考图片
-        final referenceImages = <String>[];
-        if (hasStyleImage) {
-          referenceImages.add(_styleReferenceImage!);
-          print('   📸 添加风格参考图片: $_styleReferenceImage');
-        }
-        
-        // ✅ 调用真实图片 API
-        _apiRepository.clearCache();
-        final response = await _apiRepository.generateImages(
-          provider: provider,
-          prompt: prompt,
-          model: model,
-          count: 1,
-          referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
-          parameters: {
-            'quality': 'standard',
-            'size': '1024x1024',
-          },
-        );
-        
-        if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
-          final imageUrl = response.data!.first.imageUrl;
-          print('   ✅ 生成成功: $imageUrl\n');
-          
-          if (mounted) {
-            setState(() {
-              _characters[i] = _characters[i].copyWith(imageUrl: imageUrl);
-            });
+        try {
+          // ✅ 构建完整提示词（风格参考 + 角色描述）
+          String prompt = character.description;
+          if (_styleReferenceText.isNotEmpty) {
+            prompt = '$_styleReferenceText, $prompt';
           }
-          successCount++;
-        } else {
-          print('   ❌ 生成失败: ${response.error}\n');
-          failCount++;
+          
+          // ✅ 如果有风格参考图片，在提示词中明确说明
+          final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+          if (hasStyleImage) {
+            prompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$prompt';
+          }
+          
+          print('   📸 [${globalIndex + 1}/${_characters.length}] ${character.name}');
+          
+          // ✅ 准备参考图片
+          final referenceImages = <String>[];
+          if (hasStyleImage) {
+            referenceImages.add(_styleReferenceImage!);
+          }
+          
+          // ✅ 调用真实图片 API（独立请求）
+          _apiRepository.clearCache();
+          final response = await _apiRepository.generateImages(
+            provider: provider,
+            prompt: prompt,
+            model: model,
+            count: 1,
+            referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
+            parameters: {
+              'quality': 'standard',
+              'size': _imageRatio,  // 使用用户选择的比例
+            },
+          );
+          
+          if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+            final imageUrl = response.data!.first.imageUrl;
+            
+            // 下载并保存到本地
+            final savedPath = await _downloadAndSaveImage(imageUrl, 'character_${character.name}');
+            
+            if (mounted) {
+              setState(() {
+                _characters[globalIndex] = _characters[globalIndex].copyWith(imageUrl: savedPath);
+              });
+            }
+            
+            print('      ✅ 成功\n');
+            return true;  // 成功
+          } else {
+            print('      ❌ 失败: ${response.error}\n');
+            return false;  // 失败
+          }
+        } catch (e) {
+          print('      ❌ 异常: $e\n');
+          return false;  // 失败
         }
-      } catch (e) {
-        print('   ❌ 异常: $e\n');
-        failCount++;
-      }
+      });
+      
+      // 等待当前批次所有请求完成
+      final results = await Future.wait(futures);
+      successCount += results.where((r) => r == true).length;
+      failCount += results.where((r) => r == false).length;
+      
+      // 保存当前批次的结果
+      await _saveCharacterData();
+      
+      print('✅ 批次完成: 成功 ${results.where((r) => r).length}, 失败 ${results.where((r) => !r).length}\n');
     }
 
     await _saveCharacterData();

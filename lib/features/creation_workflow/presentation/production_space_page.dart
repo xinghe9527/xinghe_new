@@ -3,11 +3,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/main.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as path;
 import 'storyboard_prompt_manager.dart';
 import 'character_generation_page.dart';
 import 'scene_generation_page.dart';
 import 'item_generation_page.dart';
 import '../data/real_ai_service.dart';
+import '../../../services/api/api_repository.dart';
+import '../../../services/api/secure_storage_manager.dart';
 
 /// 分镜空间页面（分镜生成和管理 - Excel风格）
 class ProductionSpacePage extends StatefulWidget {
@@ -36,6 +40,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   List<StoryboardRow> _storyboards = [];
   bool _isGenerating = false;
   final RealAIService _aiService = RealAIService(); // ✅ 真实 AI 服务
+  final ApiRepository _apiRepository = ApiRepository();  // ✅ API Repository
   
   // 全局主题提示词
   String _globalImageTheme = '';  // 图片全局主题
@@ -265,12 +270,24 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             onTap: _openItemGeneration,
           ),
           const Spacer(),
+          // 清空分镜按钮（小巧，无文字）
+          IconButton(
+            onPressed: _storyboards.isEmpty ? null : _clearAllStoryboards,
+            icon: const Icon(Icons.delete_sweep, size: 18),
+            color: const Color(0xFF888888),
+            tooltip: '清空所有分镜',
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFF3A3A3C).withOpacity(0.3),
+              padding: const EdgeInsets.all(8),
+            ),
+          ),
+          const SizedBox(width: 8),
           // 分镜提示词按钮（小书图标）
           IconButton(
             onPressed: _openStoryboardPromptManager,
             icon: const Icon(Icons.menu_book, size: 20),
             color: const Color(0xFF888888),
-            tooltip: '分镜提示词',
+            tooltip: '分镜提示词（当前：${widget.storyboardPromptName}）',
             style: IconButton.styleFrom(
               backgroundColor: const Color(0xFF3A3A3C).withOpacity( 0.3),
             ),
@@ -298,24 +315,6 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             isLoading: _isGenerating,
           ),
         ],
-      ),
-    );
-  }
-
-  /// 工具按钮（旧版本，保留备用）
-  Widget _buildToolButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 16),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: const Color(0xFF888888),
-        side: const BorderSide(color: Color(0xFF3A3A3C)),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       ),
     );
   }
@@ -608,6 +607,30 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 6),
+                // ➕ 手动添加资产按钮
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => _showAddAssetDialog(index),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3A3A3C).withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(
+                          color: const Color(0xFF555555),
+                          width: 1,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.add,
+                        size: 14,
+                        color: Color(0xFF888888),
+                      ),
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 8),
                 // 资产标签（检测所有提示词中的资产）
                 ...(() {
@@ -634,17 +657,22 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                     }
                   }
                   
-                  // 如果selectedAssets为空，自动选中所有检测到的资产
-                  final currentSelected = row.selectedImageAssets.isEmpty && row.selectedVideoAssets.isEmpty
-                      ? autoDetectedAssets
-                      : [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
+                  // ✅ 直接使用用户的选择，不自动覆盖
+                  // 自动选中只在生成分镜时执行一次（_autoSelectAssets 方法）
+                  final currentSelected = [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
                   
                   final tags = <Widget>[];
                   
+                  // ✅ 显示所有已选中的资产（无论提示词中是否包含）
+                  // 同时也显示提示词中检测到但未选中的资产
+                  
                   // 生成角色标签
                   for (final char in _characters) {
-                    if (combinedPrompt.contains(char.name)) {
-                      final isSelected = currentSelected.contains(char.id);
+                    final isSelected = currentSelected.contains(char.id);
+                    final isDetected = combinedPrompt.contains(char.name);
+                    
+                    // 如果已选中或被检测到，就显示标签
+                    if (isSelected || isDetected) {
                       tags.add(_buildAssetTag(
                         char.name,
                         char.type,
@@ -670,8 +698,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                   
                   // 生成场景标签
                   for (final scene in _scenes) {
-                    if (combinedPrompt.contains(scene.name)) {
-                      final isSelected = currentSelected.contains(scene.id);
+                    final isSelected = currentSelected.contains(scene.id);
+                    final isDetected = combinedPrompt.contains(scene.name);
+                    
+                    // 如果已选中或被检测到，就显示标签
+                    if (isSelected || isDetected) {
                       tags.add(_buildAssetTag(
                         scene.name,
                         scene.type,
@@ -697,8 +728,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                   
                   // 生成物品标签
                   for (final item in _items) {
-                    if (combinedPrompt.contains(item.name)) {
-                      final isSelected = currentSelected.contains(item.id);
+                    final isSelected = currentSelected.contains(item.id);
+                    final isDetected = combinedPrompt.contains(item.name);
+                    
+                    // 如果已选中或被检测到，就显示标签
+                    if (isSelected || isDetected) {
                       tags.add(_buildAssetTag(
                         item.name,
                         item.type,
@@ -722,20 +756,9 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                     }
                   }
                   
-                  // 如果自动检测到资产但未选中，自动选中它们
-                  if (autoDetectedAssets.isNotEmpty && currentSelected.isEmpty) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        setState(() {
-                          _storyboards[index] = row.copyWith(
-                            selectedImageAssets: autoDetectedAssets,
-                            selectedVideoAssets: autoDetectedAssets,
-                          );
-                        });
-                        _saveProductionData();
-                      }
-                    });
-                  }
+                  // ✅ 移除自动选中逻辑，允许用户自由控制
+                  // 自动选中只在生成分镜时执行一次（_autoSelectAssets 方法）
+                  // 不在 build 方法中重复执行，避免用户无法取消选择
                   
                   return tags;
                 })(),
@@ -937,11 +960,17 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                   child: hasImage
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(4),
-                          child: Image.network(
-                            imageUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
-                          ),
+                          child: imageUrl!.startsWith('http')
+                              ? Image.network(
+                                  imageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
+                                )
+                              : Image.file(
+                                  File(imageUrl),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
+                                ),
                         )
                       : Center(
                           child: Icon(
@@ -984,7 +1013,22 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         details.globalPosition.dx,
         details.globalPosition.dy,
       ),
+      color: const Color(0xFF2A2A2C),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFF3A3A3C)),
+      ),
       items: const [
+        PopupMenuItem(
+          value: 'view',
+          child: Row(
+            children: [
+              Icon(Icons.zoom_in, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('放大查看', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
         PopupMenuItem(
           value: 'folder',
           child: Row(
@@ -999,20 +1043,64 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           value: 'delete',
           child: Row(
             children: [
-              Icon(Icons.delete, size: 16, color: Color(0xFF888888)),
+              Icon(Icons.delete_outline, size: 16, color: Colors.red),
               SizedBox(width: 8),
-              Text('删除图片', style: TextStyle(color: Color(0xFF888888))),
+              Text('删除图片', style: TextStyle(color: Colors.red)),
             ],
           ),
         ),
       ],
     ).then((value) {
-      if (value == 'folder') {
+      if (value == 'view') {
+        _viewImage(imageUrl);
+      } else if (value == 'folder') {
         _openImageFolder();
       } else if (value == 'delete') {
         _deleteImage(storyboardIndex, gridIndex);
       }
     });
+  }
+
+  /// 放大查看图片
+  void _viewImage(String imageUrl) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.9),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: imageUrl.startsWith('http')
+                    ? Image.network(imageUrl)
+                    : Image.file(File(imageUrl)),
+              ),
+            ),
+            Positioned(
+              top: 20,
+              right: 20,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, color: Colors.white, size: 24),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _openImageFolder() {
@@ -1021,10 +1109,18 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       try {
         if (Platform.isWindows) {
           Process.run('explorer', [savePath]);
+        } else if (Platform.isMacOS) {
+          Process.run('open', [savePath]);
+        } else if (Platform.isLinux) {
+          Process.run('xdg-open', [savePath]);
         }
       } catch (e) {
         debugPrint('打开文件夹失败: $e');
       }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在设置中配置图片保存路径')),
+      );
     }
   }
 
@@ -1282,77 +1378,6 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     );
   }
 
-  /// 构建资产标签按钮
-  List<Widget> _buildAssetTags(
-    String prompt,
-    List<String> selectedAssets,
-    Function(List<String>) onChanged,
-  ) {
-    final tags = <Widget>[];
-    
-    // 检查角色
-    for (final char in _characters) {
-      if (prompt.contains(char.name)) {
-        tags.add(_buildAssetTag(
-          char.name,
-          char.type,
-          selectedAssets.contains(char.id),
-          () {
-            final newSelected = List<String>.from(selectedAssets);
-            if (newSelected.contains(char.id)) {
-              newSelected.remove(char.id);
-            } else {
-              newSelected.add(char.id);
-            }
-            onChanged(newSelected);
-          },
-        ));
-      }
-    }
-    
-    // 检查场景
-    for (final scene in _scenes) {
-      if (prompt.contains(scene.name)) {
-        tags.add(_buildAssetTag(
-          scene.name,
-          scene.type,
-          selectedAssets.contains(scene.id),
-          () {
-            final newSelected = List<String>.from(selectedAssets);
-            if (newSelected.contains(scene.id)) {
-              newSelected.remove(scene.id);
-            } else {
-              newSelected.add(scene.id);
-            }
-            onChanged(newSelected);
-          },
-        ));
-      }
-    }
-    
-    // 检查物品
-    for (final item in _items) {
-      if (prompt.contains(item.name)) {
-        tags.add(_buildAssetTag(
-          item.name,
-          item.type,
-          selectedAssets.contains(item.id),
-          () {
-            final newSelected = List<String>.from(selectedAssets);
-            if (newSelected.contains(item.id)) {
-              newSelected.remove(item.id);
-            } else {
-              newSelected.add(item.id);
-            }
-            onChanged(newSelected);
-          },
-        ));
-      }
-    }
-    
-    return tags;
-  }
-
   /// 资产标签按钮
   Widget _buildAssetTag(String name, AssetType type, bool isSelected, VoidCallback onTap) {
     return GestureDetector(
@@ -1401,7 +1426,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   Future<void> _generateStoryboards() async {
     if (widget.scriptContent.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('剧本内容为空')),
+        const SnackBar(content: Text('剧本内容为空，无法生成分镜')),
       );
       return;
     }
@@ -1409,57 +1434,247 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     setState(() => _isGenerating = true);
 
     try {
-      // TODO: 调用LLM使用分镜提示词 + 剧本内容 + 上下文记忆生成分镜
-      // 提示词应该包含：
-      // 1. 用户选择的分镜提示词
-      // 2. 完整的剧本内容
-      // 3. 已有的分镜（如果有）作为上下文
-      await Future.delayed(const Duration(seconds: 3));
-
-      final mockStoryboards = [
-        StoryboardRow(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          imagePrompt: '主角站在未来都市天台，俯瞰城市，夜景，霓虹灯闪烁。主角的银白短发在风中飘动。',
-          videoPrompt: '主角转身眺望，镜头从远景推进到中景，展现城市全貌和主角的背影',
-          selectedImageAssets: ['char_001', 'scene_001'],  // 默认选中：主角、天台
-          selectedVideoAssets: ['char_001', 'scene_001'],
-        ),
-        StoryboardRow(
-          id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
-          imagePrompt: '地下工作室内，主角操作全息屏幕，多个屏幕显示代码和数据流',
-          videoPrompt: '主角手指快速滑动，屏幕数据流动，镜头特写手部动作，紧张氛围',
-          selectedImageAssets: ['char_001', 'scene_002'],  // 默认选中：主角、工作室
-          selectedVideoAssets: ['char_001', 'scene_002'],
-        ),
-        StoryboardRow(
-          id: (DateTime.now().millisecondsSinceEpoch + 2).toString(),
-          imagePrompt: '城市街道，主角匆忙穿行，霓虹灯光影交错，背景有飞行摩托',
-          videoPrompt: '追逐镜头，快速移动，光影闪烁，动感强烈，第一人称视角',
-          selectedImageAssets: ['char_001', 'scene_003', 'item_001'],  // 默认选中：主角、街道、飞行摩托
-          selectedVideoAssets: ['char_001', 'scene_003', 'item_001'],
-        ),
-      ];
-
-      if (mounted) {
-        setState(() {
-          _storyboards = mockStoryboards;
-        });
+      // ✅ 读取 LLM 完整配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('llm_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'llm');
+      
+      print('\n🎬 开始推理分镜');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');
+      print('📋 分镜提示词预设: ${widget.storyboardPromptName}');
+      print('📝 剧本长度: ${widget.scriptContent.length} 字符');
+      print('🎞️ 已有分镜数量: ${_storyboards.length}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 构建 messages
+      final messages = <Map<String, String>>[];
+      
+      String fullPrompt = '';
+      
+      if (widget.storyboardPromptContent.isNotEmpty) {
+        // ✅ 如果用户设置了提示词预设，使用预设并强调生成完整分镜
+        final userPrompt = widget.storyboardPromptContent
+            .replaceAll('{{小说原文}}', widget.scriptContent)
+            .replaceAll('{{推文文案}}', widget.scriptContent)
+            .replaceAll('{{故事情节}}', widget.scriptContent)
+            .replaceAll('{{剧本内容}}', widget.scriptContent);
         
-        // 自动为每个分镜选中检测到的资产
-        _autoSelectAssets();
+        // ✅ 添加明确的完整性要求
+        fullPrompt = '''$userPrompt
+
+【重要补充要求】
+请根据提供的剧本内容，生成**完整的分镜脚本**，覆盖剧本的所有关键情节和场景。
+- 不要只生成一个分镜示例，要生成足够数量的分镜来讲述完整的故事
+- 每个重要场景转换、人物动作、情节推进都应该有对应的分镜
+- 建议生成 5-15 个分镜（根据剧本复杂度）
+
+剧本内容：
+${widget.scriptContent}
+
+现在开始生成完整的分镜列表：''';
         
-        await _saveProductionData();
+        print('✅ 使用用户自定义分镜提示词预设（已添加完整性要求）');
+      } else {
+        // ✅ 如果没有预设，使用简单的基础格式
+        fullPrompt = '''请根据以下剧本内容生成分镜脚本。
+
+剧本：
+${widget.scriptContent}
+
+输出格式：
+每个分镜一行，格式为：
+分镜序号 | 图片提示词 | 视频提示词
+
+示例：
+1 | 主角站在未来都市天台，俯瞰城市，夜景，霓虹灯闪烁 | 主角转身眺望，镜头从远景推进到中景
+2 | 地下工作室内，主角操作全息屏幕，多个屏幕显示代码 | 主角手指快速滑动，屏幕数据流动
+
+现在开始生成：''';
+        
+        print('⚠️ 未设置提示词预设，使用默认简单格式');
+      }
+      
+      messages.add({'role': 'user', 'content': fullPrompt});
+      
+      // ✅ 调用真实 LLM API
+      _apiRepository.clearCache();
+      final response = await _apiRepository.generateTextWithMessages(
+        provider: provider,
+        messages: messages,
+        model: model,
+        parameters: {
+          'temperature': 0.7,
+          'max_tokens': 3000,
+        },
+      );
+      
+      if (response.isSuccess && response.data != null) {
+        final responseText = response.data!.text;
+        
+        print('📄 API 返回分镜列表:');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print(responseText);
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        
+        // ✅ 智能解析分镜（支持多种格式）
+        final storyboardList = <StoryboardRow>[];
+        
+        try {
+          // 方法1：检测特殊格式标记（_::~OUTPUT_START::~_ ... _::~OUTPUT_END::~_）
+          if (responseText.contains('_::~OUTPUT_START::~_') && responseText.contains('_::~OUTPUT_END::~_')) {
+            print('🔍 检测到特殊输出格式标记');
+            
+            // ✅ 提取所有输出块（每个块是一个分镜）
+            final outputPattern = RegExp(r'_::~OUTPUT_START::~_(.*?)_::~OUTPUT_END::~_', dotAll: true);
+            final matches = outputPattern.allMatches(responseText);
+            
+            print('📦 找到 ${matches.length} 个输出块');
+            
+            for (final match in matches) {
+              final content = match.group(1)?.trim() ?? '';
+              if (content.isEmpty) continue;
+              
+              // 按 === 分割图片和视频提示词
+              final parts = content.split('===');
+              final imagePrompt = parts.length > 0 ? parts[0].trim() : '';
+              final videoPrompt = parts.length > 1 ? parts[1].trim() : '';
+              
+              if (imagePrompt.isNotEmpty || videoPrompt.isNotEmpty) {
+                storyboardList.add(StoryboardRow(
+                  id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
+                  imagePrompt: imagePrompt,
+                  videoPrompt: videoPrompt,
+                  selectedImageAssets: [],
+                  selectedVideoAssets: [],
+                ));
+                
+                print('   ✅ 分镜 ${storyboardList.length}');
+                print('      图片提示词长度: ${imagePrompt.length}');
+                print('      视频提示词长度: ${videoPrompt.length}');
+              }
+            }
+            
+            print('✅ 特殊格式解析完成，找到 ${storyboardList.length} 个分镜');
+          } else {
+            // 方法2：尝试 JSON 格式
+            try {
+              String cleanText = responseText.trim();
+              if (cleanText.startsWith('```json')) {
+                cleanText = cleanText.replaceFirst('```json', '').trim();
+              }
+              if (cleanText.startsWith('```')) {
+                cleanText = cleanText.replaceFirst('```', '').trim();
+              }
+              if (cleanText.endsWith('```')) {
+                cleanText = cleanText.substring(0, cleanText.lastIndexOf('```')).trim();
+              }
+              
+              final startIndex = cleanText.indexOf('[');
+              final endIndex = cleanText.lastIndexOf(']');
+              
+              if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+                final jsonStr = cleanText.substring(startIndex, endIndex + 1);
+                final List<dynamic> jsonList = jsonDecode(jsonStr);
+                
+                print('✅ JSON 解析成功，找到 ${jsonList.length} 个分镜');
+                
+                for (final item in jsonList) {
+                  if (item is Map<String, dynamic>) {
+                    storyboardList.add(StoryboardRow(
+                      id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
+                      imagePrompt: item['imagePrompt']?.toString() ?? item['image_prompt']?.toString() ?? '',
+                      videoPrompt: item['videoPrompt']?.toString() ?? item['video_prompt']?.toString() ?? '',
+                      selectedImageAssets: [],
+                      selectedVideoAssets: [],
+                    ));
+                    
+                    print('   - 分镜 ${storyboardList.length}');
+                  }
+                }
+              } else {
+                throw Exception('未找到有效的 JSON 数组');
+              }
+            } catch (jsonError) {
+              print('⚠️ JSON 格式解析失败: $jsonError');
+              
+              // 方法3：简单格式（序号 | 图片提示词 | 视频提示词）
+              print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              print('⚠️ 尝试简单格式解析（序号 | 图片提示词 | 视频提示词）');
+              
+              final lines = responseText.split('\n');
+              for (final line in lines) {
+                final trimmed = line.trim();
+                if (trimmed.isEmpty) continue;
+                
+                // 跳过注释行
+                if (trimmed.startsWith('#') || 
+                    trimmed.startsWith('//') || 
+                    trimmed.startsWith('根据') ||
+                    trimmed.startsWith('```')) {
+                  continue;
+                }
+                
+                if (trimmed.contains('|')) {
+                  final parts = trimmed.split('|');
+                  if (parts.length >= 3) {
+                    storyboardList.add(StoryboardRow(
+                      id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
+                      imagePrompt: parts[1].trim(),
+                      videoPrompt: parts[2].trim(),
+                      selectedImageAssets: [],
+                      selectedVideoAssets: [],
+                    ));
+                    
+                    print('   - 分镜 ${storyboardList.length}');
+                  }
+                }
+              }
+              
+              print('✅ 简单格式解析完成，找到 ${storyboardList.length} 个分镜');
+              print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            }
+          }
+        } catch (e) {
+          print('⚠️ 所有格式解析尝试失败: $e');
+        }
+        
+        if (storyboardList.isEmpty) {
+          throw Exception('未能解析出任何分镜，请检查提示词预设或 LLM 响应格式');
+        }
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('✅ 生成 ${_storyboards.length} 个分镜（含上下文记忆）')),
-          );
+          setState(() {
+            _storyboards = storyboardList;
+          });
+          
+          // 自动为每个分镜选中检测到的资产
+          _autoSelectAssets();
+          
+          await _saveProductionData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 推理完成，生成 ${storyboardList.length} 个分镜'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
+      } else {
+        throw Exception(response.error ?? '推理失败');
       }
     } catch (e) {
+      print('❌ 生成分镜失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('生成失败：$e')),
+          SnackBar(
+            content: Text('生成失败：$e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -1484,55 +1699,123 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     int failCount = 0;
     
     try {
-      // 找出所有还没有图片的分镜
-      final storyboardsToGenerate = _storyboards.where((sb) => sb.imageUrls.isEmpty).toList();
+      // ✅ 找出所有还有空格子的分镜（<4张图片）
+      final storyboardsToGenerate = _storyboards.where((sb) => sb.imageUrls.length < 4).toList();
       
       if (storyboardsToGenerate.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('所有分镜都已生成图片')),
+            const SnackBar(content: Text('所有分镜的四宫格都已填满')),
           );
         }
         return;
       }
       
-      // 并发生成图片（每批 3 个）
-      for (int i = 0; i < storyboardsToGenerate.length; i += 3) {
-        final batch = storyboardsToGenerate.skip(i).take(3).toList();
-        final futures = batch.map((sb) async {
-          try {
-            // 构建完整提示词（包含全局主题）
-            String fullPrompt = sb.imagePrompt;
-            if (_globalImageTheme.isNotEmpty) {
-              fullPrompt = '$_globalImageTheme, $fullPrompt';
+      print('   待生成分镜数量: ${storyboardsToGenerate.length}');
+      for (var sb in storyboardsToGenerate) {
+        final idx = _storyboards.indexWhere((s) => s.id == sb.id);
+        print('   - 分镜${idx + 1}: 当前 ${sb.imageUrls.length}/4 张');
+      }
+      
+      // ✅ 读取图片 API 配置（一次性读取）
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('image_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'image');
+      
+      print('\n🎨 批量生成分镜图片');
+      print('   待生成数量: ${storyboardsToGenerate.length}');
+      print('   Provider: $provider');
+      print('   Model: ${model ?? "未设置"}\n');
+      
+      // ✅ 一次性并发生成所有分镜的图片（API 支持 100 条并发）
+      print('🚀 开始并发生成 ${storyboardsToGenerate.length} 个分镜图片\n');
+      
+      final futures = storyboardsToGenerate.map((sb) async {
+        try {
+          final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+          
+          // 构建完整提示词（包含全局主题）
+          String fullPrompt = sb.imagePrompt;
+          if (_globalImageTheme.isNotEmpty) {
+            fullPrompt = '$_globalImageTheme。$fullPrompt';
+          }
+          
+          // ✅ 收集选中资产的图片作为参考图片
+          final referenceImages = <String>[];
+          final selectedAssetIds = [...sb.selectedImageAssets, ...sb.selectedVideoAssets].toSet().toList();
+          
+          for (final assetId in selectedAssetIds) {
+            // 查找角色、场景、物品的图片
+            final char = _characters.firstWhere((c) => c.id == assetId, orElse: () => AssetReference(id: '', name: '', type: AssetType.character));
+            if (char.id.isNotEmpty && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+              referenceImages.add(char.imageUrl!);
             }
             
-            // 调用 API 生成图片
-            final imageUrl = await _aiService.generateStoryboardImage(prompt: fullPrompt);
+            final scene = _scenes.firstWhere((s) => s.id == assetId, orElse: () => AssetReference(id: '', name: '', type: AssetType.scene));
+            if (scene.id.isNotEmpty && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+              referenceImages.add(scene.imageUrl!);
+            }
             
-            // 更新分镜数据
-            final index = _storyboards.indexWhere((s) => s.id == sb.id);
-            if (index != -1) {
+            final item = _items.firstWhere((it) => it.id == assetId, orElse: () => AssetReference(id: '', name: '', type: AssetType.item));
+            if (item.id.isNotEmpty && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+              referenceImages.add(item.imageUrl!);
+            }
+          }
+          
+          print('   📸 [${storyboardIndex + 1}] 开始生成...');
+          
+          // ✅ 调用真实图片 API（独立请求）
+          final response = await _apiRepository.generateImages(
+            provider: provider,
+            prompt: fullPrompt,
+            model: model,
+            referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
+            parameters: {
+              'size': '16:9',
+              'quality': '1K',
+            },
+          );
+          
+          if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+            final imageUrl = response.data!.first.imageUrl;
+            
+            // ✅ 下载并保存图片到本地
+            final savedPath = await _downloadAndSaveImage(imageUrl, 'storyboard_${storyboardIndex + 1}');
+            
+            // ✅ 更新分镜数据（追加到现有图片列表，占用下一个格子）
+            if (storyboardIndex != -1 && mounted) {
               setState(() {
-                _storyboards[index] = _storyboards[index].copyWith(
-                  imageUrls: [imageUrl],
-                  selectedImageIndex: 0,
+                final newUrls = List<String>.from(_storyboards[storyboardIndex].imageUrls)..add(savedPath);
+                _storyboards[storyboardIndex] = _storyboards[storyboardIndex].copyWith(
+                  imageUrls: newUrls,
+                  // 如果是第一张图片，设置为选中状态
+                  selectedImageIndex: newUrls.length == 1 ? 0 : _storyboards[storyboardIndex].selectedImageIndex,
                 );
               });
             }
             
-            successCount++;
-          } catch (e) {
-            failCount++;
-            debugPrint('生成图片失败 [${sb.id}]: $e');
+            print('      ✅ [${storyboardIndex + 1}] 成功');
+            return true;
+          } else {
+            print('      ❌ [${storyboardIndex + 1}] 失败: ${response.error}');
+            return false;
           }
-        });
-        
-        await Future.wait(futures);
-        
-        // 每批完成后保存
-        await _saveProductionData();
-      }
+        } catch (e) {
+          final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+          print('      ❌ [${storyboardIndex + 1}] 异常: $e');
+          return false;
+        }
+      });
+      
+      // ✅ 等待所有请求完成
+      print('⏳ 等待所有图片生成完成...\n');
+      final results = await Future.wait(futures);
+      successCount = results.where((r) => r == true).length;
+      failCount = results.where((r) => r == false).length;
+      
+      // 保存所有结果
+      await _saveProductionData();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1570,62 +1853,107 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     int failCount = 0;
     
     try {
-      // 找出所有有图片但没有视频的分镜
+      // ✅ 找出所有有图片且还有空格子的分镜（需要先有图片，且视频<4个）
       final storyboardsToGenerate = _storyboards.where((sb) {
-        return sb.imageUrls.isNotEmpty && sb.videoUrls.isEmpty;
+        return sb.imageUrls.isNotEmpty && sb.videoUrls.length < 4;
       }).toList();
       
       if (storyboardsToGenerate.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('没有可生成视频的分镜（需要先生成图片）')),
+            _storyboards.any((sb) => sb.imageUrls.isEmpty)
+                ? const SnackBar(content: Text('请先生成图片'))
+                : const SnackBar(content: Text('所有分镜的视频四宫格都已填满')),
           );
         }
         return;
       }
       
-      // 并发生成视频（每批 2 个，因为视频生成较慢）
-      for (int i = 0; i < storyboardsToGenerate.length; i += 2) {
-        final batch = storyboardsToGenerate.skip(i).take(2).toList();
-        final futures = batch.map((sb) async {
-          try {
-            // 构建完整提示词（包含全局主题）
-            String fullPrompt = sb.videoPrompt.isNotEmpty ? sb.videoPrompt : sb.imagePrompt;
-            if (_globalVideoTheme.isNotEmpty) {
-              fullPrompt = '$_globalVideoTheme, $fullPrompt';
-            }
+      print('   待生成分镜数量: ${storyboardsToGenerate.length}');
+      for (var sb in storyboardsToGenerate) {
+        final idx = _storyboards.indexWhere((s) => s.id == sb.id);
+        print('   - 分镜${idx + 1}: 当前 ${sb.videoUrls.length}/4 个视频');
+      }
+      
+      // ✅ 读取视频 API 配置（一次性读取）
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('video_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'video');
+      
+      print('\n🎬 批量生成分镜视频');
+      print('   待生成数量: ${storyboardsToGenerate.length}');
+      print('   Provider: $provider');
+      print('   Model: ${model ?? "未设置"}\n');
+      
+      // ✅ 一次性并发生成所有分镜的视频（API 支持 100 条并发）
+      print('🚀 开始并发生成 ${storyboardsToGenerate.length} 个分镜视频\n');
+      
+      final futures = storyboardsToGenerate.map((sb) async {
+        try {
+          final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+          
+          // 构建完整提示词（包含全局主题）
+          String fullPrompt = sb.videoPrompt.isNotEmpty ? sb.videoPrompt : sb.imagePrompt;
+          if (_globalVideoTheme.isNotEmpty) {
+            fullPrompt = '$_globalVideoTheme, $fullPrompt';
+          }
+          
+          // 获取参考图片
+          final referenceImage = sb.imageUrls.isNotEmpty ? sb.imageUrls[sb.selectedImageIndex] : null;
+          final mode = referenceImage != null ? '图生视频' : '文生视频';
+          
+          print('   🎬 [${storyboardIndex + 1}] $mode 开始生成...');
+          
+          // ✅ 调用真实视频 API（独立请求）
+          final response = await _apiRepository.generateVideos(
+            provider: provider,
+            prompt: fullPrompt,
+            model: model,
+            referenceImages: referenceImage != null ? [referenceImage] : null,
+            parameters: {
+              'ratio': '16:9',
+              'seconds': 8,
+            },
+          );
+          
+          if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+            final videoUrl = response.data!.first.videoUrl;
             
-            // 获取参考图片
-            final referenceImage = sb.imageUrls.isNotEmpty ? sb.imageUrls[sb.selectedImageIndex] : null;
+            // ✅ 下载并保存视频到本地
+            final savedPath = await _downloadAndSaveVideo(videoUrl, 'storyboard_${storyboardIndex + 1}');
             
-            // 调用 API 生成视频
-            final videoUrl = await _aiService.generateVideoClip(
-              prompt: fullPrompt,
-              imageUrl: referenceImage,
-            );
-            
-            // 更新分镜数据
-            final index = _storyboards.indexWhere((s) => s.id == sb.id);
-            if (index != -1) {
+            // ✅ 更新分镜数据（追加到现有视频列表，占用下一个格子）
+            if (storyboardIndex != -1 && mounted) {
               setState(() {
-                _storyboards[index] = _storyboards[index].copyWith(
-                  videoUrls: [videoUrl],
+                final newUrls = List<String>.from(_storyboards[storyboardIndex].videoUrls)..add(savedPath);
+                _storyboards[storyboardIndex] = _storyboards[storyboardIndex].copyWith(
+                  videoUrls: newUrls,
                 );
               });
             }
             
-            successCount++;
-          } catch (e) {
-            failCount++;
-            debugPrint('生成视频失败 [${sb.id}]: $e');
+            print('      ✅ [${storyboardIndex + 1}] 成功');
+            return true;
+          } else {
+            print('      ❌ [${storyboardIndex + 1}] 失败: ${response.error}');
+            return false;
           }
-        });
-        
-        await Future.wait(futures);
-        
-        // 每批完成后保存
-        await _saveProductionData();
-      }
+        } catch (e) {
+          final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+          print('      ❌ [${storyboardIndex + 1}] 异常: $e');
+          return false;
+        }
+      });
+      
+      // ✅ 等待所有请求完成
+      print('⏳ 等待所有视频生成完成...\n');
+      final results = await Future.wait(futures);
+      successCount = results.where((r) => r == true).length;
+      failCount = results.where((r) => r == false).length;
+      
+      // 保存所有结果
+      await _saveProductionData();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1650,27 +1978,61 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
 
   /// 自动为所有分镜选中检测到的资产
   void _autoSelectAssets() {
+    print('\n🔍 开始自动选中资产');
+    print('   可用角色: ${_characters.length} 个');
+    print('   可用场景: ${_scenes.length} 个');
+    print('   可用物品: ${_items.length} 个\n');
+    
     for (int i = 0; i < _storyboards.length; i++) {
       final row = _storyboards[i];
       final combinedPrompt = '${row.imagePrompt} ${row.videoPrompt}';
       final detectedAssets = <String>[];
       
-      // 检测所有资产
+      print('📋 分镜${i + 1} 资产检测:');
+      
+      // ✅ 检测角色（精确匹配）
       for (final char in _characters) {
         if (combinedPrompt.contains(char.name)) {
           detectedAssets.add(char.id);
+          print('   ✅ 角色: ${char.name}');
         }
       }
+      
+      // ✅ 检测场景（智能模糊匹配）
       for (final scene in _scenes) {
+        // 方法1：完整名称匹配
         if (combinedPrompt.contains(scene.name)) {
           detectedAssets.add(scene.id);
+          print('   ✅ 场景: ${scene.name} (完整匹配)');
+        } else {
+          // 方法2：提取场景名称的关键词进行模糊匹配
+          // 例如："青竹村晨雾村口场景" → 关键词："青竹村", "村口"
+          final sceneKeywords = _extractSceneKeywords(scene.name);
+          var matchCount = 0;
+          for (final keyword in sceneKeywords) {
+            if (keyword.length >= 2 && combinedPrompt.contains(keyword)) {
+              matchCount++;
+            }
+          }
+          // 如果匹配到50%以上的关键词，认为是匹配
+          if (matchCount >= sceneKeywords.length * 0.5 && matchCount > 0) {
+            if (!detectedAssets.contains(scene.id)) {
+              detectedAssets.add(scene.id);
+              print('   ✅ 场景: ${scene.name} (模糊匹配, 关键词: ${sceneKeywords.join(", ")})');
+            }
+          }
         }
       }
+      
+      // ✅ 检测物品（精确匹配）
       for (final item in _items) {
         if (combinedPrompt.contains(item.name)) {
           detectedAssets.add(item.id);
+          print('   ✅ 物品: ${item.name}');
         }
       }
+      
+      print('   📊 总计检测到 ${detectedAssets.length} 个资产\n');
       
       // 自动选中检测到的资产
       if (detectedAssets.isNotEmpty) {
@@ -1682,6 +2044,288 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     }
     
     debugPrint('✅ 自动选中资产完成');
+  }
+  
+  /// 提取场景名称的关键词
+  List<String> _extractSceneKeywords(String sceneName) {
+    // 移除常见的后缀词
+    String cleaned = sceneName
+        .replaceAll('场景', '')
+        .replaceAll('内部', '')
+        .replaceAll('外部', '')
+        .replaceAll('内景', '')
+        .replaceAll('外景', '')
+        .trim();
+    
+    // 按常见分隔符拆分
+    final keywords = <String>[];
+    
+    // 拆分策略：按空格、顿号、逗号等分隔
+    final separators = [' ', '、', '，', ','];
+    var parts = [cleaned];
+    
+    for (final sep in separators) {
+      final newParts = <String>[];
+      for (final part in parts) {
+        newParts.addAll(part.split(sep));
+      }
+      parts = newParts;
+    }
+    
+    // 过滤并返回
+    for (final part in parts) {
+      final trimmed = part.trim();
+      if (trimmed.length >= 2) {
+        keywords.add(trimmed);
+      }
+    }
+    
+    return keywords.isEmpty ? [cleaned] : keywords;
+  }
+
+  /// 清空所有分镜
+  Future<void> _clearAllStoryboards() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('确认清空', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          '确定要清空所有分镜吗？此操作不可恢复。',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确定', style: TextStyle(color: Color(0xFF888888))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      final count = _storyboards.length;
+      setState(() {
+        _storyboards.clear();
+      });
+      await _saveProductionData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 已清空 $count 个分镜'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 显示添加资产对话框
+  void _showAddAssetDialog(int storyboardIndex) {
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E20),
+            title: Text('添加资产到分镜 ${storyboardIndex + 1}', style: const TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: 500,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_characters.isNotEmpty) ...[
+                      const Text('角色', style: TextStyle(color: Color(0xFF888888), fontSize: 14, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _characters.map((char) {
+                          final isSelected = _storyboards[storyboardIndex].selectedImageAssets.contains(char.id);
+                          return _buildSelectableAssetChip(char.name, char.type, isSelected, () {
+                            setDialogState(() {
+                              _toggleAssetSelection(storyboardIndex, char.id);
+                            });
+                          });
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (_scenes.isNotEmpty) ...[
+                      const Text('场景', style: TextStyle(color: Color(0xFF888888), fontSize: 14, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _scenes.map((scene) {
+                          final isSelected = _storyboards[storyboardIndex].selectedImageAssets.contains(scene.id);
+                          return _buildSelectableAssetChip(scene.name, scene.type, isSelected, () {
+                            setDialogState(() {
+                              _toggleAssetSelection(storyboardIndex, scene.id);
+                            });
+                          });
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (_items.isNotEmpty) ...[
+                      const Text('物品', style: TextStyle(color: Color(0xFF888888), fontSize: 14, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _items.map((item) {
+                          final isSelected = _storyboards[storyboardIndex].selectedImageAssets.contains(item.id);
+                          return _buildSelectableAssetChip(item.name, item.type, isSelected, () {
+                            setDialogState(() {
+                              _toggleAssetSelection(storyboardIndex, item.id);
+                            });
+                          });
+                        }).toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('完成', style: TextStyle(color: Color(0xFF888888))),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// 切换资产选择状态
+  void _toggleAssetSelection(int storyboardIndex, String assetId) {
+    final row = _storyboards[storyboardIndex];
+    final currentSelected = [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
+    final newSelected = List<String>.from(currentSelected);
+    
+    if (newSelected.contains(assetId)) {
+      newSelected.remove(assetId);
+    } else {
+      newSelected.add(assetId);
+    }
+    
+    setState(() {
+      _storyboards[storyboardIndex] = row.copyWith(
+        selectedImageAssets: newSelected,
+        selectedVideoAssets: newSelected,
+      );
+    });
+    _saveProductionData();
+  }
+
+  /// 构建可选择的资产芯片
+  Widget _buildSelectableAssetChip(String name, AssetType type, bool isSelected, VoidCallback onTap) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF3A3A3C) : const Color(0xFF1A1A1C),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: isSelected ? const Color(0xFF888888) : const Color(0xFF2A2A2C),
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                type == AssetType.character
+                    ? Icons.person
+                    : type == AssetType.scene
+                        ? Icons.landscape
+                        : Icons.category,
+                size: 14,
+                color: isSelected ? const Color(0xFF888888) : const Color(0xFF555555),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                name,
+                style: TextStyle(
+                  color: isSelected ? const Color(0xFF888888) : const Color(0xFF555555),
+                  fontSize: 12,
+                ),
+              ),
+              if (isSelected) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.check, size: 14, color: Color(0xFF4A9EFF)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 下载并保存单张图片到本地
+  Future<String> _downloadAndSaveImage(String imageUrl, String prefix) async {
+    try {
+      // 从设置中读取保存路径
+      final savePath = imageSavePathNotifier.value;
+      
+      if (savePath == '未设置' || savePath.isEmpty) {
+        debugPrint('⚠️ 未设置图片保存路径，使用在线 URL');
+        return imageUrl;
+      }
+      
+      final saveDir = Directory(savePath);
+      if (!await saveDir.exists()) {
+        await saveDir.create(recursive: true);
+      }
+      
+      // 重试最多3次下载图片
+      for (var retry = 0; retry < 3; retry++) {
+        try {
+          final response = await http.get(
+            Uri.parse(imageUrl),
+            headers: {'Connection': 'keep-alive'},
+          ).timeout(const Duration(seconds: 30));
+          
+          if (response.statusCode == 200) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final fileName = '${prefix}_$timestamp.png';
+            final filePath = path.join(savePath, fileName);
+            
+            final file = File(filePath);
+            await file.writeAsBytes(response.bodyBytes);
+            
+            debugPrint('✅ 分镜图片已保存: $filePath');
+            return filePath;
+          } else {
+            debugPrint('⚠️ 下载失败 (重试 $retry/3): HTTP ${response.statusCode}');
+          }
+        } catch (e) {
+          debugPrint('⚠️ 下载异常 (重试 $retry/3): $e');
+          if (retry < 2) {
+            await Future.delayed(Duration(seconds: retry + 1));
+          }
+        }
+      }
+      
+      debugPrint('❌ 下载失败，使用在线 URL');
+      return imageUrl;
+    } catch (e) {
+      debugPrint('💥 保存图片失败: $e');
+      return imageUrl;
+    }
   }
 
   /// 插入空白分镜（向上插入）
@@ -1758,35 +2402,141 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     );
   }
 
-  /// 执行图片提示词推理
+  /// 执行图片提示词推理（带上下文记忆）
   Future<void> _executeImageReinfer(int index, String requirement) async {
     try {
-      // TODO: 调用LLM推理
-      // 输入：全局图片主题 + 剧本上下文 + 前后分镜 + 用户要求
-      await Future.delayed(const Duration(seconds: 2));
-
-      final row = _storyboards[index];
-      final themePrefix = _globalImageTheme.isNotEmpty ? '$_globalImageTheme。' : '';
-      final updatedPrompt = requirement.isNotEmpty
-          ? '$themePrefix根据要求"$requirement"重新推理的画面描述'
-          : '$themePrefix${row.imagePrompt}';
-
-      if (mounted) {
-        setState(() {
-          _storyboards[index] = row.copyWith(imagePrompt: updatedPrompt);
-        });
-        await _saveProductionData();
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ 已推理图片提示词')),
-          );
+      // ✅ 读取 LLM 配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('llm_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'llm');
+      
+      print('\n🎬 重新推理图片提示词 - 分镜 ${index + 1}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');
+      print('📝 用户要求: ${requirement.isNotEmpty ? requirement : "无"}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 构建上下文信息
+      final contextInfo = StringBuffer();
+      
+      // 全局图片主题
+      if (_globalImageTheme.isNotEmpty) {
+        contextInfo.writeln('【全局图片风格主题】');
+        contextInfo.writeln(_globalImageTheme);
+        contextInfo.writeln();
+      }
+      
+      // 前面的分镜（上下文）
+      if (index > 0) {
+        contextInfo.writeln('【前面的分镜（上下文参考）】');
+        final prevCount = index > 2 ? 2 : index;  // 最多显示前2个分镜
+        for (var i = index - prevCount; i < index; i++) {
+          contextInfo.writeln('分镜${i + 1}:');
+          contextInfo.writeln('  图片: ${_storyboards[i].imagePrompt}');
+          contextInfo.writeln('  视频: ${_storyboards[i].videoPrompt}');
+          contextInfo.writeln();
         }
       }
+      
+      // 当前分镜的现有内容
+      contextInfo.writeln('【当前分镜（需要推理）】');
+      contextInfo.writeln('分镜${index + 1}:');
+      if (_storyboards[index].imagePrompt.isNotEmpty) {
+        contextInfo.writeln('  当前图片提示词: ${_storyboards[index].imagePrompt}');
+      }
+      if (_storyboards[index].videoPrompt.isNotEmpty) {
+        contextInfo.writeln('  视频提示词: ${_storyboards[index].videoPrompt}');
+      }
+      contextInfo.writeln();
+      
+      // 后面的分镜（上下文）
+      if (index < _storyboards.length - 1) {
+        contextInfo.writeln('【后面的分镜（上下文参考）】');
+        final nextCount = index < _storyboards.length - 3 ? 2 : _storyboards.length - index - 1;
+        for (var i = index + 1; i <= index + nextCount; i++) {
+          contextInfo.writeln('分镜${i + 1}:');
+          contextInfo.writeln('  图片: ${_storyboards[i].imagePrompt}');
+          contextInfo.writeln('  视频: ${_storyboards[i].videoPrompt}');
+          contextInfo.writeln();
+        }
+      }
+      
+      // 构建完整提示词
+      String fullPrompt = '''请根据以下信息，为分镜${index + 1}推理一个详细的图片提示词。
+
+$contextInfo
+
+【剧本内容（节选相关部分）】
+${widget.scriptContent.substring(0, widget.scriptContent.length > 1000 ? 1000 : widget.scriptContent.length)}...
+
+${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
+【任务】
+基于上述上下文，为分镜${index + 1}生成一个详细的图片提示词，要求：
+1. 与前后分镜保持连贯性
+2. 符合全局图片风格主题
+3. 包含人物、场景、镜头景别、氛围等元素
+4. 直接输出提示词文本，不要其他格式
+
+图片提示词：''';
+      
+      final messages = <Map<String, String>>[
+        {'role': 'user', 'content': fullPrompt}
+      ];
+      
+      // 调用 LLM API
+      _apiRepository.clearCache();
+      final response = await _apiRepository.generateTextWithMessages(
+        provider: provider,
+        messages: messages,
+        model: model,
+        parameters: {
+          'temperature': 0.7,
+          'max_tokens': 500,
+        },
+      );
+      
+      if (response.isSuccess && response.data != null) {
+        var updatedPrompt = response.data!.text.trim();
+        
+        // ✅ 移除可能的前缀文字（如"图片提示词："等）
+        updatedPrompt = updatedPrompt
+            .replaceFirst('图片提示词：', '')
+            .replaceFirst('图片提示词:', '')
+            .replaceFirst('图片：', '')
+            .replaceFirst('图片:', '')
+            .trim();
+        
+        print('✅ 推理成功');
+        print('📝 新提示词: ${updatedPrompt.substring(0, updatedPrompt.length > 100 ? 100 : updatedPrompt.length)}...\n');
+        
+        if (mounted) {
+          setState(() {
+            _storyboards[index] = _storyboards[index].copyWith(imagePrompt: updatedPrompt);
+          });
+          await _saveProductionData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 分镜${index + 1}的图片提示词已更新'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } else {
+        throw Exception(response.error ?? '推理失败');
+      }
     } catch (e) {
+      print('❌ 推理失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('推理失败：$e')),
+          SnackBar(
+            content: Text('推理失败：$e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -1848,35 +2598,142 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     );
   }
 
-  /// 执行视频提示词推理
+  /// 执行视频提示词推理（带上下文记忆）
   Future<void> _executeVideoReinfer(int index, String requirement) async {
     try {
-      // TODO: 调用LLM推理
-      // 输入：全局视频主题 + 剧本上下文 + 前后分镜 + 用户要求
-      await Future.delayed(const Duration(seconds: 2));
-
-      final row = _storyboards[index];
-      final themePrefix = _globalVideoTheme.isNotEmpty ? '$_globalVideoTheme。' : '';
-      final updatedPrompt = requirement.isNotEmpty
-          ? '$themePrefix根据要求"$requirement"重新推理的运镜描述'
-          : '$themePrefix${row.videoPrompt}';
-
-      if (mounted) {
-        setState(() {
-          _storyboards[index] = row.copyWith(videoPrompt: updatedPrompt);
-        });
-        await _saveProductionData();
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ 已推理视频提示词')),
-          );
+      // ✅ 读取 LLM 配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('llm_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'llm');
+      
+      print('\n🎬 重新推理视频提示词 - 分镜 ${index + 1}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');
+      print('📝 用户要求: ${requirement.isNotEmpty ? requirement : "无"}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 构建上下文信息
+      final contextInfo = StringBuffer();
+      
+      // 全局视频主题
+      if (_globalVideoTheme.isNotEmpty) {
+        contextInfo.writeln('【全局视频风格主题】');
+        contextInfo.writeln(_globalVideoTheme);
+        contextInfo.writeln();
+      }
+      
+      // 前面的分镜（上下文）
+      if (index > 0) {
+        contextInfo.writeln('【前面的分镜（上下文参考）】');
+        final prevCount = index > 2 ? 2 : index;
+        for (var i = index - prevCount; i < index; i++) {
+          contextInfo.writeln('分镜${i + 1}:');
+          contextInfo.writeln('  图片: ${_storyboards[i].imagePrompt}');
+          contextInfo.writeln('  视频: ${_storyboards[i].videoPrompt}');
+          contextInfo.writeln();
         }
       }
+      
+      // 当前分镜的现有内容
+      contextInfo.writeln('【当前分镜（需要推理）】');
+      contextInfo.writeln('分镜${index + 1}:');
+      contextInfo.writeln('  图片提示词: ${_storyboards[index].imagePrompt}');
+      if (_storyboards[index].videoPrompt.isNotEmpty) {
+        contextInfo.writeln('  当前视频提示词: ${_storyboards[index].videoPrompt}');
+      }
+      contextInfo.writeln();
+      
+      // 后面的分镜（上下文）
+      if (index < _storyboards.length - 1) {
+        contextInfo.writeln('【后面的分镜（上下文参考）】');
+        final nextCount = index < _storyboards.length - 3 ? 2 : _storyboards.length - index - 1;
+        for (var i = index + 1; i <= index + nextCount; i++) {
+          contextInfo.writeln('分镜${i + 1}:');
+          contextInfo.writeln('  图片: ${_storyboards[i].imagePrompt}');
+          contextInfo.writeln('  视频: ${_storyboards[i].videoPrompt}');
+          contextInfo.writeln();
+        }
+      }
+      
+      // 构建完整提示词
+      String fullPrompt = '''请根据以下信息，为分镜${index + 1}推理一个详细的视频运镜描述。
+
+$contextInfo
+
+【剧本内容（节选相关部分）】
+${widget.scriptContent.substring(0, widget.scriptContent.length > 1000 ? 1000 : widget.scriptContent.length)}...
+
+${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
+【任务】
+基于上述上下文和当前分镜的图片内容，为分镜${index + 1}生成一个详细的视频运镜描述，要求：
+1. 与前后分镜保持连贯性和节奏感
+2. 符合全局视频风格主题
+3. 描述镜头运动、节奏、视角、转场等
+4. 确保视频能够承接前一个分镜，并过渡到下一个分镜
+5. 直接输出视频提示词文本，不要其他格式
+
+视频提示词：''';
+      
+      final messages = <Map<String, String>>[
+        {'role': 'user', 'content': fullPrompt}
+      ];
+      
+      // 调用 LLM API
+      _apiRepository.clearCache();
+      final response = await _apiRepository.generateTextWithMessages(
+        provider: provider,
+        messages: messages,
+        model: model,
+        parameters: {
+          'temperature': 0.7,
+          'max_tokens': 500,
+        },
+      );
+      
+      if (response.isSuccess && response.data != null) {
+        var updatedPrompt = response.data!.text.trim();
+        
+        // ✅ 移除可能的前缀文字（如"视频提示词："等）
+        updatedPrompt = updatedPrompt
+            .replaceFirst('视频提示词：', '')
+            .replaceFirst('视频提示词:', '')
+            .replaceFirst('视频：', '')
+            .replaceFirst('视频:', '')
+            .replaceFirst('运镜描述：', '')
+            .replaceFirst('运镜描述:', '')
+            .trim();
+        
+        print('✅ 推理成功');
+        print('📝 新提示词: ${updatedPrompt.substring(0, updatedPrompt.length > 100 ? 100 : updatedPrompt.length)}...\n');
+        
+        if (mounted) {
+          setState(() {
+            _storyboards[index] = _storyboards[index].copyWith(videoPrompt: updatedPrompt);
+          });
+          await _saveProductionData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 分镜${index + 1}的视频提示词已更新'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } else {
+        throw Exception(response.error ?? '推理失败');
+      }
     } catch (e) {
+      print('❌ 推理失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('推理失败：$e')),
+          SnackBar(
+            content: Text('推理失败：$e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -1931,20 +2788,124 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       return;
     }
     
-    // TODO: 调用图片生成API
-    await Future.delayed(const Duration(seconds: 2));
-
-    if (mounted) {
-      final newImageUrl = 'https://picsum.photos/seed/${row.id}_${row.imageUrls.length}/800/450';
-      setState(() {
-        final newUrls = List<String>.from(row.imageUrls)..add(newImageUrl);
-        _storyboards[index] = row.copyWith(imageUrls: newUrls);
-      });
-      await _saveProductionData();
+    print('\n🎨 生成分镜图片 - 分镜 ${index + 1}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    try {
+      // ✅ 读取图片 API 配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('image_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
+      final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
+      final model = await storage.getModel(provider: provider, modelType: 'image');
       
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置图片 API');
+      }
+      
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');
+      print('📝 图片提示词: ${row.imagePrompt.substring(0, row.imagePrompt.length > 100 ? 100 : row.imagePrompt.length)}...');
+      
+      // ✅ 构建完整提示词（添加全局主题）
+      String fullPrompt = row.imagePrompt;
+      if (_globalImageTheme.isNotEmpty) {
+        fullPrompt = '$_globalImageTheme。$fullPrompt';
+        print('🎨 全局主题: $_globalImageTheme');
+      }
+      
+      // ✅ 收集选中资产的图片作为参考图片
+      final referenceImages = <String>[];
+      final selectedAssetIds = [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
+      
+      print('📦 选中的资产: ${selectedAssetIds.length} 个');
+      
+      for (final assetId in selectedAssetIds) {
+        // 查找角色资产
+        final char = _characters.firstWhere(
+          (c) => c.id == assetId,
+          orElse: () => AssetReference(id: '', name: '', type: AssetType.character),
+        );
+        if (char.id.isNotEmpty && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+          referenceImages.add(char.imageUrl!);
+          print('   ✅ 角色图片: ${char.name}');
+        }
+        
+        // 查找场景资产
+        final scene = _scenes.firstWhere(
+          (s) => s.id == assetId,
+          orElse: () => AssetReference(id: '', name: '', type: AssetType.scene),
+        );
+        if (scene.id.isNotEmpty && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+          referenceImages.add(scene.imageUrl!);
+          print('   ✅ 场景图片: ${scene.name}');
+        }
+        
+        // 查找物品资产
+        final item = _items.firstWhere(
+          (i) => i.id == assetId,
+          orElse: () => AssetReference(id: '', name: '', type: AssetType.item),
+        );
+        if (item.id.isNotEmpty && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+          referenceImages.add(item.imageUrl!);
+          print('   ✅ 物品图片: ${item.name}');
+        }
+      }
+      
+      print('🖼️ 参考图片总数: ${referenceImages.length} 张');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 调用真实图片 API
+      final response = await _apiRepository.generateImages(
+        provider: provider,
+        prompt: fullPrompt,
+        model: model,
+        referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
+        parameters: {
+          'size': '16:9',
+          'quality': '1K',
+        },
+      );
+      
+      if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+        final imageUrl = response.data!.first.imageUrl;
+        
+        print('✅ 图片生成成功: $imageUrl');
+        print('💾 下载并保存到本地...');
+        
+        // ✅ 下载并保存图片到本地
+        final savedPath = await _downloadAndSaveImage(imageUrl, 'storyboard_${index + 1}');
+        
+        print('✅ 保存完成（使用本地路径）\n');
+        
+        if (mounted) {
+          setState(() {
+            final newUrls = List<String>.from(row.imageUrls)..add(savedPath);
+            _storyboards[index] = row.copyWith(imageUrls: newUrls);
+          });
+          await _saveProductionData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 分镜${index + 1}图片生成成功 (${row.imageUrls.length + 1}/4)'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } else {
+        throw Exception(response.error ?? '生成失败');
+      }
+    } catch (e) {
+      print('❌ 图片生成失败: $e\n');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ 已生成图片 ${row.imageUrls.length + 1}/4')),
+          SnackBar(
+            content: Text('❌ 图片生成失败: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -1961,31 +2922,146 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       return;
     }
     
-    // 检查选中的格子
-    final selectedImageUrl = row.selectedImageIndex < row.imageUrls.length
-        ? row.imageUrls[row.selectedImageIndex]
-        : null;
+    print('\n🎬 生成分镜视频 - 分镜 ${index + 1}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
-    final mode = selectedImageUrl != null ? '图生视频' : '文生视频';
-    
-    // TODO: 调用视频生成API
-    // 如果 selectedImageUrl 不为null：图生视频（使用图片作为参考）
-    // 如果 selectedImageUrl 为null：文生视频（只使用提示词）
-    await Future.delayed(const Duration(seconds: 3));
-
-    if (mounted) {
-      final newVideoUrl = 'video_${row.id}_${row.videoUrls.length}_$mode.mp4';
-      setState(() {
-        final newUrls = List<String>.from(row.videoUrls)..add(newVideoUrl);
-        _storyboards[index] = row.copyWith(videoUrls: newUrls);
-      });
-      await _saveProductionData();
+    try {
+      // ✅ 读取视频 API 配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('video_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'video');
       
+      // 检查选中的图片
+      final selectedImageUrl = row.selectedImageIndex < row.imageUrls.length
+          ? row.imageUrls[row.selectedImageIndex]
+          : null;
+      
+      final mode = selectedImageUrl != null ? '图生视频' : '文生视频';
+      
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');
+      print('📝 模式: $mode');
+      print('📝 视频提示词: ${row.videoPrompt.substring(0, row.videoPrompt.length > 100 ? 100 : row.videoPrompt.length)}...');
+      
+      // 构建完整提示词
+      String fullPrompt = row.videoPrompt.isNotEmpty ? row.videoPrompt : row.imagePrompt;
+      if (_globalVideoTheme.isNotEmpty) {
+        fullPrompt = '$_globalVideoTheme, $fullPrompt';
+        print('🎨 全局主题: $_globalVideoTheme');
+      }
+      
+      if (selectedImageUrl != null) {
+        print('🖼️ 参考图片: $selectedImageUrl');
+      }
+      
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 调用真实视频 API
+      final response = await _apiRepository.generateVideos(
+        provider: provider,
+        prompt: fullPrompt,
+        model: model,
+        referenceImages: selectedImageUrl != null ? [selectedImageUrl] : null,
+        parameters: {
+          'ratio': '16:9',
+          'seconds': 8,
+        },
+      );
+      
+      if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+        final videoUrl = response.data!.first.videoUrl;
+        
+        print('✅ 视频生成成功: $videoUrl');
+        print('💾 下载并保存到本地...');
+        
+        // ✅ 下载并保存视频到本地
+        final savedPath = await _downloadAndSaveVideo(videoUrl, 'storyboard_${index + 1}');
+        
+        print('✅ 保存完成（使用本地路径）\n');
+        
+        if (mounted) {
+          setState(() {
+            final newUrls = List<String>.from(row.videoUrls)..add(savedPath);
+            _storyboards[index] = row.copyWith(videoUrls: newUrls);
+          });
+          await _saveProductionData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 分镜${index + 1}视频生成成功 (${row.videoUrls.length + 1}/4) - $mode'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } else {
+        throw Exception(response.error ?? '生成失败');
+      }
+    } catch (e) {
+      print('❌ 视频生成失败: $e\n');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ 已生成视频 ${row.videoUrls.length + 1}/4（$mode）')),
+          SnackBar(
+            content: Text('❌ 视频生成失败: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
+    }
+  }
+
+  /// 下载并保存视频到本地
+  Future<String> _downloadAndSaveVideo(String videoUrl, String prefix) async {
+    try {
+      // 从设置中读取保存路径
+      final savePath = videoSavePathNotifier.value;
+      
+      if (savePath == '未设置' || savePath.isEmpty) {
+        debugPrint('⚠️ 未设置视频保存路径，使用在线 URL');
+        return videoUrl;
+      }
+      
+      final saveDir = Directory(savePath);
+      if (!await saveDir.exists()) {
+        await saveDir.create(recursive: true);
+      }
+      
+      // 重试最多3次下载视频
+      for (var retry = 0; retry < 3; retry++) {
+        try {
+          final response = await http.get(
+            Uri.parse(videoUrl),
+            headers: {'Connection': 'keep-alive'},
+          ).timeout(const Duration(seconds: 120));  // 视频较大，超时时间longer
+          
+          if (response.statusCode == 200) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final fileName = '${prefix}_$timestamp.mp4';
+            final filePath = path.join(savePath, fileName);
+            
+            final file = File(filePath);
+            await file.writeAsBytes(response.bodyBytes);
+            
+            debugPrint('✅ 视频已保存: $filePath');
+            return filePath;
+          } else {
+            debugPrint('⚠️ 下载失败 (重试 $retry/3): HTTP ${response.statusCode}');
+          }
+        } catch (e) {
+          debugPrint('⚠️ 下载异常 (重试 $retry/3): $e');
+          if (retry < 2) {
+            await Future.delayed(Duration(seconds: (retry + 1) * 2));  // 等待更长时间
+          }
+        }
+      }
+      
+      debugPrint('❌ 下载失败，使用在线 URL');
+      return videoUrl;
+    } catch (e) {
+      debugPrint('💥 保存视频失败: $e');
+      return videoUrl;
     }
   }
 }

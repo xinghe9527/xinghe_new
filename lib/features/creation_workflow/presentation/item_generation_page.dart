@@ -276,8 +276,8 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
                         const SizedBox(width: 8),
                         OutlinedButton.icon(
                           onPressed: _items.isEmpty ? null : _generateImages,
-                          icon: const Icon(Icons.image, size: 16),
-                          label: const Text('生成图片'),
+                          icon: const Icon(Icons.collections, size: 16),
+                          label: const Text('批量生成'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF888888),
                             side: const BorderSide(color: Color(0xFF3A3A3C)),
@@ -933,90 +933,95 @@ ${widget.scriptContent}
 
     int successCount = 0;
     int failCount = 0;
+    
+    // ✅ 读取图片 API 配置（一次性读取）
+    final prefs = await SharedPreferences.getInstance();
+    final provider = prefs.getString('image_provider') ?? 'geeknow';
+    final storage = SecureStorageManager();
+    final model = await storage.getModel(provider: provider, modelType: 'image');
 
-    for (var i = 0; i < _items.length; i++) {
-      if (_generatingImages.contains(i)) continue;
-
-      setState(() => _generatingImages.add(i));
-
-      try {
-        print('📷 生成第 ${i + 1}/${_items.length} 个物品图片');
+    // ✅ 并发生成（每批 3 个，避免API限流）
+    for (var batchStart = 0; batchStart < _items.length; batchStart += 3) {
+      final batchEnd = (batchStart + 3 > _items.length) ? _items.length : batchStart + 3;
+      final batchIndices = List.generate(batchEnd - batchStart, (i) => batchStart + i);
+      
+      print('📦 批次 ${batchStart ~/ 3 + 1}: 生成 ${batchIndices.length} 个物品');
+      
+      // 并发生成当前批次
+      final futures = batchIndices.map((i) async {
+        if (_generatingImages.contains(i)) return false;
         
-        // 读取图片 API 配置
-        final prefs = await SharedPreferences.getInstance();
-        final provider = prefs.getString('image_provider') ?? 'geeknow';
-        final storage = SecureStorageManager();
-        final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
-        final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
-        final model = await storage.getModel(provider: provider, modelType: 'image');
-
-        if (baseUrl == null || apiKey == null) {
-          throw Exception('未配置图片 API');
-        }
-
-        // 构建完整的提示词（只用于图片生成，不使用推理预设）
-        String fullPrompt = _items[i].description;
+        setState(() => _generatingImages.add(i));
         
-        // ✅ 添加风格参考说明
-        if (_styleReferenceText.isNotEmpty) {
-          fullPrompt = '$_styleReferenceText, $fullPrompt';
-        }
-        
-        // ✅ 如果有风格参考图片，在提示词中明确说明
-        final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
-        if (hasStyleImage) {
-          fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$fullPrompt';
-        }
-        
-        print('   📝 生成提示词: ${fullPrompt.substring(0, fullPrompt.length > 100 ? 100 : fullPrompt.length)}...');
-        print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}');
-
-        // 准备参考图片
-        final referenceImages = <String>[];
-        if (hasStyleImage) {
-          referenceImages.add(_styleReferenceImage!);
-          print('   📸 添加风格参考图片');
-        }
-
-        // 调用 API
-        final response = await _apiRepository.generateImages(
-          provider: provider,
-          prompt: fullPrompt,
-          model: model,
-          referenceImages: referenceImages.isEmpty ? null : referenceImages,
-          parameters: {
-            'size': _imageRatio,
-            'quality': '1K',
-          },
-        );
-
-        if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
-          final imageUrl = response.data!.first.imageUrl;
-          if (mounted) {
-            setState(() {
-              _items[i] = _items[i].copyWith(imageUrl: imageUrl);
-            });
+        try {
+          final item = _items[i];
+          
+          // 构建完整的提示词
+          String fullPrompt = item.description;
+          if (_styleReferenceText.isNotEmpty) {
+            fullPrompt = '$_styleReferenceText, $fullPrompt';
           }
-          await _saveItemData();
-          successCount++;
-          print('   ✅ 物品 ${i + 1} 生成成功');
-        } else {
-          failCount++;
-          print('   ❌ 物品 ${i + 1} 生成失败: ${response.error}');
+          
+          final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+          if (hasStyleImage) {
+            fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$fullPrompt';
+          }
+          
+          print('   📸 [${i + 1}/${_items.length}] ${item.name}');
+          
+          // 准备参考图片
+          final referenceImages = <String>[];
+          if (hasStyleImage) {
+            referenceImages.add(_styleReferenceImage!);
+          }
+          
+          // 调用 API（独立请求）
+          _apiRepository.clearCache();
+          final response = await _apiRepository.generateImages(
+            provider: provider,
+            prompt: fullPrompt,
+            model: model,
+            referenceImages: referenceImages.isEmpty ? null : referenceImages,
+            parameters: {
+              'size': _imageRatio,
+              'quality': '1K',
+            },
+          );
+          
+          if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+            final imageUrl = response.data!.first.imageUrl;
+            
+            if (mounted) {
+              setState(() {
+                _items[i] = _items[i].copyWith(imageUrl: imageUrl);
+              });
+            }
+            
+            print('      ✅ 成功\n');
+            return true;
+          } else {
+            print('      ❌ 失败: ${response.error}\n');
+            return false;
+          }
+        } catch (e) {
+          print('      ❌ 异常: $e\n');
+          return false;
+        } finally {
+          if (mounted) {
+            setState(() => _generatingImages.remove(i));
+          }
         }
-      } catch (e) {
-        failCount++;
-        print('   💥 物品 ${i + 1} 生成异常: $e');
-      } finally {
-        if (mounted) {
-          setState(() => _generatingImages.remove(i));
-        }
-      }
-
-      // 避免请求过快
-      if (i < _items.length - 1) {
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
+      });
+      
+      // 等待当前批次完成
+      final results = await Future.wait(futures);
+      successCount += results.where((r) => r == true).length;
+      failCount += results.where((r) => r == false).length;
+      
+      // 保存当前批次的结果
+      await _saveItemData();
+      
+      print('✅ 批次完成: 成功 ${results.where((r) => r).length}, 失败 ${results.where((r) => !r).length}\n');
     }
 
     if (mounted) {

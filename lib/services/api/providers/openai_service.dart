@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../base/api_service_base.dart';
 import '../base/api_response.dart';
@@ -302,10 +303,30 @@ class OpenAIService extends ApiServiceBase {
         // 1. 添加参考图片（如果有）
         if (referenceImagePaths != null && referenceImagePaths.isNotEmpty) {
           for (final imagePath in referenceImagePaths) {
-            final imageBytes = await File(imagePath).readAsBytes();
+            Uint8List imageBytes;
+            String mimeType;
+            
+            // ✅ 判断是 URL 还是本地文件路径
+            if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+              // 在线图片：下载到内存
+              print('   📥 下载在线图片: $imagePath');
+              final response = await http.get(Uri.parse(imagePath));
+              if (response.statusCode == 200) {
+                imageBytes = response.bodyBytes;
+                mimeType = response.headers['content-type'] ?? 'image/jpeg';
+                print('   ✅ 下载成功');
+              } else {
+                print('   ❌ 下载失败: HTTP ${response.statusCode}');
+                continue;
+              }
+            } else {
+              // 本地文件：直接读取
+              imageBytes = await File(imagePath).readAsBytes();
+              final extension = imagePath.split('.').last.toLowerCase();
+              mimeType = _getMimeType(extension);
+            }
+            
             final base64Image = base64Encode(imageBytes);
-            final extension = imagePath.split('.').last.toLowerCase();
-            final mimeType = _getMimeType(extension);
 
             parts.add({
               'inline_data': {
@@ -632,10 +653,27 @@ class OpenAIService extends ApiServiceBase {
 
       // 添加参考图片
       for (final imagePath in referenceImagePaths) {
-        final imageBytes = await File(imagePath).readAsBytes();
+        Uint8List imageBytes;
+        String mimeType;
+        
+        // ✅ 判断是 URL 还是本地文件路径
+        if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+          // 在线图片：下载到内存
+          final response = await http.get(Uri.parse(imagePath));
+          if (response.statusCode == 200) {
+            imageBytes = response.bodyBytes;
+            mimeType = response.headers['content-type'] ?? 'image/jpeg';
+          } else {
+            continue;  // 跳过下载失败的图片
+          }
+        } else {
+          // 本地文件：直接读取
+          imageBytes = await File(imagePath).readAsBytes();
+          final extension = imagePath.split('.').last.toLowerCase();
+          mimeType = _getMimeType(extension);
+        }
+        
         final base64Image = base64Encode(imageBytes);
-        final extension = imagePath.split('.').last.toLowerCase();
-        final mimeType = _getMimeType(extension);
 
         contentList.add(
           ChatMessageContent.image(

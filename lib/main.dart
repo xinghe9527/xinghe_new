@@ -14,6 +14,7 @@ final ValueNotifier<int> themeNotifier = ValueNotifier<int>(0); // 0: 深邃黑,
 // 全局保存路径管理器
 final ValueNotifier<String> imageSavePathNotifier = ValueNotifier<String>('未设置');
 final ValueNotifier<String> videoSavePathNotifier = ValueNotifier<String>('未设置');
+final ValueNotifier<String> workSavePathNotifier = ValueNotifier<String>('未设置');  // ✅ 作品保存路径
 
 /// 🔧 设置键盘修复（解决 Windows 上的幽灵按键问题）
 /// 

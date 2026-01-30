@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../base/api_service_base.dart';
@@ -431,10 +432,33 @@ class GeekNowService extends ApiServiceBase {
       // 添加参考图片（如果有）
       if (referenceImagePaths != null && referenceImagePaths.isNotEmpty) {
         for (final imagePath in referenceImagePaths) {
-          final imageBytes = await File(imagePath).readAsBytes();
+          Uint8List imageBytes;
+          String mimeType;
+          
+          // ✅ 判断是 URL 还是本地文件路径
+          if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+            // 在线图片：下载到内存
+            print('   📥 下载在线图片: $imagePath');
+            final response = await http.get(Uri.parse(imagePath));
+            if (response.statusCode == 200) {
+              imageBytes = response.bodyBytes;
+              // 从 Content-Type 获取 MIME 类型
+              mimeType = response.headers['content-type'] ?? 'image/jpeg';
+              print('   ✅ 下载成功，大小: ${imageBytes.length} 字节');
+            } else {
+              print('   ❌ 下载失败: HTTP ${response.statusCode}');
+              continue;  // 跳过这张图片
+            }
+          } else {
+            // 本地文件：直接读取
+            print('   📂 读取本地文件: $imagePath');
+            imageBytes = await File(imagePath).readAsBytes();
+            final extension = imagePath.split('.').last.toLowerCase();
+            mimeType = _getMimeType(extension);
+            print('   ✅ 读取成功，大小: ${imageBytes.length} 字节');
+          }
+          
           final base64Image = base64Encode(imageBytes);
-          final extension = imagePath.split('.').last.toLowerCase();
-          final mimeType = _getMimeType(extension);
           
           parts.add({
             'inline_data': {
