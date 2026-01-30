@@ -5,6 +5,8 @@ import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as path;
 import 'widgets/custom_title_bar.dart';
 import 'item_prompt_manager.dart';
 import 'style_reference_dialog.dart';
@@ -35,14 +37,46 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
   String _selectedPromptContent = '';
   String _styleReferenceText = '';
   String? _styleReferenceImage;
+  String _imageRatio = '16:9';  // ✅ 图片比例，默认 16:9
   List<ItemData> _items = [];
   bool _isInferring = false;
   final ApiRepository _apiRepository = ApiRepository();
+  final Set<int> _generatingImages = {};
+
+  final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];  // ✅ 比例选项
 
   @override
   void initState() {
     super.initState();
     _loadItemData();
+    _loadImageRatio();  // 加载保存的比例设置
+  }
+
+  /// 加载图片比例设置
+  Future<void> _loadImageRatio() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedRatio = prefs.getString('item_image_ratio');
+      if (savedRatio != null && _ratios.contains(savedRatio)) {
+        if (mounted) {
+          setState(() => _imageRatio = savedRatio);
+        }
+        debugPrint('✅ 加载物品图片比例: $savedRatio');
+      }
+    } catch (e) {
+      debugPrint('⚠️ 加载物品图片比例失败: $e');
+    }
+  }
+
+  /// 保存图片比例设置
+  Future<void> _saveImageRatio(String ratio) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('item_image_ratio', ratio);
+      debugPrint('✅ 保存物品图片比例: $ratio');
+    } catch (e) {
+      debugPrint('⚠️ 保存物品图片比例失败: $e');
+    }
   }
 
   Future<void> _loadItemData() async {
@@ -189,6 +223,57 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        // 比例选择器（样式与其他按钮一致）
+                        PopupMenuButton<String>(
+                          offset: const Offset(0, 40),
+                          tooltip: '选择图片比例',
+                          color: const Color(0xFF2A2A2C),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: const BorderSide(color: Color(0xFF3A3A3C)),
+                          ),
+                          itemBuilder: (context) {
+                            return _ratios.map((ratio) {
+                              final isSelected = ratio == _imageRatio;
+                              return PopupMenuItem<String>(
+                                value: ratio,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isSelected ? Icons.check : Icons.crop_square,
+                                      size: 16,
+                                      color: isSelected ? const Color(0xFF4A9EFF) : Colors.transparent,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      ratio,
+                                      style: TextStyle(
+                                        color: isSelected ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                        fontSize: 13,
+                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList();
+                          },
+                          onSelected: (v) {
+                            setState(() => _imageRatio = v);
+                            _saveImageRatio(v);  // 保存选择的比例
+                          },
+                          child: OutlinedButton.icon(
+                            onPressed: null,  // 点击由 PopupMenuButton 处理
+                            icon: const Icon(Icons.aspect_ratio, size: 16),
+                            label: Text(_imageRatio),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF888888),
+                              side: const BorderSide(color: Color(0xFF3A3A3C)),
+                              disabledForegroundColor: const Color(0xFF888888),  // 禁用状态下保持颜色
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         OutlinedButton.icon(
                           onPressed: _items.isEmpty ? null : _generateImages,
                           icon: const Icon(Icons.image, size: 16),
@@ -265,20 +350,54 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF3A3A3C),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          item.name,
-                          style: const TextStyle(
-                            color: Color(0xFF888888),
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                      // 物品名称和操作按钮
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3A3A3C),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              item.name,
+                              style: const TextStyle(
+                                color: Color(0xFF888888),
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 8),
+                          // 生成图片按钮（单个）
+                          IconButton(
+                            onPressed: _generatingImages.contains(index) ? null : () => _generateSingleItem(index),
+                            icon: _generatingImages.contains(index)
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Color(0xFF888888))),
+                                  )
+                                : const Icon(Icons.image, size: 16),
+                            tooltip: '生成图片',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF3A3A3C),
+                              foregroundColor: const Color(0xFF888888),
+                              padding: const EdgeInsets.all(8),
+                            ),
+                          ),
+                          // 删除按钮
+                          IconButton(
+                            onPressed: () => _deleteItem(index),
+                            icon: const Icon(Icons.delete_outline, size: 16),
+                            tooltip: '删除物品',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF3A3A3C),
+                              foregroundColor: const Color(0xFF888888),
+                              padding: const EdgeInsets.all(8),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       TextField(
@@ -407,7 +526,18 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
       // ✅ 构建 messages
       final messages = <Map<String, String>>[];
       
-      final basePrompt = '''请从以下剧本中提取所有重要物品。
+      String fullPrompt = '';
+      
+      if (_selectedPromptContent.isNotEmpty) {
+        // ✅ 如果用户设置了提示词预设，完全使用用户的预设（不添加干扰性指令）
+        fullPrompt = _selectedPromptContent.replaceAll('{{小说原文}}', widget.scriptContent)
+            .replaceAll('{{推文文案}}', widget.scriptContent)
+            .replaceAll('{{故事情节}}', widget.scriptContent);
+        
+        print('✅ 使用用户自定义提示词预设（完整控制输出格式）');
+      } else {
+        // ✅ 如果没有预设，使用简单的基础格式
+        fullPrompt = '''请从以下剧本中提取所有重要物品。
 
 剧本：
 ${widget.scriptContent}
@@ -421,17 +551,8 @@ ${widget.scriptContent}
 飞行摩托 | 单人飞行载具，流线型设计，霓虹灯带。
 
 现在开始提取：''';
-      
-      String fullPrompt = '';
-      if (_selectedPromptContent.isNotEmpty) {
-        fullPrompt = '''【重要指令 - 必须严格遵守】
-$_selectedPromptContent
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-$basePrompt''';
-      } else {
-        fullPrompt = basePrompt;
+        
+        print('⚠️ 未设置提示词预设，使用默认简单格式');
       }
       
       messages.add({'role': 'user', 'content': fullPrompt});
@@ -456,28 +577,102 @@ $basePrompt''';
         print(responseText);
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         
-        // ✅ 解析物品
+        // ✅ 智能解析物品（支持 JSON 格式和简单格式）
         final itemList = <ItemData>[];
-        final lines = responseText.split('\n');
         
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          if (line.contains('|')) {
-            final parts = line.split('|');
-            if (parts.length >= 2) {
-              itemList.add(ItemData(
-                id: DateTime.now().millisecondsSinceEpoch.toString() + itemList.length.toString(),
-                name: parts[0].trim(),
-                description: parts[1].trim(),
-              ));
+        try {
+          // 尝试解析 JSON 格式
+          try {
+            // 清理文本：移除可能的 markdown 代码块标记
+            String cleanText = responseText.trim();
+            if (cleanText.startsWith('```json')) {
+              cleanText = cleanText.replaceFirst('```json', '').trim();
+            }
+            if (cleanText.startsWith('```')) {
+              cleanText = cleanText.replaceFirst('```', '').trim();
+            }
+            if (cleanText.endsWith('```')) {
+              cleanText = cleanText.substring(0, cleanText.lastIndexOf('```')).trim();
+            }
+            
+            // 尝试找到 JSON 数组
+            final startIndex = cleanText.indexOf('[');
+            final endIndex = cleanText.lastIndexOf(']');
+            
+            if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+              final jsonStr = cleanText.substring(startIndex, endIndex + 1);
+              final List<dynamic> jsonList = jsonDecode(jsonStr);
+              
+              print('✅ JSON 解析成功，找到 ${jsonList.length} 个物品');
+              
+              for (final item in jsonList) {
+                if (item is Map<String, dynamic>) {
+                  final name = item['name']?.toString() ?? '未命名';
+                  final description = item['description']?.toString() ?? '';
+                  
+                  itemList.add(ItemData(
+                    id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + itemList.length.toString(),
+                    name: name,
+                    description: description,
+                  ));
+                  
+                  print('   - 物品: $name (描述长度: ${description.length})');
+                }
+              }
+            } else {
+              throw Exception('未找到有效的 JSON 数组标记');
+            }
+          } catch (jsonError) {
+            print('⚠️ JSON 格式解析失败: $jsonError');
+            throw jsonError;
+          }
+        } catch (e) {
+          // JSON 解析失败，尝试简单格式（物品名称 | 物品描述）
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('⚠️ 尝试简单格式解析（物品名称 | 物品描述）');
+          
+          final lines = responseText.split('\n');
+          for (final line in lines) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) continue;
+            
+            // 跳过明显的注释或说明行
+            if (trimmed.startsWith('#') || 
+                trimmed.startsWith('//') || 
+                trimmed.startsWith('根据') ||
+                trimmed.startsWith('```')) {
+              continue;
+            }
+            
+            if (trimmed.contains('|')) {
+              final parts = trimmed.split('|');
+              if (parts.length >= 2) {
+                final name = parts[0].trim();
+                final description = parts.sublist(1).join('|').trim();
+                
+                if (name.isNotEmpty && description.isNotEmpty) {
+                  itemList.add(ItemData(
+                    id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + itemList.length.toString(),
+                    name: name,
+                    description: description,
+                  ));
+                  
+                  print('   - 物品: $name (描述长度: ${description.length})');
+                }
+              }
             }
           }
+          
+          print('✅ 简单格式解析完成，找到 ${itemList.length} 个物品');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         }
         
         if (itemList.isEmpty) {
+          // 如果所有解析都失败，将整个文本作为一个物品
+          print('⚠️ 所有格式解析失败，使用原始文本作为单个物品');
           itemList.add(ItemData(
             id: DateTime.now().millisecondsSinceEpoch.toString(),
-            name: '物品列表',
+            name: '推理结果',
             description: responseText,
           ));
         }
@@ -582,26 +777,255 @@ $basePrompt''';
     }
   }
 
-  Future<void> _generateImages() async {
-    if (_items.isEmpty) return;
+  /// 生成单个物品图片
+  Future<void> _generateSingleItem(int index) async {
+    final item = _items[index];
+    
+    setState(() {
+      _generatingImages.add(index);
+    });
+    
+    print('\n🎨 生成单个物品图片');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('物品: ${item.name}');
+    print('比例: $_imageRatio');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-    await Future.delayed(const Duration(seconds: 3));
+    try {
+      // 读取图片 API 配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('image_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
+      final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
+      final model = await storage.getModel(provider: provider, modelType: 'image');
 
-    if (mounted) {
-      setState(() {
-        for (var i = 0; i < _items.length; i++) {
-          final imageUrl = 'https://picsum.photos/seed/${_items[i].id}/500/500';
-          _items[i] = _items[i].copyWith(imageUrl: imageUrl);
-          _saveImageToLocal(imageUrl, 'item_${_items[i].id}');
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置图片 API');
+      }
+
+      // 构建完整的提示词（只用于图片生成，不使用推理预设）
+      String fullPrompt = item.description;
+      
+      // ✅ 添加风格参考说明
+      if (_styleReferenceText.isNotEmpty) {
+        fullPrompt = '$_styleReferenceText, $fullPrompt';
+      }
+      
+      // ✅ 如果有风格参考图片，在提示词中明确说明
+      final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+      if (hasStyleImage) {
+        fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$fullPrompt';
+      }
+      
+      print('   📝 生成提示词: ${fullPrompt.substring(0, fullPrompt.length > 100 ? 100 : fullPrompt.length)}...');
+      print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}');
+
+      // 准备参考图片
+      final referenceImages = <String>[];
+      if (hasStyleImage) {
+        referenceImages.add(_styleReferenceImage!);
+        print('   📸 添加风格参考图片');
+      }
+
+      // 调用 API
+      final response = await _apiRepository.generateImages(
+        provider: provider,
+        prompt: fullPrompt,
+        model: model,
+        referenceImages: referenceImages.isEmpty ? null : referenceImages,
+        parameters: {
+          'size': _imageRatio,
+          'quality': '1K',
+        },
+      );
+
+      if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+        final imageUrl = response.data!.first.imageUrl;
+        if (mounted) {
+          setState(() {
+            _items[index] = _items[index].copyWith(imageUrl: imageUrl);
+          });
         }
+        await _saveItemData();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ 物品"${item.name}"图片生成成功'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        print('   ✅ 生成成功');
+      } else {
+        throw Exception(response.error ?? '生成失败');
+      }
+    } catch (e) {
+      print('   💥 生成异常: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 生成失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _generatingImages.remove(index));
+      }
+    }
+  }
+
+  /// 删除物品
+  Future<void> _deleteItem(int index) async {
+    final item = _items[index];
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('确认删除', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '确定要删除物品"${item.name}"吗？',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      setState(() {
+        _items.removeAt(index);
       });
       await _saveItemData();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ 已为 ${_items.length} 个物品生成图片')),
+          SnackBar(
+            content: Text('✅ 已删除物品"${item.name}"'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
+    }
+  }
+
+  /// 批量生成所有物品图片
+  Future<void> _generateImages() async {
+    if (_items.isEmpty) return;
+
+    print('\n🎨 物品空间 - 批量生成图片');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('   物品数量: ${_items.length}');
+    print('   比例: $_imageRatio');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    int successCount = 0;
+    int failCount = 0;
+
+    for (var i = 0; i < _items.length; i++) {
+      if (_generatingImages.contains(i)) continue;
+
+      setState(() => _generatingImages.add(i));
+
+      try {
+        print('📷 生成第 ${i + 1}/${_items.length} 个物品图片');
+        
+        // 读取图片 API 配置
+        final prefs = await SharedPreferences.getInstance();
+        final provider = prefs.getString('image_provider') ?? 'geeknow';
+        final storage = SecureStorageManager();
+        final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
+        final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
+        final model = await storage.getModel(provider: provider, modelType: 'image');
+
+        if (baseUrl == null || apiKey == null) {
+          throw Exception('未配置图片 API');
+        }
+
+        // 构建完整的提示词（只用于图片生成，不使用推理预设）
+        String fullPrompt = _items[i].description;
+        
+        // ✅ 添加风格参考说明
+        if (_styleReferenceText.isNotEmpty) {
+          fullPrompt = '$_styleReferenceText, $fullPrompt';
+        }
+        
+        // ✅ 如果有风格参考图片，在提示词中明确说明
+        final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+        if (hasStyleImage) {
+          fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$fullPrompt';
+        }
+        
+        print('   📝 生成提示词: ${fullPrompt.substring(0, fullPrompt.length > 100 ? 100 : fullPrompt.length)}...');
+        print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}');
+
+        // 准备参考图片
+        final referenceImages = <String>[];
+        if (hasStyleImage) {
+          referenceImages.add(_styleReferenceImage!);
+          print('   📸 添加风格参考图片');
+        }
+
+        // 调用 API
+        final response = await _apiRepository.generateImages(
+          provider: provider,
+          prompt: fullPrompt,
+          model: model,
+          referenceImages: referenceImages.isEmpty ? null : referenceImages,
+          parameters: {
+            'size': _imageRatio,
+            'quality': '1K',
+          },
+        );
+
+        if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+          final imageUrl = response.data!.first.imageUrl;
+          if (mounted) {
+            setState(() {
+              _items[i] = _items[i].copyWith(imageUrl: imageUrl);
+            });
+          }
+          await _saveItemData();
+          successCount++;
+          print('   ✅ 物品 ${i + 1} 生成成功');
+        } else {
+          failCount++;
+          print('   ❌ 物品 ${i + 1} 生成失败: ${response.error}');
+        }
+      } catch (e) {
+        failCount++;
+        print('   💥 物品 ${i + 1} 生成异常: $e');
+      } finally {
+        if (mounted) {
+          setState(() => _generatingImages.remove(i));
+        }
+      }
+
+      // 避免请求过快
+      if (i < _items.length - 1) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ 生成完成: 成功 $successCount, 失败 $failCount'),
+          backgroundColor: successCount > 0 ? Colors.green : Colors.red,
+        ),
+      );
     }
   }
 

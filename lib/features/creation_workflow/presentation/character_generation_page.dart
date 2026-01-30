@@ -5,6 +5,8 @@ import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as path;
 import 'widgets/custom_title_bar.dart';
 import 'character_prompt_manager.dart';
 import 'style_reference_dialog.dart';
@@ -906,6 +908,12 @@ ${widget.scriptContent}
         prompt = '$_styleReferenceText, $prompt';
       }
       
+      // ✅ 如果有风格参考图片，在提示词中明确说明
+      final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+      if (hasStyleImage) {
+        prompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$prompt';
+      }
+      
       // ✅ 读取完整 API 配置
       final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
       final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
@@ -915,7 +923,8 @@ ${widget.scriptContent}
       }
       
       print('   BaseURL: $baseUrl');
-      print('   API Key: ${apiKey.substring(0, 10)}...\n');
+      print('   API Key: ${apiKey.substring(0, 10)}...');
+      print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}\n');
       
       // ✅ 直接创建服务实例（参考绘图空间的做法）
       final config = ApiConfig(
@@ -928,8 +937,9 @@ ${widget.scriptContent}
       
       // ✅ 准备参考图片
       final referenceImages = <String>[];
-      if (_styleReferenceImage != null && _styleReferenceImage!.isNotEmpty) {
+      if (hasStyleImage) {
         referenceImages.add(_styleReferenceImage!);
+        print('   📸 添加风格参考图片');
       }
       
       // ✅ 直接调用服务（不通过 ApiRepository）
@@ -961,11 +971,16 @@ ${widget.scriptContent}
         final imageUrl = imageUrls.first;
         
         print('🖼️ 图片 URL: $imageUrl');
-        print('✅ 更新 State...\n');
+        print('💾 下载并保存到本地...');
+        
+        // ✅ 下载并保存图片到本地
+        final savedPath = await _downloadAndSaveImage(imageUrl, 'character_${character.name}');
+        
+        print('✅ 更新 State（使用本地路径）...\n');
         
         if (mounted) {
           setState(() {
-            _characters[index] = _characters[index].copyWith(imageUrl: imageUrl);
+            _characters[index] = _characters[index].copyWith(imageUrl: savedPath);
             _generatingImages.remove(index);  // ✅ 清除生成中状态
           });
           await _saveCharacterData();
@@ -1077,14 +1092,21 @@ ${widget.scriptContent}
           prompt = '$_styleReferenceText, $prompt';
         }
         
+        // ✅ 如果有风格参考图片，在提示词中明确说明
+        final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+        if (hasStyleImage) {
+          prompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$prompt';
+        }
+        
         print('📸 生成角色 ${i + 1}/${_characters.length}: ${character.name}');
         print('   提示词: ${prompt.substring(0, prompt.length > 100 ? 100 : prompt.length)}...');
+        print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}');
         
         // ✅ 准备参考图片
         final referenceImages = <String>[];
-        if (_styleReferenceImage != null && _styleReferenceImage!.isNotEmpty) {
+        if (hasStyleImage) {
           referenceImages.add(_styleReferenceImage!);
-          print('   参考图片: $_styleReferenceImage');
+          print('   📸 添加风格参考图片: $_styleReferenceImage');
         }
         
         // ✅ 调用真实图片 API
@@ -1215,15 +1237,56 @@ ${widget.scriptContent}
   }
 
   /// 保存图片到本地
-  Future<void> _saveImageToLocal(String imageUrl, String filename) async {
+  /// 下载并保存单张图片到本地
+  Future<String> _downloadAndSaveImage(String imageUrl, String prefix) async {
     try {
+      // 从设置中读取保存路径
       final savePath = imageSavePathNotifier.value;
-      if (savePath == '未设置' || savePath.isEmpty) return;
       
-      // TODO: 下载并保存图片到本地
-      debugPrint('保存图片到: $savePath/$filename.png');
+      if (savePath == '未设置' || savePath.isEmpty) {
+        debugPrint('⚠️ 未设置图片保存路径，使用在线 URL');
+        return imageUrl;  // 返回原 URL
+      }
+      
+      final saveDir = Directory(savePath);
+      if (!await saveDir.exists()) {
+        await saveDir.create(recursive: true);
+      }
+      
+      // 重试最多3次下载图片
+      for (var retry = 0; retry < 3; retry++) {
+        try {
+          final response = await http.get(
+            Uri.parse(imageUrl),
+            headers: {'Connection': 'keep-alive'},
+          ).timeout(const Duration(seconds: 30));
+          
+          if (response.statusCode == 200) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final fileName = '${prefix}_$timestamp.png';
+            final filePath = path.join(savePath, fileName);
+            
+            final file = File(filePath);
+            await file.writeAsBytes(response.bodyBytes);
+            
+            debugPrint('✅ 图片已保存: $filePath');
+            return filePath;  // 返回本地路径
+          } else {
+            debugPrint('⚠️ 下载失败 (重试 $retry/3): HTTP ${response.statusCode}');
+          }
+        } catch (e) {
+          debugPrint('⚠️ 下载异常 (重试 $retry/3): $e');
+          if (retry < 2) {
+            await Future.delayed(Duration(seconds: retry + 1));
+          }
+        }
+      }
+      
+      debugPrint('❌ 下载失败，使用在线 URL');
+      return imageUrl;  // 下载失败，返回原 URL
     } catch (e) {
-      debugPrint('保存图片失败: $e');
+      debugPrint('💥 保存图片失败: $e');
+      return imageUrl;
     }
   }
 
@@ -1253,6 +1316,11 @@ ${widget.scriptContent}
         details.globalPosition.dx,
         details.globalPosition.dy,
       ),
+      color: const Color(0xFF2A2A2C),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFF3A3A3C)),
+      ),
       items: [
         const PopupMenuItem(
           value: 'open_folder',
@@ -1264,12 +1332,85 @@ ${widget.scriptContent}
             ],
           ),
         ),
+        const PopupMenuItem(
+          value: 'delete_image',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 16, color: Colors.red),
+              SizedBox(width: 8),
+              Text('删除图片', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
       ],
     ).then((value) {
       if (value == 'open_folder') {
         _openSaveFolder();
+      } else if (value == 'delete_image') {
+        _deleteImage(imageUrl);
       }
     });
+  }
+
+  /// 删除图片
+  Future<void> _deleteImage(String imageUrl) async {
+    // 查找包含该图片的角色
+    final index = _characters.indexWhere((c) => c.imageUrl == imageUrl);
+    if (index == -1) return;
+    
+    final character = _characters[index];
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('确认删除', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '确定要删除"${character.name}"的图片吗？',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      // 删除本地文件（如果是本地路径）
+      if (!imageUrl.startsWith('http')) {
+        try {
+          final file = File(imageUrl);
+          if (await file.exists()) {
+            await file.delete();
+            debugPrint('✅ 已删除本地文件: $imageUrl');
+          }
+        } catch (e) {
+          debugPrint('⚠️ 删除本地文件失败: $e');
+        }
+      }
+      
+      // 清除角色的图片URL
+      if (mounted) {
+        setState(() {
+          _characters[index] = _characters[index].copyWith(imageUrl: null);
+        });
+        await _saveCharacterData();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 已删除"${character.name}"的图片'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
   }
 
   /// 打开保存文件夹
