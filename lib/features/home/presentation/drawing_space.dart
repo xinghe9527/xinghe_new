@@ -4,7 +4,9 @@ import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/openai_service.dart';
+import 'package:xinghe_new/services/api/api_factory.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
+import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import '../domain/drawing_task.dart';
@@ -580,8 +582,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         apiKey: apiKey,
       );
 
-      // 创建服务
-      final service = OpenAIService(config);
+      // ✅ 使用 ApiFactory 根据 provider 创建正确的服务
+      final factory = ApiFactory();
+      final service = factory.createService(provider, config);
 
       // 📤 详细记录发送给 API 的所有参数
       _logger.info('📤 发送给 API 的完整参数', module: '绘图空间', extra: {
@@ -610,31 +613,68 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           'quality': widget.task.quality,
         });
         
-        // 调用图片生成 API（每次生成1张）
-        final result = await service.generateImagesByChat(
-          prompt: widget.task.prompt,
-          model: widget.task.model,
-          referenceImagePaths: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
-          parameters: {
-            'n': 1,  // 每次生成1张
-            'size': widget.task.ratio,  // 传递比例参数
-            'quality': widget.task.quality,  // 传递质量参数
-          },
-        );
+        // ✅ 调用图片生成 API
+        // ComfyUI 使用标准的 generateImages 方法
+        // 其他服务使用 generateImagesByChat 方法（如果支持）
+        ApiResponse<dynamic> result;
+        
+        if (provider == 'comfyui') {
+          // ComfyUI 使用标准接口
+          result = await service.generateImages(
+            prompt: widget.task.prompt,
+            model: widget.task.model,
+            referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
+            parameters: {
+              'size': widget.task.ratio,
+              'quality': widget.task.quality,
+            },
+          );
+        } else if (service is OpenAIService) {
+          // OpenAI 兼容服务使用 generateImagesByChat
+          result = await service.generateImagesByChat(
+            prompt: widget.task.prompt,
+            model: widget.task.model,
+            referenceImagePaths: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
+            parameters: {
+              'n': 1,
+              'size': widget.task.ratio,
+              'quality': widget.task.quality,
+            },
+          );
+        } else {
+          // 其他服务使用标准接口
+          result = await service.generateImages(
+            prompt: widget.task.prompt,
+            model: widget.task.model,
+            referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
+            parameters: {
+              'size': widget.task.ratio,
+              'quality': widget.task.quality,
+            },
+          );
+        }
+        
+        // ✅ 统一处理结果（兼容两种返回类型）
+        List<String> imageUrls = [];
+        if (result.isSuccess && result.data != null) {
+          if (result.data is ChatImageResponse) {
+            imageUrls = (result.data as ChatImageResponse).imageUrls;
+          } else if (result.data is List) {
+            imageUrls = (result.data as List).map((img) => img.imageUrl as String).toList();
+          }
+        }
 
-        if (result.isSuccess && result.data != null && result.data!.imageUrls.isNotEmpty) {
-          allImageUrls.addAll(result.data!.imageUrls);
+        if (imageUrls.isNotEmpty) {
+          allImageUrls.addAll(imageUrls);
           _logger.success('第 ${i + 1} 张生成成功', module: '绘图空间', extra: {
-            'urls': result.data!.imageUrls.join(', '),
+            'urls': imageUrls.join(', '),
           });
         } else {
           // 📝 详细记录失败原因
           _logger.error('第 ${i + 1} 张生成失败', module: '绘图空间', extra: {
             'isSuccess': result.isSuccess,
             'hasData': result.data != null,
-            'imageUrlsCount': result.data?.imageUrls.length ?? 0,
-            'errorMessage': result.errorMessage ?? '无错误信息',
-            'statusCode': result.statusCode,
+            'errorMessage': result.error ?? '无错误信息',
           });
         }
         
@@ -703,9 +743,12 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   // 构建单个图片项（处理占位符、真实图片、失败状态）
   Widget _buildImageItem(String imageUrl) {
     return Stack(
+      fit: StackFit.expand,  // ✅ Stack 填充满整个区域
       children: [
-        // 图片内容
-        _buildImageContent(imageUrl),
+        // 图片内容（填充满）
+        Positioned.fill(
+          child: _buildImageContent(imageUrl),
+        ),
         
         // 删除按钮（右上角）
         Positioned(
@@ -1320,13 +1363,14 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                       Text('等待生成', style: TextStyle(color: AppTheme.subTextColor, fontSize: 14)),
                     ]))
                   : GridView.builder(
+                  padding: const EdgeInsets.all(12),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2, 
-                    crossAxisSpacing: 12, 
-                    mainAxisSpacing: 12, 
-                    childAspectRatio: 1.0,
+                    crossAxisCount: 3,  // ✅ 3 列，图片更大
+                    crossAxisSpacing: 16, 
+                    mainAxisSpacing: 16, 
+                    childAspectRatio: 0.9,  // ✅ 0.9，接近正方形
                   ),
-                  itemCount: widget.task.generatedImages.length,  // 显示所有图片
+                  itemCount: widget.task.generatedImages.length,
                   itemBuilder: (context, index) {
                     final imageUrl = widget.task.generatedImages[index];
                     return _buildImageItem(imageUrl);

@@ -8,6 +8,7 @@ import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 
 class SettingsPage extends StatefulWidget {
   final VoidCallback onBack;
@@ -24,6 +25,13 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isPickingImagePath = false;
   bool _isPickingVideoPath = false;
   bool _isPickingWorkPath = false;  // ✅ 作品路径选择状态
+  bool _isPickingComfyUIWorkflowPath = false;  // ✅ ComfyUI 工作流路径选择状态
+  bool _isLoadingWorkflows = false;  // ✅ 正在读取工作流状态
+  
+  String _comfyUIWorkflowFolder = '未设置';  // ✅ ComfyUI 工作流文件夹路径
+  List<Map<String, dynamic>> _loadedWorkflows = [];  // ✅ 已读取的工作流列表
+  String? _selectedImageWorkflow;  // ✅ 图片模型选中的工作流ID
+  String? _selectedVideoWorkflow;  // ✅ 视频模型选中的工作流ID
   
   // 密码可见性状态
   bool _llmApiKeyVisible = false;
@@ -188,6 +196,54 @@ class _SettingsPageState extends State<SettingsPage> {
     await _loadVideoConfig();
     await _loadUploadConfig();
     await _loadSavePathsConfig();
+    await _loadComfyUIConfig();  // ✅ 加载 ComfyUI 配置
+  }
+  
+  /// 加载 ComfyUI 配置
+  Future<void> _loadComfyUIConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // 加载工作流文件夹路径
+      final folder = prefs.getString('comfyui_workflow_folder');
+      if (folder != null && folder.isNotEmpty) {
+        setState(() {
+          _comfyUIWorkflowFolder = folder;
+        });
+        debugPrint('✅ 加载 ComfyUI 工作流文件夹: $folder');
+      }
+      
+      // 加载已读取的工作流列表
+      final workflowsJson = prefs.getString('comfyui_workflows');
+      if (workflowsJson != null && workflowsJson.isNotEmpty) {
+        final workflows = List<Map<String, dynamic>>.from(
+          (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+        );
+        setState(() {
+          _loadedWorkflows = workflows;
+        });
+        debugPrint('✅ 加载 ${workflows.length} 个 ComfyUI 工作流');
+      }
+      
+      // 加载选中的工作流
+      final selectedImageWorkflow = prefs.getString('comfyui_selected_image_workflow');
+      if (selectedImageWorkflow != null) {
+        setState(() {
+          _selectedImageWorkflow = selectedImageWorkflow;
+        });
+        debugPrint('✅ 加载选中的图片工作流: $selectedImageWorkflow');
+      }
+      
+      final selectedVideoWorkflow = prefs.getString('comfyui_selected_video_workflow');
+      if (selectedVideoWorkflow != null) {
+        setState(() {
+          _selectedVideoWorkflow = selectedVideoWorkflow;
+        });
+        debugPrint('✅ 加载选中的视频工作流: $selectedVideoWorkflow');
+      }
+    } catch (e) {
+      _logger.error('加载 ComfyUI 配置失败: $e', module: '设置');
+    }
   }
 
   /// 加载保存路径配置
@@ -317,6 +373,8 @@ class _SettingsPageState extends State<SettingsPage> {
         return 'https://your-resource.openai.azure.com';
       case 'anthropic':
         return 'https://api.anthropic.com/v1';
+      case 'comfyui':  // ✅ ComfyUI 本地服务
+        return 'http://127.0.0.1:8188/';
       default:
         return 'https://api.openai.com/v1';
     }
@@ -502,6 +560,155 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// ComfyUI 工作流管理区域
+  Widget _buildComfyUIWorkflowSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.account_tree, color: AppTheme.accentColor, size: 24),
+            const SizedBox(width: 12),
+            Text(
+              'ComfyUI 工作流管理',
+              style: TextStyle(
+                color: AppTheme.textColor,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '管理 ComfyUI 工作流文件，用于本地图片和视频生成',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
+        ),
+        const SizedBox(height: 24),
+        
+        // 工作流文件夹路径
+        _buildFieldLabel('工作流文件夹'),
+        const SizedBox(height: 6),
+        Text(
+          '存放 ComfyUI 工作流 JSON 文件的文件夹',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceBackground,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                ),
+                child: Text(
+                  _comfyUIWorkflowFolder,
+                  style: TextStyle(
+                    color: _comfyUIWorkflowFolder == '未设置' 
+                        ? AppTheme.subTextColor 
+                        : AppTheme.textColor,
+                    fontSize: 14,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            _buildActionButton(
+              icon: Icons.folder_open,
+              label: '选择',
+              onTap: _pickComfyUIWorkflowDirectory,
+              isLoading: _isPickingComfyUIWorkflowPath,
+            ),
+            const SizedBox(width: 12),
+            _buildActionButton(
+              icon: Icons.refresh,
+              label: '读取',
+              onTap: _comfyUIWorkflowFolder != '未设置' ? _loadComfyUIWorkflows : null,
+              isLoading: _isLoadingWorkflows,
+            ),
+          ],
+        ),
+        
+        // 已读取的工作流列表
+        if (_loadedWorkflows.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          _buildFieldLabel('已读取工作流 (${_loadedWorkflows.length}个)'),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceBackground,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.dividerColor),
+            ),
+            child: Column(
+              children: _loadedWorkflows.asMap().entries.map((entry) {
+                final workflow = entry.value;
+                final type = workflow['type'] ?? 'image';
+                final typeIcon = type == 'video' ? Icons.videocam : Icons.image;
+                final typeColor = type == 'video' ? Colors.purple : Colors.blue;
+                
+                return Padding(
+                  padding: EdgeInsets.only(bottom: entry.key < _loadedWorkflows.length - 1 ? 12 : 0),
+                  child: Row(
+                    children: [
+                      Icon(typeIcon, color: typeColor, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              workflow['name'] ?? workflow['id'],
+                              style: TextStyle(
+                                color: AppTheme.textColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (workflow['description'] != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                workflow['description'],
+                                style: TextStyle(
+                                  color: AppTheme.subTextColor,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: typeColor.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          type == 'video' ? '视频' : '图片',
+                          style: TextStyle(
+                            color: typeColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   /// 选择作品保存路径
   Future<void> _pickWorkDirectory() async {
     if (_isPickingWorkPath) return;
@@ -534,6 +741,140 @@ class _SettingsPageState extends State<SettingsPage> {
       if (mounted) {
         setState(() => _isPickingWorkPath = false);
       }
+    }
+  }
+
+  /// 选择 ComfyUI 工作流文件夹
+  Future<void> _pickComfyUIWorkflowDirectory() async {
+    if (_isPickingComfyUIWorkflowPath) return;
+    
+    setState(() => _isPickingComfyUIWorkflowPath = true);
+    
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择 ComfyUI 工作流文件夹',
+        lockParentWindow: true,
+      );
+      
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        setState(() {
+          _comfyUIWorkflowFolder = selectedDirectory;
+        });
+        
+        // 保存到 SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('comfyui_workflow_folder', selectedDirectory);
+        
+        _logger.success('设置 ComfyUI 工作流文件夹', module: '设置', extra: {'path': selectedDirectory});
+        _showMessage('工作流文件夹已设置\n点击"读取工作流"按钮加载工作流文件');
+      }
+    } catch (e) {
+      _logger.error('选择工作流文件夹失败: $e', module: '设置');
+      _showMessage('选择文件夹时出错', isError: true);
+    } finally {
+      setState(() => _isPickingComfyUIWorkflowPath = false);
+    }
+  }
+
+  /// 读取 ComfyUI 工作流
+  Future<void> _loadComfyUIWorkflows() async {
+    if (_isLoadingWorkflows) return;
+    if (_comfyUIWorkflowFolder == '未设置') {
+      _showMessage('请先选择工作流文件夹', isError: true);
+      return;
+    }
+    
+    setState(() => _isLoadingWorkflows = true);
+    
+    try {
+      final dir = Directory(_comfyUIWorkflowFolder);
+      if (!await dir.exists()) {
+        throw Exception('文件夹不存在');
+      }
+      
+      // 读取所有 .json 文件
+      final files = dir.listSync()
+          .where((f) => f.path.endsWith('.json'))
+          .toList();
+      
+      if (files.isEmpty) {
+        _showMessage('文件夹中没有找到 JSON 工作流文件', isError: true);
+        return;
+      }
+      
+      final workflows = <Map<String, dynamic>>[];
+      int skippedCount = 0;
+      
+      for (final file in files) {
+        try {
+          final content = await File(file.path).readAsString();
+          final json = jsonDecode(content);
+          
+          // 提取工作流信息
+          String workflowType = 'image';  // 默认图片
+          
+          // 方法1：检查 metadata.type
+          if (json['metadata']?['type'] != null) {
+            workflowType = json['metadata']['type'];
+          } else {
+            // 方法2：检查文件名前缀
+            final filename = file.uri.pathSegments.last;
+            if (filename.startsWith('video_')) {
+              workflowType = 'video';
+            } else if (filename.startsWith('image_')) {
+              workflowType = 'image';
+            }
+          }
+          
+          workflows.add({
+            'id': file.uri.pathSegments.last.replaceAll('.json', ''),
+            'name': json['metadata']?['name'] ?? file.uri.pathSegments.last,
+            'description': json['metadata']?['description'] ?? '',
+            'type': workflowType,
+            'workflow': json['workflow'] ?? json,  // 兼容不同格式
+            'filePath': file.path,
+          });
+          
+          debugPrint('✅ 读取工作流: ${file.uri.pathSegments.last} ($workflowType)');
+        } catch (e) {
+          debugPrint('⚠️ 跳过无效文件: ${file.path} - $e');
+          skippedCount++;
+        }
+      }
+      
+      // 保存到 SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('comfyui_workflows', jsonEncode(workflows));
+      
+      setState(() {
+        _loadedWorkflows = workflows;
+      });
+      
+      final imageCount = workflows.where((w) => w['type'] == 'image').length;
+      final videoCount = workflows.where((w) => w['type'] == 'video').length;
+      
+      _logger.success(
+        '读取 ComfyUI 工作流成功', 
+        module: '设置',
+        extra: {
+          '总数': workflows.length,
+          '图片': imageCount,
+          '视频': videoCount,
+          '跳过': skippedCount,
+        }
+      );
+      
+      _showMessage(
+        '✅ 成功读取 ${workflows.length} 个工作流\n'
+        '图片工作流: $imageCount 个\n'
+        '视频工作流: $videoCount 个'
+        '${skippedCount > 0 ? '\n跳过无效文件: $skippedCount 个' : ''}'
+      );
+    } catch (e) {
+      _logger.error('读取工作流失败: $e', module: '设置');
+      _showMessage('读取工作流失败: $e', isError: true);
+    } finally {
+      setState(() => _isLoadingWorkflows = false);
     }
   }
 
@@ -747,6 +1088,11 @@ class _SettingsPageState extends State<SettingsPage> {
             isLoading: _isPickingWorkPath,
           ),
 
+          const SizedBox(height: 60),
+          
+          // ✅ ComfyUI 工作流管理
+          _buildComfyUIWorkflowSection(),
+          
           const SizedBox(height: 60),
           Container(
             padding: const EdgeInsets.all(20),
@@ -1177,6 +1523,26 @@ class _SettingsPageState extends State<SettingsPage> {
           hint: '例如: dall-e-3',
         ),
         
+        // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
+        if (_imageProvider == 'comfyui') ...[
+          const SizedBox(height: 30),
+          _buildFieldLabel('ComfyUI 工作流'),
+          const SizedBox(height: 10),
+          _buildWorkflowSelector(
+            type: 'image',
+            selectedWorkflow: _selectedImageWorkflow,
+            onChanged: (workflowId) async {
+              setState(() => _selectedImageWorkflow = workflowId);
+              
+              // 保存到 SharedPreferences
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('comfyui_selected_image_workflow', workflowId);
+              
+              _logger.success('选择图片工作流', module: '设置', extra: {'workflow': workflowId});
+            },
+          ),
+        ],
+        
         const SizedBox(height: 40),
         // 测试和保存按钮
         Row(
@@ -1245,6 +1611,26 @@ class _SettingsPageState extends State<SettingsPage> {
           controller: _videoModelController,
           hint: '例如: veo_3_1 或 sora-2',
         ),
+        
+        // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
+        if (_videoProvider == 'comfyui') ...[
+          const SizedBox(height: 30),
+          _buildFieldLabel('ComfyUI 工作流'),
+          const SizedBox(height: 10),
+          _buildWorkflowSelector(
+            type: 'video',
+            selectedWorkflow: _selectedVideoWorkflow,
+            onChanged: (workflowId) async {
+              setState(() => _selectedVideoWorkflow = workflowId);
+              
+              // 保存到 SharedPreferences
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('comfyui_selected_video_workflow', workflowId);
+              
+              _logger.success('选择视频工作流', module: '设置', extra: {'workflow': workflowId});
+            },
+          ),
+        ],
         
         const SizedBox(height: 40),
         // 测试和保存按钮
@@ -1330,8 +1716,8 @@ class _SettingsPageState extends State<SettingsPage> {
       // LLM 模型包含 DeepSeek 和阿里云
       providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun', 'azure', 'anthropic'];
     } else {
-      // 图片、视频、上传不包含 DeepSeek 和阿里云
-      providers = ['openai', 'geeknow', 'yunwu', 'azure', 'anthropic'];
+      // 图片、视频、上传包含 ComfyUI
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic'];
     }
     
     final displayNames = {
@@ -1340,6 +1726,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'yunwu': 'Yunwu（云雾）',
       'deepseek': 'DeepSeek',
       'aliyun': '阿里云',  // ✅ 添加阿里云
+      'comfyui': 'ComfyUI（本地）',  // ✅ ComfyUI
       'azure': 'Azure',
       'anthropic': 'Anthropic',
     };
@@ -1615,6 +2002,181 @@ class _SettingsPageState extends State<SettingsPage> {
               _saveModelByType(modelType);
             }
           },
+        ),
+      ),
+    );
+  }
+
+  /// ComfyUI 工作流选择器
+  Widget _buildWorkflowSelector({
+    required String type,  // 'image' 或 'video'（仅用于提示，不过滤）
+    required String? selectedWorkflow,
+    required Function(String) onChanged,
+  }) {
+    // ✅ 不过滤类型，显示所有工作流，让用户自己选择
+    final workflows = _loadedWorkflows;
+    
+    if (workflows.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceBackground,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.dividerColor),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: AppTheme.subTextColor, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '还没有工作流\n\n请先在"保存设置"中选择工作流文件夹并点击"读取工作流"',
+                style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceBackground,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: workflows.any((w) => w['id'] == selectedWorkflow) ? selectedWorkflow : null,
+          hint: Text('请选择工作流', style: TextStyle(color: AppTheme.subTextColor)),
+          isExpanded: true,
+          dropdownColor: AppTheme.surfaceBackground,
+          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+          items: workflows.map((workflow) {
+            // ✅ 显示工作流的实际类型标签
+            final workflowType = workflow['type'] ?? 'image';
+            final typeIcon = workflowType == 'video' ? Icons.videocam : Icons.image;
+            final typeColor = workflowType == 'video' ? Colors.purple : Colors.blue;
+            
+            return DropdownMenuItem<String>(
+              value: workflow['id'],
+              child: Row(
+                children: [
+                  Icon(
+                    typeIcon,
+                    size: 16,
+                    color: typeColor,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          workflow['name'] ?? workflow['id'],
+                          style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (workflow['description'] != null && workflow['description'].toString().isNotEmpty)
+                          Text(
+                            workflow['description'],
+                            style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
+                  ),
+                  // ✅ 显示类型标签
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: typeColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      workflowType == 'video' ? '视频' : '图片',
+                      style: TextStyle(
+                        color: typeColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: (value) {
+            if (value != null) {
+              onChanged(value);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  /// 操作按钮（用于工作流管理）
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool isLoading = false,
+  }) {
+    final isEnabled = onTap != null && !isLoading;
+    
+    return MouseRegion(
+      cursor: isEnabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: isEnabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isEnabled
+                  ? [const Color(0xFF2AFADF), const Color(0xFF4C83FF)]
+                  : [const Color(0xFF555555), const Color(0xFF444444)],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: isEnabled
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF2AFADF).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : [],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isLoading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(Colors.white),
+                  ),
+                )
+              else
+                Icon(icon, color: Colors.white, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

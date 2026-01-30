@@ -5,6 +5,7 @@ import 'providers/geeknow_service.dart';
 import 'providers/yunwu_service.dart';
 import 'providers/deepseek_service.dart';
 import 'providers/aliyun_service.dart';  // ✅ 导入 AliyunService
+import 'providers/comfyui_service.dart';  // ✅ 导入 ComfyUIService
 import 'providers/custom_service.dart';
 import 'providers/gemini_image_service.dart';
 import 'providers/gemini_pro_image_service.dart';
@@ -40,6 +41,9 @@ class ApiFactory {
       case 'qwen':
       case 'tongyi':
         return AliyunService(config);
+      
+      case 'comfyui':  // ✅ ComfyUI 本地服务
+        return ComfyUIService(config);
       
       case 'gemini':
       case 'gemini-image':
