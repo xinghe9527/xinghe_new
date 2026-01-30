@@ -9,6 +9,10 @@ import 'widgets/custom_title_bar.dart';
 import 'character_prompt_manager.dart';
 import 'style_reference_dialog.dart';
 import 'asset_library_selector.dart';
+import '../../../services/api/api_repository.dart';
+import '../../../services/api/secure_storage_manager.dart';
+import '../../../services/api/base/api_config.dart';
+import '../../../services/api/providers/geeknow_service.dart';  // ✅ 直接导入服务
 
 /// 角色生成页面
 class CharacterGenerationPage extends StatefulWidget {
@@ -33,13 +37,46 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
   String _selectedPromptContent = '';
   String _styleReferenceText = '';
   String? _styleReferenceImage;
+  String _imageRatio = '16:9';  // ✅ 图片比例，默认 16:9
   List<CharacterData> _characters = [];
   bool _isInferring = false;
+  final ApiRepository _apiRepository = ApiRepository();
+  final Set<int> _generatingImages = {};
+
+  final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];  // ✅ 比例选项
 
   @override
   void initState() {
     super.initState();
     _loadCharacterData();
+    _loadImageRatio();  // 加载保存的比例设置
+  }
+
+  /// 加载图片比例设置
+  Future<void> _loadImageRatio() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedRatio = prefs.getString('character_image_ratio');
+      if (savedRatio != null && _ratios.contains(savedRatio)) {
+        if (mounted) {
+          setState(() => _imageRatio = savedRatio);
+        }
+        debugPrint('✅ 加载图片比例: $savedRatio');
+      }
+    } catch (e) {
+      debugPrint('⚠️ 加载图片比例失败: $e');
+    }
+  }
+
+  /// 保存图片比例设置
+  Future<void> _saveImageRatio(String ratio) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('character_image_ratio', ratio);
+      debugPrint('✅ 保存图片比例: $ratio');
+    } catch (e) {
+      debugPrint('⚠️ 保存图片比例失败: $e');
+    }
   }
 
   /// 加载角色数据
@@ -198,6 +235,57 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        // 比例选择器（样式与其他按钮一致）
+                        PopupMenuButton<String>(
+                          offset: const Offset(0, 40),
+                          tooltip: '选择图片比例',
+                          color: const Color(0xFF2A2A2C),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: const BorderSide(color: Color(0xFF3A3A3C)),
+                          ),
+                          itemBuilder: (context) {
+                            return _ratios.map((ratio) {
+                              final isSelected = ratio == _imageRatio;
+                              return PopupMenuItem<String>(
+                                value: ratio,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isSelected ? Icons.check : Icons.crop_square,
+                                      size: 16,
+                                      color: isSelected ? const Color(0xFF4A9EFF) : Colors.transparent,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      ratio,
+                                      style: TextStyle(
+                                        color: isSelected ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                        fontSize: 13,
+                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList();
+                          },
+                          onSelected: (v) {
+                            setState(() => _imageRatio = v);
+                            _saveImageRatio(v);  // 保存选择的比例
+                          },
+                          child: OutlinedButton.icon(
+                            onPressed: null,  // 点击由 PopupMenuButton 处理
+                            icon: const Icon(Icons.aspect_ratio, size: 16),
+                            label: Text(_imageRatio),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF888888),
+                              side: const BorderSide(color: Color(0xFF3A3A3C)),
+                              disabledForegroundColor: const Color(0xFF888888),  // 禁用状态下保持颜色
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         // 生成图片按钮
                         OutlinedButton.icon(
                           onPressed: _characters.isEmpty ? null : _generateImages,
@@ -206,6 +294,17 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF888888),
                             side: const BorderSide(color: Color(0xFF3A3A3C)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 清空按钮
+                        OutlinedButton.icon(
+                          onPressed: _characters.isEmpty ? null : _clearAll,
+                          icon: const Icon(Icons.delete_sweep, size: 16),
+                          label: const Text('清空'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFF6B6B),
+                            side: BorderSide(color: const Color(0xFFFF6B6B).withOpacity(0.3)),
                           ),
                         ),
                       ],
@@ -289,7 +388,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 角色名称
+                  // 角色名称和操作按钮
                   Row(
                     children: [
                       Container(
@@ -308,6 +407,29 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                           ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // 生成图片按钮（单个）
+                      IconButton(
+                        onPressed: () => _generateSingleImage(index),
+                        icon: const Icon(Icons.image, size: 16),
+                        tooltip: '生成图片',
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF3A3A3C),
+                          foregroundColor: const Color(0xFF888888),
+                          padding: const EdgeInsets.all(8),
+                        ),
+                      ),
+                      // 删除按钮
+                      IconButton(
+                        onPressed: () => _deleteCharacter(index),
+                        icon: const Icon(Icons.delete_outline, size: 16),
+                        tooltip: '删除角色',
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF3A3A3C),
+                          foregroundColor: const Color(0xFF888888),
+                          padding: const EdgeInsets.all(8),
                         ),
                       ),
                     ],
@@ -347,7 +469,34 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                 children: [
                   // 图片显示区
                   Positioned.fill(
-                    child: character.imageUrl != null && character.imageUrl!.isNotEmpty
+                    child: _generatingImages.contains(index)
+                        // ✅ 显示"生成中"状态
+                        ? const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 48,
+                                  height: 48,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    valueColor: AlwaysStoppedAnimation(Color(0xFF00E5FF)),
+                                  ),
+                                ),
+                                SizedBox(height: 16),
+                                Text(
+                                  '生成中...',
+                                  style: TextStyle(
+                                    color: Color(0xFF00E5FF),
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : character.imageUrl != null && character.imageUrl!.isNotEmpty
+                        // 显示已生成的图片
                         ? GestureDetector(
                             onTap: () => _viewImage(character.imageUrl!),
                             onSecondaryTapDown: (details) => _showImageContextMenu(context, details, character.imageUrl!),
@@ -359,6 +508,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                               child: _buildImageWidget(character.imageUrl!),
                             ),
                           )
+                        // 显示"待生成"占位符
                         : _buildImagePlaceholder(),
                   ),
                   // 右上角插入按钮
@@ -442,7 +592,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
     }
   }
 
-  /// 推理角色
+  /// 推理角色（调用真实 LLM API）
   Future<void> _inferCharacters() async {
     if (widget.scriptContent.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -454,45 +604,202 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
     setState(() => _isInferring = true);
 
     try {
-      // TODO: 调用LLM API推理角色
-      // 使用选择的角色提示词 + 剧本内容
-      await Future.delayed(const Duration(seconds: 2));
+      // ✅ 读取 LLM 完整配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('llm_provider') ?? 'geeknow';
+      
+      // ✅ 读取用户配置的模型（关键！）
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'llm');
+      
+      print('\n🧠 开始推理角色');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');  // ← 显示实际使用的模型
+      print('📋 角色提示词预设: $_selectedPromptContent');
+      print('📝 剧本长度: ${widget.scriptContent.length} 字符');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 构建 messages（参考最佳实践）
+      final messages = <Map<String, String>>[];
+      
+      String fullPrompt = '';
+      
+      if (_selectedPromptContent.isNotEmpty) {
+        // ✅ 如果用户设置了提示词预设，完全使用用户的预设（不添加干扰性指令）
+        fullPrompt = _selectedPromptContent.replaceAll('{{小说原文}}', widget.scriptContent)
+            .replaceAll('{{推文文案}}', widget.scriptContent)
+            .replaceAll('{{故事情节}}', widget.scriptContent);
+        
+        print('✅ 使用用户自定义提示词预设（完整控制输出格式）');
+      } else {
+        // ✅ 如果没有预设，使用简单的基础格式
+        fullPrompt = '''请从以下剧本中提取所有角色。
 
-      // Mock数据：推理出的角色
-      final mockCharacters = [
-        CharacterData(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          name: '主角',
-          description: '20岁左右的年轻人，银白色短发，蓝色眼睛，身穿黑色机能风外套。性格沉稳，擅长黑客技术。',
-        ),
-        CharacterData(
-          id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
-          name: '神秘人',
-          description: '身份不明的神秘角色，总是戴着面具，穿着长风衣。声音低沉，似乎知道很多秘密。',
-        ),
-        CharacterData(
-          id: (DateTime.now().millisecondsSinceEpoch + 2).toString(),
-          name: 'AI助手',
-          description: '全息投影形态的人工智能，外观为半透明的蓝色光影。能够提供信息支持和战术建议。',
-        ),
-      ];
+剧本：
+${widget.scriptContent}
 
-      if (mounted) {
-        setState(() {
-          _characters = mockCharacters;
-        });
-        await _saveCharacterData();
+输出格式：
+每个角色一行，格式为：
+角色名称 | 角色描述
+
+示例：
+主角 | 20岁左右的年轻人，银白色短发，蓝色眼睛，身穿黑色机能风外套。
+神秘人 | 身份不明的神秘角色，总是戴着面具。
+
+现在开始提取：''';
+        
+        print('⚠️ 未设置提示词预设，使用默认简单格式');
+      }
+      
+      messages.add({'role': 'user', 'content': fullPrompt});
+      
+      // ✅ 调用真实 LLM API（使用用户配置的模型）
+      _apiRepository.clearCache();
+      final response = await _apiRepository.generateTextWithMessages(
+        provider: provider,
+        messages: messages,
+        model: model,  // ✅ 使用用户在设置中配置的模型
+        parameters: {
+          'temperature': 0.5,
+          'max_tokens': 2000,
+        },
+      );
+      
+      if (response.isSuccess && response.data != null) {
+        final responseText = response.data!.text;
+        
+        print('📄 API 返回角色列表:');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print(responseText);
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        
+        // ✅ 智能解析角色（支持 JSON 格式和简单格式）
+        final characterList = <CharacterData>[];
+        
+        try {
+          // 方法1：尝试直接解析整个文本为 JSON（最可靠）
+          try {
+            // 清理文本：移除可能的 markdown 代码块标记
+            String cleanText = responseText.trim();
+            if (cleanText.startsWith('```json')) {
+              cleanText = cleanText.replaceFirst('```json', '').trim();
+            }
+            if (cleanText.startsWith('```')) {
+              cleanText = cleanText.replaceFirst('```', '').trim();
+            }
+            if (cleanText.endsWith('```')) {
+              cleanText = cleanText.substring(0, cleanText.lastIndexOf('```')).trim();
+            }
+            
+            // 尝试找到 JSON 数组
+            final startIndex = cleanText.indexOf('[');
+            final endIndex = cleanText.lastIndexOf(']');
+            
+            if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+              final jsonStr = cleanText.substring(startIndex, endIndex + 1);
+              final List<dynamic> jsonList = jsonDecode(jsonStr);
+              
+              print('✅ JSON 解析成功，找到 ${jsonList.length} 个角色');
+              
+              for (final item in jsonList) {
+                if (item is Map<String, dynamic>) {
+                  final name = item['name']?.toString() ?? '未命名';
+                  final description = item['description']?.toString() ?? '';
+                  
+                  characterList.add(CharacterData(
+                    id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + characterList.length.toString(),
+                    name: name,
+                    description: description,
+                  ));
+                  
+                  print('   - 角色: $name (描述长度: ${description.length})');
+                }
+              }
+            } else {
+              throw Exception('未找到有效的 JSON 数组标记');
+            }
+          } catch (jsonError) {
+            print('⚠️ JSON 格式解析失败: $jsonError');
+            throw jsonError;
+          }
+        } catch (e) {
+          // JSON 解析失败，尝试简单格式（角色名称 | 角色描述）
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('⚠️ 尝试简单格式解析（角色名称 | 角色描述）');
+          
+          final lines = responseText.split('\n');
+          for (final line in lines) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) continue;
+            
+            // 跳过明显的注释或说明行
+            if (trimmed.startsWith('#') || 
+                trimmed.startsWith('//') || 
+                trimmed.startsWith('根据') ||
+                trimmed.startsWith('```')) {
+              continue;
+            }
+            
+            if (trimmed.contains('|')) {
+              final parts = trimmed.split('|');
+              if (parts.length >= 2) {
+                final name = parts[0].trim();
+                final description = parts.sublist(1).join('|').trim();
+                
+                if (name.isNotEmpty && description.isNotEmpty) {
+                  characterList.add(CharacterData(
+                    id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + characterList.length.toString(),
+                    name: name,
+                    description: description,
+                  ));
+                  
+                  print('   - 角色: $name (描述长度: ${description.length})');
+                }
+              }
+            }
+          }
+          
+          print('✅ 简单格式解析完成，找到 ${characterList.length} 个角色');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        }
+        
+        if (characterList.isEmpty) {
+          // 如果所有解析都失败，将整个文本作为一个角色
+          print('⚠️ 所有格式解析失败，使用原始文本作为单个角色');
+          characterList.add(CharacterData(
+            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            name: '推理结果',
+            description: responseText,
+          ));
+        }
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ 推理完成，识别到 3 个角色')),
-          );
+          setState(() {
+            _characters = characterList;
+          });
+          await _saveCharacterData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 推理完成，识别到 ${characterList.length} 个角色'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
+      } else {
+        throw Exception(response.error ?? '推理失败');
       }
     } catch (e) {
+      print('❌ 推理角色失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('推理失败：$e')),
+          SnackBar(
+            content: Text('推理失败：$e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -522,30 +829,307 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
   }
 
   /// 生成角色图片
-  Future<void> _generateImages() async {
-    if (_characters.isEmpty) return;
+  /// 清空所有角色
+  Future<void> _clearAll() async {
+    // 显示确认对话框
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_rounded, color: Color(0xFFFFA726), size: 28),
+            SizedBox(width: 12),
+            Text('确认清空', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text(
+          '确定要清空所有角色吗？\n\n此操作不可恢复，已生成的角色和图片都将被删除。',
+          style: TextStyle(color: Colors.white70, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确定清空', style: TextStyle(color: Color(0xFFFF6B6B))),
+          ),
+        ],
+      ),
+    );
 
-    // TODO: 为每个角色生成图片
-    // 使用：角色描述 + 风格参考文字 + 风格参考图片
-    await Future.delayed(const Duration(seconds: 3));
-
-    if (mounted) {
+    if (confirm == true && mounted) {
       setState(() {
-        for (var i = 0; i < _characters.length; i++) {
-          // Mock图片URL
-          final imageUrl = 'https://picsum.photos/seed/${_characters[i].id}/400/600';
-          _characters[i] = _characters[i].copyWith(imageUrl: imageUrl);
-          // 保存到本地
-          _saveImageToLocal(imageUrl, 'character_${_characters[i].id}');
-        }
+        _characters.clear();
       });
       await _saveCharacterData();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ 已为 ${_characters.length} 个角色生成图片')),
+          const SnackBar(
+            content: Text('✅ 已清空所有角色'),
+            backgroundColor: Color(0xFF888888),
+          ),
         );
       }
+    }
+  }
+
+  /// 生成单个角色的图片
+  Future<void> _generateSingleImage(int index) async {
+    final character = _characters[index];
+    
+    // ✅ 显示"生成中"状态
+    setState(() {
+      _generatingImages.add(index);
+    });
+    
+    // ✅ 读取图片 API 配置
+    final prefs = await SharedPreferences.getInstance();
+    final provider = prefs.getString('image_provider') ?? 'geeknow';
+    final storage = SecureStorageManager();
+    final model = await storage.getModel(provider: provider, modelType: 'image');
+    
+    print('\n🎨 生成单个角色图片');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('角色: ${character.name}');
+    print('Provider: $provider');
+    print('Model: ${model ?? "未设置"}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    try {
+      // ✅ 构建完整提示词
+      String prompt = character.description;
+      if (_styleReferenceText.isNotEmpty) {
+        prompt = '$_styleReferenceText, $prompt';
+      }
+      
+      // ✅ 读取完整 API 配置
+      final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
+      final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
+      
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置图片 API');
+      }
+      
+      print('   BaseURL: $baseUrl');
+      print('   API Key: ${apiKey.substring(0, 10)}...\n');
+      
+      // ✅ 直接创建服务实例（参考绘图空间的做法）
+      final config = ApiConfig(
+        provider: provider,
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+      );
+      
+      final service = GeekNowService(config);
+      
+      // ✅ 准备参考图片
+      final referenceImages = <String>[];
+      if (_styleReferenceImage != null && _styleReferenceImage!.isNotEmpty) {
+        referenceImages.add(_styleReferenceImage!);
+      }
+      
+      // ✅ 直接调用服务（不通过 ApiRepository）
+      print('   比例: $_imageRatio');
+      print('   调用 GeekNowService.generateImagesByChat...');
+      final response = await service.generateImagesByChat(
+        prompt: prompt,
+        model: model,
+        referenceImagePaths: referenceImages.isNotEmpty ? referenceImages : null,
+        parameters: {
+          'n': 1,
+          'size': _imageRatio,  // ✅ 使用用户选择的比例
+          'quality': 'standard',
+        },
+      );
+      
+      print('   ✅ API 调用返回');
+      print('   Success: ${response.isSuccess}');
+      print('   HasData: ${response.data != null}');
+      
+      if (response.isSuccess && response.data != null) {
+        final imageUrls = response.data!.imageUrls;
+        print('   图片数量: ${imageUrls.length}');
+        
+        if (imageUrls.isEmpty) {
+          throw Exception('API 返回成功但没有图片');
+        }
+        
+        final imageUrl = imageUrls.first;
+        
+        print('🖼️ 图片 URL: $imageUrl');
+        print('✅ 更新 State...\n');
+        
+        if (mounted) {
+          setState(() {
+            _characters[index] = _characters[index].copyWith(imageUrl: imageUrl);
+            _generatingImages.remove(index);  // ✅ 清除生成中状态
+          });
+          await _saveCharacterData();
+          
+          print('✅ State 已更新，图片应该显示了');
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ ${character.name} 的图片生成成功'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        print('❌ 响应成功但没有图片数据');
+        print('   Data: ${response.data}');
+        print('   Error: ${response.error}');
+        throw Exception(response.error ?? '未返回图片数据');
+      }
+    } catch (e) {
+      print('💥 生成异常: $e\n');
+      
+      if (mounted) {
+        setState(() {
+          _generatingImages.remove(index);  // ✅ 清除生成中状态
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 生成失败：$e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 删除单个角色
+  Future<void> _deleteCharacter(int index) async {
+    final character = _characters[index];
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('确认删除', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '确定要删除角色"${character.name}"吗？',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Color(0xFF888888))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      setState(() {
+        _characters.removeAt(index);
+      });
+      await _saveCharacterData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 已删除角色"${character.name}"'),
+            backgroundColor: const Color(0xFF888888),
+          ),
+        );
+      }
+    }
+  }
+
+  /// 生成角色图片（调用真实图片 API）
+  Future<void> _generateImages() async {
+    if (_characters.isEmpty) return;
+
+    // ✅ 读取图片 API 配置
+    final prefs = await SharedPreferences.getInstance();
+    final provider = prefs.getString('image_provider') ?? 'geeknow';
+    final storage = SecureStorageManager();
+    final model = await storage.getModel(provider: provider, modelType: 'image');
+    
+    print('\n🎨 开始生成角色图片');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🔧 Provider: $provider');
+    print('🎯 Model: ${model ?? "未设置"}');
+    print('📝 风格参考文字: ${_styleReferenceText.isNotEmpty ? _styleReferenceText : "无"}');
+    print('🖼️ 风格参考图片: ${_styleReferenceImage != null ? "有" : "无"}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    int successCount = 0;
+    int failCount = 0;
+
+    for (var i = 0; i < _characters.length; i++) {
+      try {
+        final character = _characters[i];
+        
+        // ✅ 构建完整提示词（风格参考 + 角色描述）
+        String prompt = character.description;
+        if (_styleReferenceText.isNotEmpty) {
+          prompt = '$_styleReferenceText, $prompt';
+        }
+        
+        print('📸 生成角色 ${i + 1}/${_characters.length}: ${character.name}');
+        print('   提示词: ${prompt.substring(0, prompt.length > 100 ? 100 : prompt.length)}...');
+        
+        // ✅ 准备参考图片
+        final referenceImages = <String>[];
+        if (_styleReferenceImage != null && _styleReferenceImage!.isNotEmpty) {
+          referenceImages.add(_styleReferenceImage!);
+          print('   参考图片: $_styleReferenceImage');
+        }
+        
+        // ✅ 调用真实图片 API
+        _apiRepository.clearCache();
+        final response = await _apiRepository.generateImages(
+          provider: provider,
+          prompt: prompt,
+          model: model,
+          count: 1,
+          referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
+          parameters: {
+            'quality': 'standard',
+            'size': '1024x1024',
+          },
+        );
+        
+        if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
+          final imageUrl = response.data!.first.imageUrl;
+          print('   ✅ 生成成功: $imageUrl\n');
+          
+          if (mounted) {
+            setState(() {
+              _characters[i] = _characters[i].copyWith(imageUrl: imageUrl);
+            });
+          }
+          successCount++;
+        } else {
+          print('   ❌ 生成失败: ${response.error}\n');
+          failCount++;
+        }
+      } catch (e) {
+        print('   ❌ 异常: $e\n');
+        failCount++;
+      }
+    }
+
+    await _saveCharacterData();
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ 角色图片生成完成：成功 $successCount 个，失败 $failCount 个'),
+          backgroundColor: successCount > 0 ? Colors.green : Colors.red,
+        ),
+      );
     }
   }
 

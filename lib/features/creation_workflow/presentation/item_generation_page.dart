@@ -9,6 +9,8 @@ import 'widgets/custom_title_bar.dart';
 import 'item_prompt_manager.dart';
 import 'style_reference_dialog.dart';
 import 'asset_library_selector.dart';
+import '../../../services/api/api_repository.dart';
+import '../../../services/api/secure_storage_manager.dart';
 
 /// 物品生成页面
 class ItemGenerationPage extends StatefulWidget {
@@ -35,6 +37,7 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
   String? _styleReferenceImage;
   List<ItemData> _items = [];
   bool _isInferring = false;
+  final ApiRepository _apiRepository = ApiRepository();
 
   @override
   void initState() {
@@ -193,6 +196,17 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF888888),
                             side: const BorderSide(color: Color(0xFF3A3A3C)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 清空按钮
+                        OutlinedButton.icon(
+                          onPressed: _items.isEmpty ? null : _clearAll,
+                          icon: const Icon(Icons.delete_sweep, size: 16),
+                          label: const Text('清空'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFF6B6B),
+                            side: BorderSide(color: const Color(0xFFFF6B6B).withOpacity(0.3)),
                           ),
                         ),
                       ],
@@ -364,6 +378,7 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
     }
   }
 
+  /// 推理物品（调用真实 LLM API）
   Future<void> _inferItems() async {
     if (widget.scriptContent.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -375,42 +390,124 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
     setState(() => _isInferring = true);
 
     try {
-      await Future.delayed(const Duration(seconds: 2));
+      // ✅ 读取 LLM 完整配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('llm_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final model = await storage.getModel(provider: provider, modelType: 'llm');
+      
+      print('\n🧠 开始推理物品');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔧 Provider: $provider');
+      print('🎯 Model: ${model ?? "未设置"}');
+      print('📋 物品提示词预设: $_selectedPromptContent');
+      print('📝 剧本长度: ${widget.scriptContent.length} 字符');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      // ✅ 构建 messages
+      final messages = <Map<String, String>>[];
+      
+      final basePrompt = '''请从以下剧本中提取所有重要物品。
 
-      final mockItems = [
-        ItemData(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          name: '全息通讯器',
-          description: '手腕式全息投影通讯设备，蓝色光效，可显示3D影像和数据。',
-        ),
-        ItemData(
-          id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
-          name: '数据解码器',
-          description: '便携式黑客工具，黑色金属外壳，带有多个接口和闪烁的LED指示灯。',
-        ),
-        ItemData(
-          id: (DateTime.now().millisecondsSinceEpoch + 2).toString(),
-          name: '飞行摩托',
-          description: '单人飞行载具，流线型设计，霓虹蓝色灯带，可悬浮和高速飞行。',
-        ),
-      ];
+剧本：
+${widget.scriptContent}
 
-      if (mounted) {
-        setState(() {
-          _items = mockItems;
-        });
-        await _saveItemData();
+输出格式：
+每个物品一行，格式为：
+物品名称 | 物品描述
+
+示例：
+全息通讯器 | 手腕式全息投影通讯设备，蓝色光效。
+飞行摩托 | 单人飞行载具，流线型设计，霓虹灯带。
+
+现在开始提取：''';
+      
+      String fullPrompt = '';
+      if (_selectedPromptContent.isNotEmpty) {
+        fullPrompt = '''【重要指令 - 必须严格遵守】
+$_selectedPromptContent
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$basePrompt''';
+      } else {
+        fullPrompt = basePrompt;
+      }
+      
+      messages.add({'role': 'user', 'content': fullPrompt});
+      
+      // ✅ 调用真实 LLM API
+      _apiRepository.clearCache();
+      final response = await _apiRepository.generateTextWithMessages(
+        provider: provider,
+        messages: messages,
+        model: model,
+        parameters: {
+          'temperature': 0.5,
+          'max_tokens': 2000,
+        },
+      );
+      
+      if (response.isSuccess && response.data != null) {
+        final responseText = response.data!.text;
+        
+        print('📄 API 返回物品列表:');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print(responseText);
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        
+        // ✅ 解析物品
+        final itemList = <ItemData>[];
+        final lines = responseText.split('\n');
+        
+        for (final line in lines) {
+          if (line.trim().isEmpty) continue;
+          if (line.contains('|')) {
+            final parts = line.split('|');
+            if (parts.length >= 2) {
+              itemList.add(ItemData(
+                id: DateTime.now().millisecondsSinceEpoch.toString() + itemList.length.toString(),
+                name: parts[0].trim(),
+                description: parts[1].trim(),
+              ));
+            }
+          }
+        }
+        
+        if (itemList.isEmpty) {
+          itemList.add(ItemData(
+            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            name: '物品列表',
+            description: responseText,
+          ));
+        }
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ 推理完成，识别到 3 个物品')),
-          );
+          setState(() {
+            _items = itemList;
+          });
+          await _saveItemData();
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ 推理完成，识别到 ${itemList.length} 个物品'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
+      } else {
+        throw Exception(response.error ?? '推理失败');
       }
     } catch (e) {
+      print('❌ 推理物品失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('推理失败：$e')),
+          SnackBar(
+            content: Text('推理失败：$e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -435,6 +532,53 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> {
         _styleReferenceImage = result['image'];
       });
       await _saveItemData();
+    }
+  }
+
+  /// 清空所有物品
+  Future<void> _clearAll() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_rounded, color: Color(0xFFFFA726), size: 28),
+            SizedBox(width: 12),
+            Text('确认清空', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text(
+          '确定要清空所有物品吗？\n\n此操作不可恢复，已生成的物品和图片都将被删除。',
+          style: TextStyle(color: Colors.white70, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确定清空', style: TextStyle(color: Color(0xFFFF6B6B))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      setState(() {
+        _items.clear();
+      });
+      await _saveItemData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 已清空所有物品'),
+            backgroundColor: Color(0xFF888888),
+          ),
+        );
+      }
     }
   }
 
