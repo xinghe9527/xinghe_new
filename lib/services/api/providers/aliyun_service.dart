@@ -102,7 +102,7 @@ class AliyunService extends ApiServiceBase {
           'Content-Type': 'application/json',
         },
         body: jsonEncode(requestBody),
-      ).timeout(const Duration(seconds: 60));
+      ).timeout(const Duration(seconds: 180));  // ✅ 增加到180秒（3分钟），支持生成大量内容
       
       final elapsed = DateTime.now().difference(startTime).inMilliseconds;
       print('✅ 请求完成，耗时: ${elapsed}ms');

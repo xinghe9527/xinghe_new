@@ -1462,21 +1462,18 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             .replaceAll('{{故事情节}}', widget.scriptContent)
             .replaceAll('{{剧本内容}}', widget.scriptContent);
         
-        // ✅ 添加明确的完整性要求
+        // ✅ 简洁明确，只强调完整性
         fullPrompt = '''$userPrompt
 
-【重要补充要求】
-请根据提供的剧本内容，生成**完整的分镜脚本**，覆盖剧本的所有关键情节和场景。
-- 不要只生成一个分镜示例，要生成足够数量的分镜来讲述完整的故事
-- 每个重要场景转换、人物动作、情节推进都应该有对应的分镜
-- 建议生成 5-15 个分镜（根据剧本复杂度）
+【补充要求】
+请根据完整剧本生成分镜，从开头到结尾完整覆盖，不要遗漏任何场景和情节。
 
-剧本内容：
+完整剧本内容：
 ${widget.scriptContent}
 
-现在开始生成完整的分镜列表：''';
+现在开始生成：''';
         
-        print('✅ 使用用户自定义分镜提示词预设（已添加完整性要求）');
+        print('✅ 使用用户自定义分镜提示词预设（完整覆盖剧本）');
       } else {
         // ✅ 如果没有预设，使用简单的基础格式
         fullPrompt = '''请根据以下剧本内容生成分镜脚本。
@@ -1507,7 +1504,7 @@ ${widget.scriptContent}
         model: model,
         parameters: {
           'temperature': 0.7,
-          'max_tokens': 3000,
+          'max_tokens': 30000,  // ✅ 30000（阿里云上限是32768）
         },
       );
       
@@ -1537,23 +1534,34 @@ ${widget.scriptContent}
               final content = match.group(1)?.trim() ?? '';
               if (content.isEmpty) continue;
               
-              // 按 === 分割图片和视频提示词
-              final parts = content.split('===');
-              final imagePrompt = parts.length > 0 ? parts[0].trim() : '';
-              final videoPrompt = parts.length > 1 ? parts[1].trim() : '';
+              // ✅ 使用正则表达式匹配所有的 "内容===内容" 对
+              // 匹配模式：非===字符 + === + 非===字符
+              final storyboardPattern = RegExp(
+                r'([^=]+?)===\s*([^=]+?)(?=\s*===|$)',
+                dotAll: true,
+              );
               
-              if (imagePrompt.isNotEmpty || videoPrompt.isNotEmpty) {
-                storyboardList.add(StoryboardRow(
-                  id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
-                  imagePrompt: imagePrompt,
-                  videoPrompt: videoPrompt,
-                  selectedImageAssets: [],
-                  selectedVideoAssets: [],
-                ));
+              final storyboards = storyboardPattern.allMatches(content);
+              
+              print('   正则匹配到 ${storyboards.length} 个分镜段落');
+              
+              for (final sb in storyboards) {
+                final imagePrompt = sb.group(1)?.trim() ?? '';
+                final videoPrompt = sb.group(2)?.trim() ?? '';
                 
-                print('   ✅ 分镜 ${storyboardList.length}');
-                print('      图片提示词长度: ${imagePrompt.length}');
-                print('      视频提示词长度: ${videoPrompt.length}');
+                if (imagePrompt.isNotEmpty && videoPrompt.isNotEmpty) {
+                  storyboardList.add(StoryboardRow(
+                    id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
+                    imagePrompt: imagePrompt,
+                    videoPrompt: videoPrompt,
+                    selectedImageAssets: [],
+                    selectedVideoAssets: [],
+                  ));
+                  
+                  print('   ✅ 分镜 ${storyboardList.length}');
+                  print('      图片: ${imagePrompt.substring(0, imagePrompt.length > 50 ? 50 : imagePrompt.length)}...');
+                  print('      视频: ${videoPrompt.substring(0, videoPrompt.length > 50 ? 50 : videoPrompt.length)}...');
+                }
               }
             }
             

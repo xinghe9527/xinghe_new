@@ -926,14 +926,9 @@ ${widget.scriptContent}
       print('   API Key: ${apiKey.substring(0, 10)}...');
       print('   🎨 风格参考图片: ${hasStyleImage ? "是" : "否"}\n');
       
-      // ✅ 直接创建服务实例（参考绘图空间的做法）
-      final config = ApiConfig(
-        provider: provider,
-        baseUrl: baseUrl,
-        apiKey: apiKey,
-      );
-      
-      final service = GeekNowService(config);
+      // ✅ 使用 ApiRepository 调用（自动使用配置的服务商）
+      print('   比例: $_imageRatio');
+      print('   调用 ApiRepository.generateImages...');
       
       // ✅ 准备参考图片
       final referenceImages = <String>[];
@@ -942,16 +937,15 @@ ${widget.scriptContent}
         print('   📸 添加风格参考图片');
       }
       
-      // ✅ 直接调用服务（不通过 ApiRepository）
-      print('   比例: $_imageRatio');
-      print('   调用 GeekNowService.generateImagesByChat...');
-      final response = await service.generateImagesByChat(
+      // ✅ 通过 ApiRepository 调用（会自动使用 ComfyUI 或其他配置的服务商）
+      _apiRepository.clearCache();
+      final response = await _apiRepository.generateImages(
+        provider: provider,
         prompt: prompt,
         model: model,
-        referenceImagePaths: referenceImages.isNotEmpty ? referenceImages : null,
+        referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
         parameters: {
-          'n': 1,
-          'size': _imageRatio,  // ✅ 使用用户选择的比例
+          'size': _imageRatio,
           'quality': 'standard',
         },
       );
@@ -961,7 +955,11 @@ ${widget.scriptContent}
       print('   HasData: ${response.data != null}');
       
       if (response.isSuccess && response.data != null) {
-        final imageUrls = response.data!.imageUrls;
+        // ✅ 兼容不同的返回类型
+        final imageUrls = response.data is List
+            ? (response.data as List).map((img) => img.imageUrl as String).toList()
+            : [];
+        
         print('   图片数量: ${imageUrls.length}');
         
         if (imageUrls.isEmpty) {

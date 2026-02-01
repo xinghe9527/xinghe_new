@@ -158,12 +158,16 @@ class ComfyUIService extends ApiServiceBase {
         debugPrint('⚠️ 跳过 seed 随机化（使用工作流原始 seed）\n');
       }
       
-      // 6. 上传参考图片（如果有）
+      // 6. 处理参考图片
       if (referenceImages != null && referenceImages.isNotEmpty) {
+        // 有参考图片：上传并设置
         await _uploadAndSetReferenceImages(workflowData, referenceImages);
+      } else {
+        // ✅ 没有参考图片：清空所有 LoadImage 节点（避免使用工作流原始图片）
+        _clearAllLoadImageNodes(workflowData);
       }
       
-      // 6. 提交工作流到 ComfyUI
+      // 7. 提交工作流到 ComfyUI
       final promptId = await _submitWorkflow(workflowData);
       debugPrint('   任务ID: $promptId');
       
@@ -446,6 +450,35 @@ class ComfyUIService extends ApiServiceBase {
     }
   }
   
+  /// 警告：工作流需要参考图片
+  void _clearAllLoadImageNodes(Map<String, dynamic> workflow) {
+    debugPrint('\n⚠️ 参考图片缺失警告');
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // 检查工作流中的 LoadImage 节点数量
+    var loadImageCount = 0;
+    final loadImageNodes = <String>[];
+    
+    for (final entry in workflow.entries) {
+      final node = entry.value as Map<String, dynamic>;
+      if (node['class_type'] == 'LoadImage') {
+        loadImageCount++;
+        loadImageNodes.add(entry.key);
+      }
+    }
+    
+    if (loadImageCount > 0) {
+      debugPrint('   ⚠️ 当前工作流包含 $loadImageCount 个 LoadImage 节点');
+      debugPrint('   ⚠️ 但未提供参考图片');
+      debugPrint('   ⚠️ 工作流将使用原始图片生成');
+      debugPrint('   💡 建议：');
+      debugPrint('      1. 添加风格参考图片');
+      debugPrint('      2. 或使用纯文生图工作流（不包含 LoadImage 节点）');
+    }
+    
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  }
+
   /// 上传并设置参考图片
   Future<void> _uploadAndSetReferenceImages(
     Map<String, dynamic> workflow,
@@ -588,9 +621,9 @@ class ComfyUIService extends ApiServiceBase {
   
   /// 等待任务完成
   Future<List<Map<String, dynamic>>> _waitForCompletion(String promptId) async {
-    debugPrint('   ⏳ 等待生成完成...');
+    debugPrint('   ⏳ 等待生成完成（包括排队时间）...');
     
-    for (var i = 0; i < 120; i++) {  // 最多等待 2 分钟
+    for (var i = 0; i < 600; i++) {  // ✅ 最多等待 10 分钟（考虑排队）
       await Future.delayed(const Duration(seconds: 1));
       
       try {
@@ -627,7 +660,7 @@ class ComfyUIService extends ApiServiceBase {
       }
     }
     
-    throw Exception('生成超时（2分钟）');
+    throw Exception('生成超时（10分钟）\n可能原因：\n1. ComfyUI 队列繁忙\n2. 模型加载缓慢\n3. 生成失败但未报错');
   }
 
   @override
@@ -690,9 +723,13 @@ class ComfyUIService extends ApiServiceBase {
       // 5. 随机 seed
       _randomizeSeedInWorkflow(workflowData);
       
-      // 6. 上传参考图片（如果有）
+      // 6. 处理参考图片
       if (referenceImages != null && referenceImages.isNotEmpty) {
+        // 有参考图片：上传并设置
         await _uploadAndSetReferenceImages(workflowData, referenceImages);
+      } else {
+        // ✅ 没有参考图片：清空所有 LoadImage 节点（避免使用工作流原始图片）
+        _clearAllLoadImageNodes(workflowData);
       }
       
       debugPrint('   工作流节点数: ${workflowData.length}');
@@ -729,9 +766,9 @@ class ComfyUIService extends ApiServiceBase {
   
   /// 等待视频任务完成（更长超时时间）
   Future<List<Map<String, dynamic>>> _waitForVideoCompletion(String promptId) async {
-    debugPrint('   ⏳ 等待视频生成完成...');
+    debugPrint('   ⏳ 等待视频生成完成（包括排队时间）...');
     
-    for (var i = 0; i < 300; i++) {  // 最多等待 5 分钟
+    for (var i = 0; i < 1200; i++) {  // ✅ 最多等待 20 分钟（视频生成慢+排队）
       await Future.delayed(const Duration(seconds: 1));
       
       try {
@@ -768,7 +805,7 @@ class ComfyUIService extends ApiServiceBase {
       }
     }
     
-    throw Exception('视频生成超时（5分钟）');
+    throw Exception('视频生成超时（20分钟）\n可能原因：\n1. ComfyUI 队列繁忙\n2. 视频生成缓慢\n3. 生成失败但未报错');
   }
 
   @override

@@ -879,7 +879,7 @@ ${widget.scriptContent}
       // ✅ 如果有风格参考图片，在提示词中明确说明
       final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
       if (hasStyleImage) {
-        fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$fullPrompt';
+        fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。只生成物品本身，不要有人物、手、脸等元素。$fullPrompt';
       }
       
       print('   📝 生成提示词: ${fullPrompt.substring(0, fullPrompt.length > 100 ? 100 : fullPrompt.length)}...');
@@ -1037,7 +1037,7 @@ ${widget.scriptContent}
           
           final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
           if (hasStyleImage) {
-            fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$fullPrompt';
+            fullPrompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。只生成物品本身，不要有人物、手、脸等元素。$fullPrompt';
           }
           
           print('   📸 [${i + 1}/${_items.length}] ${item.name}');
