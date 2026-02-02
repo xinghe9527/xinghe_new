@@ -18,7 +18,7 @@ class AssetLibrary extends StatefulWidget {
   State<AssetLibrary> createState() => _AssetLibraryState();
 }
 
-class _AssetLibraryState extends State<AssetLibrary> {
+class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver, RouteAware {
   int _selectedCategoryIndex = 0; // 0:角色 1:场景 2:物品
   final List<String> _categories = ['角色素材', '场景素材', '物品素材'];
   final List<IconData> _categoryIcons = [
@@ -35,6 +35,10 @@ class _AssetLibraryState extends State<AssetLibrary> {
   
   // 上传进度显示
   String _uploadStatus = '';  // 显示在界面上的状态
+  
+  // ✅ 数据更新保护
+  DateTime? _lastSaveTime;
+  bool _isUpdating = false;
 
   // 每个分类的风格列表
   final Map<int, List<AssetStyle>> _stylesByCategory = {
@@ -51,10 +55,99 @@ class _AssetLibraryState extends State<AssetLibrary> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadAssets();
+      _initializeData();
       _setupUploadListener();
     });
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+  
+  /// 初始化数据
+  Future<void> _initializeData() async {
+    try {
+      await _loadAssets();
+      
+      // ✅ 立即检查已完成任务，不等待
+      if (mounted) {
+        await _checkCompletedTasks();
+      }
+    } catch (e) {
+      _logger.error('初始化数据失败: $e', module: '素材库');
+    }
+  }
+  
+  /// 🔍 检查已完成的上传任务
+  Future<void> _checkCompletedTasks() async {
+    debugPrint('🔍 [素材库] 检查是否有已完成的上传任务...');
+    
+    final completedTasks = _queueManager.getCompletedTasks();
+    if (completedTasks.isEmpty) {
+      debugPrint('   没有已完成的任务');
+      return;
+    }
+    
+    debugPrint('   找到 ${completedTasks.length} 个已完成的任务');
+    
+    bool hasUpdate = false;
+    for (final task in completedTasks) {
+      if (task.characterInfo != null) {
+        // ✅ 查找并更新所有匹配路径的素材（不只是第一个）
+        int foundCount = 0;
+        for (var categoryEntry in _stylesByCategory.entries) {
+          for (var style in categoryEntry.value) {
+            // ✅ 遍历所有素材，找到所有匹配的
+            for (var asset in style.assets) {
+              if (asset.path == task.id) {
+                foundCount++;
+                debugPrint('   ✅ [#$foundCount] 找到匹配的素材: ${asset.name}, 映射代码: ${task.characterInfo}');
+                
+                if (asset.characterInfo != task.characterInfo) {
+                  asset.isUploaded = true;
+                  asset.isUploading = false;
+                  asset.characterInfo = task.characterInfo;
+                  asset.videoUrl = task.videoUrl;
+                  hasUpdate = true;
+                  debugPrint('      → 已更新映射代码');
+                } else {
+                  debugPrint('      → 已是最新状态，跳过');
+                }
+              }
+            }
+          }
+        }
+        
+        if (foundCount == 0) {
+          debugPrint('   ⚠️ 任务 ${task.assetName} 没有找到匹配的素材');
+        } else {
+          debugPrint('   📊 共找到 $foundCount 个匹配的素材');
+        }
+      }
+    }
+    
+    if (hasUpdate) {
+      debugPrint('   💾 发现新的上传结果，保存数据并更新 UI');
+      
+      // ✅ 先保存数据
+      await _saveAssets();
+      
+      // ✅ 然后强制刷新 UI
+      if (mounted) {
+        setState(() {
+          debugPrint('   🔄 强制刷新 UI');
+        });
+      }
+    } else {
+      debugPrint('   ℹ️ 素材已经是最新状态，无需更新');
+    }
   }
 
   // 设置上传监听器
@@ -80,32 +173,138 @@ class _AssetLibraryState extends State<AssetLibrary> {
     _styleNameController.dispose();
     _styleDescController.dispose();
     _uploadSubscription.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    routeObserver.unsubscribe(this);
     super.dispose();
+  }
+  
+  /// 🔄 页面重新显示时
+  @override
+  void didPopNext() {
+    debugPrint('📄 [素材库] 页面重新显示');
+    if (!_isUpdating) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _checkCompletedTasks();
+        }
+      });
+    }
+  }
+  
+  @override
+  void didPush() {
+    debugPrint('📄 [素材库] 页面首次显示');
+    // ✅ 页面首次显示时，也检查已完成的任务（可能是从其他页面返回）
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted && !_isUpdating) {
+        debugPrint('🔍 [didPush] 延迟检查已完成任务');
+        _checkCompletedTasks();
+      }
+    });
+  }
+  
+  @override
+  void didPushNext() {
+    debugPrint('📄 [素材库] 页面被遮挡');
+  }
+  
+  @override
+  void didPop() {
+    debugPrint('📄 [素材库] 页面被移除');
+  }
+  
+  /// 🔄 生命周期监听
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('📱 [素材库] 应用返回前台');
+      if (!_isUpdating) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _checkCompletedTasks();
+          }
+        });
+      }
+    }
   }
 
   // 上传任务状态变化回调
   void _onUploadStatusChanged(UploadTask task) {
-    if (!mounted) return;
-    
     debugPrint('[素材库] 收到上传状态更新: ${task.id}, 状态: ${task.status}');
     
     // 更新状态显示
-    setState(() {
-      if (task.status == UploadTaskStatus.processing) {
-        _uploadStatus = '正在处理: ${task.assetName}';
-      } else if (task.status == UploadTaskStatus.completed) {
-        _uploadStatus = '✅ ${task.assetName}: ${task.characterInfo}';
-        // 3秒后自动清空状态
-        Future.delayed(const Duration(seconds: 3), () {
-          if (mounted) {
-            setState(() {
-              _uploadStatus = '';
-            });
-          }
+    if (task.status == UploadTaskStatus.processing) {
+      if (mounted) {
+        setState(() {
+          _uploadStatus = '正在处理: ${task.assetName}';
         });
-      } else if (task.status == UploadTaskStatus.failed) {
-        _uploadStatus = '❌ ${task.assetName}: 失败';
-        // 5秒后自动清空状态
+      }
+    } else if (task.status == UploadTaskStatus.completed && task.characterInfo != null) {
+      // ✅ 查找并更新所有匹配路径的素材（不只是第一个）
+      int foundCount = 0;
+      for (var categoryEntry in _stylesByCategory.entries) {
+        for (var style in categoryEntry.value) {
+          // ✅ 遍历所有素材，找到所有匹配的
+          for (var asset in style.assets) {
+            if (asset.path == task.id) {
+              foundCount++;
+              debugPrint('[素材库] ✅ [#$foundCount] 找到素材: ${asset.name}, 更新映射代码: ${task.characterInfo}');
+              
+              // ✅ 更新内存数据
+              asset.isUploaded = true;
+              asset.isUploading = false;
+              asset.uploadedId = task.id;
+              asset.characterInfo = task.characterInfo;
+              asset.videoUrl = task.videoUrl;
+              
+              debugPrint('[素材库] 📝 已更新素材 #$foundCount: ${asset.name} -> ${asset.characterInfo}');
+            }
+          }
+        }
+      }
+      
+      if (foundCount > 0) {
+        debugPrint('[素材库] 📊 共更新了 $foundCount 个重复的素材');
+        
+        // ✅ 保存数据
+        _saveAssets().then((_) {
+          debugPrint('[素材库] ✅ 保存完成');
+        });
+        
+        _logger.success('角色创建成功: ${task.characterInfo}', module: '素材库');
+        
+        // ✅ 强制刷新 UI
+        if (mounted) {
+          setState(() {
+            _uploadStatus = '✅ ${task.assetName}: ${task.characterInfo}';
+            debugPrint('[素材库] 🔄 强制刷新 UI');
+          });
+          
+          _showMessage('✅ ${task.assetName}: ${task.characterInfo}', isError: false);
+          
+          // 3秒后清空状态
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted) {
+              setState(() {
+                _uploadStatus = '';
+              });
+            }
+          });
+        } else {
+          debugPrint('⚠️ [素材库] 页面不可见，数据已保存，等待页面返回时刷新');
+        }
+      } else {
+        debugPrint('[素材库] ⚠️ 未找到对应的素材，taskId: ${task.id}');
+      }
+    } else if (task.status == UploadTaskStatus.failed) {
+      if (mounted) {
+        setState(() {
+          _uploadStatus = '❌ ${task.assetName}: 失败';
+        });
+        
+        _showMessage('❌ ${task.assetName} 上传失败', isError: true);
+        
+        // 5秒后清空状态
         Future.delayed(const Duration(seconds: 5), () {
           if (mounted) {
             setState(() {
@@ -114,51 +313,6 @@ class _AssetLibraryState extends State<AssetLibrary> {
           }
         });
       }
-    });
-    
-    // 查找对应的素材（遍历所有分类的所有风格）
-    bool found = false;
-    for (var categoryEntry in _stylesByCategory.entries) {
-      for (var style in categoryEntry.value) {
-        final assetIndex = style.assets.indexWhere((a) => a.path == task.id);
-        if (assetIndex != -1) {
-          final asset = style.assets[assetIndex];
-          found = true;
-          
-          debugPrint('[素材库] 找到素材: ${asset.name}, 更新状态');
-          
-          setState(() {
-            if (task.status == UploadTaskStatus.completed) {
-              asset.isUploaded = true;
-              asset.isUploading = false;
-              asset.uploadedId = task.id;
-              asset.characterInfo = task.characterInfo;
-              asset.videoUrl = task.videoUrl;
-              _saveAssets();
-              
-              _logger.success('角色创建成功: ${task.characterInfo}', module: '素材库');
-              
-              // 显示成功提示
-              _showMessage('✅ ${asset.name}: ${task.characterInfo}', isError: false);
-            } else if (task.status == UploadTaskStatus.failed) {
-              asset.isUploading = false;
-              _logger.error('上传失败: ${task.error}', module: '素材库');
-              
-              // 显示失败提示
-              _showMessage('❌ ${asset.name} 上传失败', isError: true);
-            } else if (task.status == UploadTaskStatus.processing) {
-              asset.isUploading = true;
-            }
-          });
-          
-          break;  // 找到后跳出内层循环
-        }
-      }
-      if (found) break;  // 找到后跳出外层循环
-    }
-    
-    if (!found) {
-      debugPrint('[素材库] 警告：未找到对应的素材，taskId: ${task.id}');
     }
   }
 
@@ -182,67 +336,32 @@ class _AssetLibraryState extends State<AssetLibrary> {
         });
         
         _logger.success('成功加载素材库数据', module: '素材库');
+        
+        debugPrint('✅ [素材库] 加载数据成功');
+        // 打印所有"下载.jpg"素材的信息
+        _stylesByCategory.forEach((categoryIndex, styles) {
+          for (var style in styles) {
+            for (var asset in style.assets) {
+              if (asset.name.contains('下载')) {
+                debugPrint('   🔎 [${_categories[categoryIndex]}] ${asset.name}:');
+                debugPrint('      - path: ${asset.path}');
+                debugPrint('      - characterInfo: ${asset.characterInfo}');
+                debugPrint('      - isUploaded: ${asset.isUploaded}');
+              }
+              
+              if (asset.characterInfo != null && asset.characterInfo!.isNotEmpty) {
+                debugPrint('   - [${_categories[categoryIndex]}] ${asset.name}: ${asset.characterInfo}');
+              }
+            }
+          }
+        });
       }
-      
-      // 检查并应用已完成但未更新的上传任务
-      await _applyCompletedTasks();
-      
     } catch (e) {
       _logger.error('加载素材库失败: $e', module: '素材库');
       debugPrint('加载素材失败: $e');
     }
   }
 
-  // 应用已完成的上传任务
-  Future<void> _applyCompletedTasks() async {
-    final completedTasks = _queueManager.getCompletedTasks();
-    
-    if (completedTasks.isEmpty) {
-      return;
-    }
-    
-    _logger.info('检查到 ${completedTasks.length} 个已完成任务', module: '素材库');
-    
-    bool updated = false;
-    
-    for (var task in completedTasks) {
-      if (task.status != UploadTaskStatus.completed) {
-        continue;
-      }
-      
-      // 查找对应的素材并更新
-      for (var styles in _stylesByCategory.values) {
-        for (var style in styles) {
-          final assetIndex = style.assets.indexWhere((a) => a.path == task.id);
-          if (assetIndex != -1) {
-            final asset = style.assets[assetIndex];
-            
-            // 如果还没有角色信息，更新它
-            if (asset.characterInfo == null && task.characterInfo != null) {
-              _logger.info('应用已完成任务', module: '素材库', extra: {
-                'asset': asset.name,
-                'character': task.characterInfo,
-              });
-              
-              asset.isUploaded = true;
-              asset.isUploading = false;
-              asset.uploadedId = task.id;
-              asset.characterInfo = task.characterInfo;
-              asset.videoUrl = task.videoUrl;
-              updated = true;
-            }
-          }
-        }
-      }
-    }
-    
-    if (updated) {
-      setState(() {
-        _saveAssets();
-      });
-      _logger.success('已更新素材状态', module: '素材库');
-    }
-  }
 
   // 保存素材数据
   Future<void> _saveAssets() async {
@@ -255,8 +374,21 @@ class _AssetLibraryState extends State<AssetLibrary> {
       });
       
       await prefs.setString('asset_library_data', jsonEncode(data));
+      
+      debugPrint('✅ [素材库] 保存数据成功');
+      
+      // 打印每个分类已上传的素材
+      _stylesByCategory.forEach((categoryIndex, styles) {
+        for (var style in styles) {
+          for (var asset in style.assets) {
+            if (asset.characterInfo != null && asset.characterInfo!.isNotEmpty) {
+              debugPrint('   - [${_categories[categoryIndex]}] ${asset.name}: ${asset.characterInfo}');
+            }
+          }
+        }
+      });
     } catch (e) {
-      debugPrint('保存素材失败: $e');
+      debugPrint('⚠️ [素材库] 保存素材失败: $e');
     }
   }
 
@@ -906,6 +1038,14 @@ class _AssetLibraryState extends State<AssetLibrary> {
 
   // 素材卡片
   Widget _buildAssetCard(AssetItem asset, int index) {
+    // ✅ 调试：打印素材信息
+    if (asset.name == '下载.jpg') {
+      debugPrint('📦 [素材卡片] 构建素材: ${asset.name}');
+      debugPrint('   - characterInfo: ${asset.characterInfo}');
+      debugPrint('   - isUploaded: ${asset.isUploaded}');
+      debugPrint('   - 是否显示映射代码: ${asset.characterInfo != null}');
+    }
+    
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surfaceBackground,

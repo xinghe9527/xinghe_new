@@ -28,16 +28,18 @@ class UploadTask {
 }
 
 enum UploadTaskStatus {
-  pending,      // 等待中
-  processing,   // 处理中
-  completed,    // 已完成
-  failed,       // 失败
+  pending,          // 等待中
+  processing,       // 处理中（FFmpeg）
+  ffmpegCompleted,  // FFmpeg 完成，开始上传
+  uploading,        // 上传中
+  completed,        // 已完成
+  failed,           // 失败
 }
 
 /// 上传队列管理器（单例）
 /// 
 /// 功能：
-/// - 串行处理上传任务（避免并发导致崩溃）
+/// - 并发处理上传任务，但 FFmpeg 保持串行（避免资源竞争）
 /// - 后台运行（切换界面不中断）
 /// - 任务状态通知
 class UploadQueueManager {
@@ -48,6 +50,7 @@ class UploadQueueManager {
   final List<UploadTask> _queue = [];
   final List<UploadTask> _completedTasks = [];  // 保存已完成的任务
   bool _isProcessing = false;
+  bool _ffmpegLocked = false;  // ✅ FFmpeg 串行锁
   
   final FFmpegService _ffmpegService = FFmpegService();
   final SupabaseUploadService _uploadService = SupabaseUploadService();
@@ -66,96 +69,100 @@ class UploadQueueManager {
       'queueLength': _queue.length,
     });
     
-    // 如果当前没有在处理，立即开始
-    if (!_isProcessing) {
-      _processQueue();
-    }
+    // ✅ 立即并发处理该任务
+    _processTask(task);
   }
 
-  /// 处理队列（串行执行）
-  Future<void> _processQueue() async {
-    if (_isProcessing || _queue.isEmpty) {
-      return;
-    }
+  /// ✅ 处理单个任务（并发执行，但 FFmpeg 保持串行）
+  Future<void> _processTask(UploadTask task) async {
+    try {
+      _logger.info('开始处理上传任务', module: '上传队列', extra: {
+        'taskId': task.id,
+        'name': task.assetName,
+      });
 
-    _isProcessing = true;
-
-    while (_queue.isNotEmpty) {
-      final task = _queue.first;
+      // Step 1: 图片转视频（串行等待）
+      await _waitForFFmpegLock();  // ✅ 等待 FFmpeg 锁
+      _ffmpegLocked = true;  // ✅ 获取锁
       
-      try {
-        // 更新状态为处理中
-        task.status = UploadTaskStatus.processing;
-        _notifyStatusChange(task);
-        
-        _logger.info('开始处理上传任务', module: '上传队列', extra: {
-          'taskId': task.id,
-          'name': task.assetName,
-        });
-
-        // Step 1: 图片转视频
-        _logger.info('Step 1/4: 图片转视频', module: '上传队列');
-        final videoFile = await _ffmpegService.convertImageToVideo(task.imageFile);
-        
-        // Step 2: 上传到 Supabase
-        _logger.info('Step 2/4: 上传到 Supabase', module: '上传队列');
-        final videoUrl = await _uploadService.uploadVideo(videoFile);
-        task.videoUrl = videoUrl;
-        
-        // Step 3: 调用 Sora API 创建角色
-        _logger.info('Step 3/4: 创建 Sora 角色', module: '上传队列');
-        final result = await _createCharacter(videoUrl, task.apiConfig);
-        
-        if (result != null) {
-          task.characterInfo = '@${result.username},';
-          
-          _logger.success('上传任务完成', module: '上传队列', extra: {
-            'taskId': task.id,
-            'character': task.characterInfo,
-          });
-          
-          task.status = UploadTaskStatus.completed;
-        } else {
-          throw Exception('角色创建失败：API 返回空结果');
-        }
-        
-        // Step 4: 清理临时文件
-        _logger.info('Step 4/4: 清理临时文件', module: '上传队列');
-        await videoFile.delete();
-        
-      } catch (e, stackTrace) {
-        task.status = UploadTaskStatus.failed;
-        task.error = e.toString();
-        
-        _logger.error('上传任务失败', module: '上传队列', extra: {
-          'taskId': task.id,
-          'error': e.toString(),
-        });
-        
-        debugPrint('Stack Trace: $stackTrace');
-      }
-      
-      // 通知状态变化
+      task.status = UploadTaskStatus.processing;
       _notifyStatusChange(task);
       
-      // 保存已完成或失败的任务
-      if (task.status == UploadTaskStatus.completed || task.status == UploadTaskStatus.failed) {
-        _completedTasks.add(task);
-        // 只保留最近 50 个已完成任务
-        if (_completedTasks.length > 50) {
-          _completedTasks.removeAt(0);
-        }
+      _logger.info('Step 1/4: 图片转视频', module: '上传队列');
+      final videoFile = await _ffmpegService.convertImageToVideo(task.imageFile);
+      
+      _ffmpegLocked = false;  // ✅ 释放锁，下一个任务可以开始 FFmpeg
+      
+      // ✅ FFmpeg 完成，发送通知（此时可以继续生成下一个）
+      task.status = UploadTaskStatus.ffmpegCompleted;
+      _notifyStatusChange(task);
+      
+      // Step 2: 上传到 Supabase（并发，不需要等待）
+      task.status = UploadTaskStatus.uploading;
+      _notifyStatusChange(task);
+      _logger.info('Step 2/4: 上传到 Supabase', module: '上传队列');
+      final videoUrl = await _uploadService.uploadVideo(videoFile);
+      task.videoUrl = videoUrl;
+      
+      // Step 3: 调用 Sora API 创建角色
+      _logger.info('Step 3/4: 创建 Sora 角色', module: '上传队列');
+      final result = await _createCharacter(videoUrl, task.apiConfig);
+      
+      if (result != null) {
+        task.characterInfo = '@${result.username},';
+        
+        _logger.success('上传任务完成', module: '上传队列', extra: {
+          'taskId': task.id,
+          'character': task.characterInfo,
+        });
+        
+        task.status = UploadTaskStatus.completed;
+      } else {
+        throw Exception('角色创建失败：API 返回空结果');
       }
       
-      // 从队列中移除
-      _queue.removeAt(0);
+      // Step 4: 清理临时文件
+      _logger.info('Step 4/4: 清理临时文件', module: '上传队列');
+      await videoFile.delete();
       
-      // 短暂延迟，避免过快处理
-      await Future.delayed(const Duration(milliseconds: 500));
+    } catch (e, stackTrace) {
+      task.status = UploadTaskStatus.failed;
+      task.error = e.toString();
+      
+      _logger.error('上传任务失败', module: '上传队列', extra: {
+        'taskId': task.id,
+        'error': e.toString(),
+      });
+      
+      debugPrint('Stack Trace: $stackTrace');
+      
+      // ✅ 如果失败，确保释放 FFmpeg 锁
+      if (_ffmpegLocked) {
+        _ffmpegLocked = false;
+      }
     }
-
-    _isProcessing = false;
-    _logger.info('上传队列处理完成', module: '上传队列');
+    
+    // 通知状态变化
+    _notifyStatusChange(task);
+    
+    // 保存已完成或失败的任务
+    if (task.status == UploadTaskStatus.completed || task.status == UploadTaskStatus.failed) {
+      _completedTasks.add(task);
+      // 只保留最近 50 个已完成任务
+      if (_completedTasks.length > 50) {
+        _completedTasks.removeAt(0);
+      }
+    }
+    
+    // 从队列中移除
+    _queue.remove(task);
+  }
+  
+  /// ✅ 等待 FFmpeg 锁释放
+  Future<void> _waitForFFmpegLock() async {
+    while (_ffmpegLocked) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
   }
 
   /// 调用 Sora API 创建角色

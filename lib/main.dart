@@ -16,6 +16,9 @@ final ValueNotifier<String> imageSavePathNotifier = ValueNotifier<String>('未�
 final ValueNotifier<String> videoSavePathNotifier = ValueNotifier<String>('未设置');
 final ValueNotifier<String> workSavePathNotifier = ValueNotifier<String>('未设置');  // ✅ 作品保存路径
 
+// 全局路由观察器（用于监听页面切换）
+final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
+
 /// 🔧 设置键盘修复（解决 Windows 上的幽灵按键问题）
 /// 
 /// 这个问题是 Flutter 在 Windows 上的已知 bug：
@@ -179,6 +182,7 @@ class XingheApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           theme: themeData,
           home: const HomeScreen(),
+          navigatorObservers: [routeObserver],  // ✅ 添加路由观察器
         );
       },
     );

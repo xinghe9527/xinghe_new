@@ -5,6 +5,7 @@ import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'widgets/custom_title_bar.dart';
@@ -14,6 +15,8 @@ import 'asset_library_selector.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/api/base/api_config.dart';
+import '../../../services/api/base/api_response.dart';
+import '../../../services/upload_queue_manager.dart';  // ✅ 上传队列管理器
 import '../../../services/api/providers/geeknow_service.dart';  // ✅ 直接导入服务
 
 /// 角色生成页面
@@ -33,7 +36,7 @@ class CharacterGenerationPage extends StatefulWidget {
   State<CharacterGenerationPage> createState() => _CharacterGenerationPageState();
 }
 
-class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
+class _CharacterGenerationPageState extends State<CharacterGenerationPage> with WidgetsBindingObserver, RouteAware {
   bool _showSettings = false;
   String _selectedPromptName = '默认';
   String _selectedPromptContent = '';
@@ -44,14 +47,233 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
   bool _isInferring = false;
   final ApiRepository _apiRepository = ApiRepository();
   final Set<int> _generatingImages = {};
+  final UploadQueueManager _uploadQueue = UploadQueueManager();  // ✅ 上传队列
+  late StreamSubscription _uploadSubscription;  // ✅ 上传监听
+  DateTime? _lastSaveTime;  // ✅ 记录最后保存时间
+  bool _isUpdating = false;  // ✅ 标记是否正在更新数据
 
   final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];  // ✅ 比例选项
 
   @override
   void initState() {
     super.initState();
-    _loadCharacterData();
     _loadImageRatio();  // 加载保存的比例设置
+    _setupUploadListener();  // ✅ 设置上传监听
+    WidgetsBinding.instance.addObserver(this);  // ✅ 添加生命周期监听
+    
+    // ✅ 使用 Future.microtask 确保在下一个事件循环执行
+    Future.microtask(() => _initializeData());
+  }
+  
+  /// 初始化数据（先加载数据，再检查已完成任务）
+  Future<void> _initializeData() async {
+    try {
+      await _loadCharacterData();  // ✅ 等待数据加载完成
+      
+      // ✅ 延迟检查已完成任务，确保页面已经构建完成
+      Future.delayed(const Duration(seconds: 1), () {
+        if (mounted) {
+          _checkCompletedTasks();  // ✅ 然后检查已完成的任务
+        }
+      });
+    } catch (e) {
+      debugPrint('❌ 初始化数据失败: $e');
+      debugPrint('Stack trace: ${StackTrace.current}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('数据加载失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // ✅ 注册路由监听
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    _uploadSubscription.cancel();  // ✅ 取消监听器，避免内存泄漏
+    WidgetsBinding.instance.removeObserver(this);  // ✅ 移除生命周期监听
+    routeObserver.unsubscribe(this);  // ✅ 取消路由监听
+    super.dispose();
+  }
+  
+  /// 🔄 生命周期监听：当应用从后台返回前台时重新加载数据
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // ✅ 不自动重新加载，避免覆盖数据
+      debugPrint('📱 应用返回前台（不自动加载，避免覆盖）');
+      
+      // 只检查已完成的上传任务
+      if (!_isUpdating) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _checkCompletedTasks();
+          }
+        });
+      }
+    }
+  }
+  
+  /// 🔄 页面重新显示时（从其他页面返回）
+  @override
+  void didPopNext() {
+    debugPrint('📄 页面重新显示');
+    // ✅ 不自动重新加载数据，避免覆盖正在编辑的内容
+    // 只在必要时（如上传完成）通过监听器更新
+    
+    // 只检查已完成的上传任务
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted && !_isUpdating) {
+        _checkCompletedTasks();
+      }
+    });
+  }
+  
+  /// 🔄 页面首次显示时
+  @override
+  void didPush() {
+    debugPrint('📄 页面首次显示');
+  }
+  
+  /// 🔄 页面被遮挡时
+  @override
+  void didPushNext() {
+    debugPrint('📄 页面被遮挡');
+  }
+  
+  /// 🔄 页面被移除时
+  @override
+  void didPop() {
+    debugPrint('📄 页面被移除');
+  }
+  
+  /// 🔍 检查已完成的上传任务（页面初始化时调用）
+  Future<void> _checkCompletedTasks() async {
+    debugPrint('🔍 检查是否有已完成的上传任务...');
+    
+    final completedTasks = _uploadQueue.getCompletedTasks();
+    if (completedTasks.isEmpty) {
+      debugPrint('   没有已完成的任务');
+      return;
+    }
+    
+    debugPrint('   找到 ${completedTasks.length} 个已完成的任务');
+    
+    bool hasUpdate = false;
+    for (final task in completedTasks) {
+      debugPrint('   🔎 检查任务:');
+      debugPrint('      - task.id: ${task.id}');
+      debugPrint('      - task.imageFile.path: ${task.imageFile.path}');
+      debugPrint('      - task.characterInfo: ${task.characterInfo}');
+      debugPrint('      - task.assetName: ${task.assetName}');
+      
+      if (task.characterInfo != null) {
+        // 查找对应的角色并更新
+        bool found = false;
+        for (var i = 0; i < _characters.length; i++) {
+          debugPrint('      🔎 比对角色: ${_characters[i].name}');
+          debugPrint('         - imageUrl: ${_characters[i].imageUrl}');
+          
+          if (_characters[i].imageUrl == task.id || 
+              _characters[i].imageUrl == task.imageFile.path) {
+            debugPrint('      ✅ 找到匹配的角色: ${_characters[i].name}, 映射代码: ${task.characterInfo}');
+            found = true;
+            
+            // 检查是否已经更新过
+            if (_characters[i].mappingCode != task.characterInfo) {
+              _characters[i] = _characters[i].copyWith(
+                mappingCode: task.characterInfo,
+                isUploaded: true,
+                description: '${task.characterInfo}${_characters[i].name}',
+              );
+              hasUpdate = true;
+            }
+            break;
+          }
+        }
+        
+        if (!found) {
+          debugPrint('      ❌ 没有找到匹配的角色');
+        }
+      } else {
+        debugPrint('      ⚠️ 任务没有 characterInfo');
+      }
+    }
+    
+    if (hasUpdate) {
+      debugPrint('   💾 发现新的上传结果，保存数据并更新 UI');
+      await _saveCharacterData();
+      if (mounted) {
+        setState(() {});
+      }
+    } else {
+      debugPrint('   ℹ️ 没有需要更新的数据');
+    }
+  }
+  
+  /// 设置上传监听
+  void _setupUploadListener() {
+    _uploadSubscription = _uploadQueue.statusStream.listen((task) {
+      debugPrint('📥 收到上传状态: ${task.id}, ${task.status}, ${task.characterInfo}');
+      
+      if (task.status == UploadTaskStatus.completed && task.characterInfo != null) {
+        // 查找对应的角色并更新
+        for (var i = 0; i < _characters.length; i++) {
+          if (_characters[i].imageUrl == task.id || 
+              _characters[i].imageUrl == task.imageFile.path) {
+            debugPrint('✅ 找到匹配的角色: ${_characters[i].name}');
+            
+            // ✅ 先更新内存中的数据
+            _characters[i] = _characters[i].copyWith(
+              mappingCode: task.characterInfo,
+              isUploaded: true,
+              description: '${task.characterInfo}${_characters[i].name}',  // @username,名字
+            );
+            
+            // ✅ 保存到本地存储
+            _saveCharacterData();
+            
+            // ✅ 只有在页面可见时才更新 UI
+            if (mounted) {
+              setState(() {});  // 触发重建
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ ${_characters[i].name} 上传成功\n映射代码: ${task.characterInfo}'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            } else {
+              debugPrint('⚠️ 页面不可见，数据已保存，等待页面返回时刷新');
+            }
+            break;
+          }
+        }
+      } else if (task.status == UploadTaskStatus.failed) {
+        debugPrint('❌ 上传失败: ${task.error}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('上传失败: ${task.error}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    });
   }
 
   /// 加载图片比例设置
@@ -84,6 +306,19 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
   /// 加载角色数据
   Future<void> _loadCharacterData() async {
     try {
+      // ✅ 如果正在更新数据，跳过加载
+      if (_isUpdating) {
+        debugPrint('⏭️ 跳过加载（正在更新数据中）');
+        return;
+      }
+      
+      // ✅ 如果刚刚保存过（5秒内），跳过加载，避免覆盖
+      if (_lastSaveTime != null && 
+          DateTime.now().difference(_lastSaveTime!).inSeconds < 5) {
+        debugPrint('⏭️ 跳过加载（${DateTime.now().difference(_lastSaveTime!).inSeconds}秒前刚保存过）');
+        return;
+      }
+      
       final prefs = await SharedPreferences.getInstance();
       final key = 'characters_${widget.workId}';
       final dataJson = prefs.getString(key);
@@ -104,10 +339,18 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                   .toList();
             }
           });
+          
+          debugPrint('✅ 加载角色数据成功 (${_characters.length} 个角色)');
+          // 打印每个角色的映射代码，方便调试
+          for (var char in _characters) {
+            debugPrint('   - ${char.name}: ${char.mappingCode ?? "无"}');
+          }
         }
+      } else {
+        debugPrint('⚠️ 没有找到保存的角色数据');
       }
     } catch (e) {
-      debugPrint('加载角色数据失败: $e');
+      debugPrint('❌ 加载角色数据失败: $e');
     }
   }
 
@@ -125,7 +368,16 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
         'updatedAt': DateTime.now().toIso8601String(),
       };
       await prefs.setString(key, jsonEncode(data));
-      debugPrint('✅ 保存角色数据');
+      _lastSaveTime = DateTime.now();  // ✅ 记录保存时间
+      
+      debugPrint('✅ 保存角色数据成功 (${_characters.length} 个角色)');
+      
+      // 打印每个角色的映射代码，方便调试
+      for (var char in _characters) {
+        if (char.mappingCode != null && char.mappingCode!.isNotEmpty) {
+          debugPrint('   - ${char.name}: ${char.mappingCode}');
+        }
+      }
     } catch (e) {
       debugPrint('⚠️ 保存角色数据失败: $e');
     }
@@ -420,6 +672,26 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> {
                         style: IconButton.styleFrom(
                           backgroundColor: const Color(0xFF3A3A3C),
                           foregroundColor: const Color(0xFF888888),
+                          padding: const EdgeInsets.all(8),
+                        ),
+                      ),
+                      // ✅ 上传按钮（获取映射代码）
+                      IconButton(
+                        onPressed: character.imageUrl != null && 
+                                   character.imageUrl!.isNotEmpty && 
+                                   !character.isUploaded
+                            ? () => _uploadCharacter(index)
+                            : null,
+                        icon: Icon(
+                          character.isUploaded ? Icons.cloud_done : Icons.cloud_upload,
+                          size: 16,
+                        ),
+                        tooltip: character.isUploaded ? '已上传' : '上传获取映射代码',
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF3A3A3C),
+                          foregroundColor: character.isUploaded 
+                              ? const Color(0xFF4A9EFF)
+                              : const Color(0xFF888888),
                           padding: const EdgeInsets.all(8),
                         ),
                       ),
@@ -1059,6 +1331,66 @@ ${widget.scriptContent}
     }
   }
 
+  /// 上传角色获取映射代码
+  Future<void> _uploadCharacter(int index) async {
+    final character = _characters[index];
+    
+    if (character.imageUrl == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先生成图片')),
+      );
+      return;
+    }
+    
+    try {
+      // 读取上传API配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('upload_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'upload');
+      final apiKey = await storage.getApiKey(provider: provider, modelType: 'upload');
+      
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置上传API，请在设置中配置');
+      }
+      
+      final config = ApiConfig(
+        provider: provider,
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+      );
+      
+      // ✅ 使用上传队列管理器
+      final task = UploadTask(
+        id: character.imageUrl!,
+        imageFile: File(character.imageUrl!),
+        assetName: character.name,
+        apiConfig: config,
+      );
+      
+      // 标记为上传中
+      setState(() {
+        _characters[index] = character.copyWith(isUploaded: false);
+      });
+      
+      // 添加到队列
+      _uploadQueue.addTask(task);
+      
+      debugPrint('✅ ${character.name} 上传任务已加入队列');
+      
+    } catch (e) {
+      debugPrint('❌ 添加上传任务失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('上传失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// 生成角色图片（调用真实图片 API）
   Future<void> _generateImages() async {
     if (_characters.isEmpty) return;
@@ -1213,23 +1545,79 @@ ${widget.scriptContent}
 
   /// 从素材库选择
   Future<void> _selectFromLibrary(int index) async {
-    final selectedPath = await showDialog<String>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => const AssetLibrarySelector(
         category: AssetCategory.character,  // 只显示角色素材
       ),
     );
 
-    if (selectedPath != null && mounted) {
-      setState(() {
-        _characters[index] = _characters[index].copyWith(imageUrl: selectedPath);
-      });
-      await _saveCharacterData();
+    if (result != null && mounted) {
+      final selectedPath = result['path'] as String?;
+      final characterInfo = result['characterInfo'] as String?;
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ 已从素材库选择图片')),
-        );
+      if (selectedPath != null) {
+        // ✅ 设置更新标志，阻止并发的重新加载
+        _isUpdating = true;
+        _lastSaveTime = DateTime.now();
+        
+        try {
+          final oldChar = _characters[index];
+          debugPrint('📝 准备更新角色 ${oldChar.name}:');
+          debugPrint('   - 旧图片: ${oldChar.imageUrl}');
+          debugPrint('   - 新图片: $selectedPath');
+          debugPrint('   - 旧映射代码: ${oldChar.mappingCode}');
+          debugPrint('   - 新映射代码: $characterInfo');
+          
+          // ✅ 直接创建新对象，同时设置映射代码
+          String newDescription = _characters[index].description.replaceAll(RegExp(r'@\w+,'), '').trim();
+          
+          // ✅ 如果素材已上传，使用素材的映射代码
+          if (characterInfo != null && characterInfo.isNotEmpty) {
+            newDescription = '$characterInfo${_characters[index].name}';
+          }
+          
+          _characters[index] = CharacterData(
+            id: _characters[index].id,
+            name: _characters[index].name,
+            description: newDescription,
+            imageUrl: selectedPath,
+            mappingCode: characterInfo,  // ✅ 使用素材的映射代码
+            isUploaded: characterInfo != null && characterInfo.isNotEmpty,  // ✅ 如果有映射代码，标记为已上传
+          );
+          
+          debugPrint('✅ 已更新内存中的数据:');
+          debugPrint('   - 新图片: ${_characters[index].imageUrl}');
+          debugPrint('   - 新描述: ${_characters[index].description}');
+          debugPrint('   - 新映射代码: ${_characters[index].mappingCode}');
+          debugPrint('   - 已上传: ${_characters[index].isUploaded}');
+          
+          // ✅ 先保存数据
+          await _saveCharacterData();
+          
+          debugPrint('✅ 已从素材库选择图片并保存');
+          
+          // ✅ 然后更新 UI
+          if (mounted) {
+            setState(() {});
+          }
+        } finally {
+          // ✅ 延迟重置更新标志，确保保存完成
+          Future.delayed(const Duration(seconds: 2), () {
+            _isUpdating = false;
+            debugPrint('🔓 解除更新锁');
+          });
+        }
+        
+        if (mounted) {
+          final message = characterInfo != null && characterInfo.isNotEmpty
+              ? '✅ 已选择图片并设置映射代码'
+              : '✅ 已选择图片（未上传的素材）';
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
       }
     }
   }
@@ -1242,11 +1630,24 @@ ${widget.scriptContent}
     );
 
     if (result != null && result.files.isNotEmpty && mounted) {
+      // ✅ 立即设置保护时间，防止其他地方重新加载数据
+      _lastSaveTime = DateTime.now();
+      
       final filePath = result.files.first.path!;
       setState(() {
-        _characters[index] = _characters[index].copyWith(imageUrl: filePath);
+        // ✅ 直接创建新对象，确保 imageUrl 被更新，并重置上传状态
+        _characters[index] = CharacterData(
+          id: _characters[index].id,
+          name: _characters[index].name,
+          description: _characters[index].description.replaceAll(RegExp(r'@\w+,'), '').trim(),  // ✅ 移除旧的映射代码
+          imageUrl: filePath,
+          mappingCode: null,  // ✅ 清除旧的映射代码
+          isUploaded: false,  // ✅ 重置上传状态，允许重新上传
+        );
       });
       await _saveCharacterData();
+      
+      debugPrint('✅ 已更新角色图片: ${_characters[index].name} -> $filePath');
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1414,8 +1815,8 @@ ${widget.scriptContent}
     );
 
     if (confirm == true) {
-      // 删除本地文件（如果是本地路径）
-      if (!imageUrl.startsWith('http')) {
+      // 删除本地文件（如果是本地路径且不为空）
+      if (imageUrl.isNotEmpty && !imageUrl.startsWith('http')) {
         try {
           final file = File(imageUrl);
           if (await file.exists()) {
@@ -1428,11 +1829,25 @@ ${widget.scriptContent}
       }
       
       // 清除角色的图片URL
+      // ⚠️ 注意：由于 copyWith 使用 ?? 运算符，无法直接设置为 null
+      // 所以我们需要创建一个新的 CharacterData 对象
       if (mounted) {
+        // ✅ 立即设置保护时间，防止其他地方重新加载数据
+        _lastSaveTime = DateTime.now();
+        
         setState(() {
-          _characters[index] = _characters[index].copyWith(imageUrl: null);
+          _characters[index] = CharacterData(
+            id: _characters[index].id,
+            name: _characters[index].name,
+            description: _characters[index].description.replaceAll(RegExp(r'@\w+,'), '').trim(),  // ✅ 移除映射代码
+            imageUrl: null,  // ✅ 设置为 null
+            mappingCode: null,  // ✅ 清除映射代码
+            isUploaded: false,  // ✅ 清除上传状态
+          );
         });
         await _saveCharacterData();
+        
+        debugPrint('✅ 已删除角色图片: ${character.name}');
         
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1468,10 +1883,43 @@ ${widget.scriptContent}
 
   /// 构建图片Widget（支持网络和本地）
   Widget _buildImageWidget(String imageUrl) {
-    if (imageUrl.startsWith('http')) {
-      return Image.network(imageUrl, fit: BoxFit.cover);
-    } else {
-      return Image.file(File(imageUrl), fit: BoxFit.cover);
+    // ✅ 检查空字符串
+    if (imageUrl.isEmpty) {
+      return const Center(
+        child: Icon(Icons.image_not_supported, color: Color(0xFF888888)),
+      );
+    }
+    
+    try {
+      if (imageUrl.startsWith('http')) {
+        return Image.network(
+          imageUrl, 
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('⚠️ 网络图片加载失败: $error');
+            return const Center(
+              child: Icon(Icons.broken_image, color: Color(0xFF888888)),
+            );
+          },
+        );
+      } else {
+        final file = File(imageUrl);
+        return Image.file(
+          file, 
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('⚠️ 本地图片加载失败: $error');
+            return const Center(
+              child: Icon(Icons.broken_image, color: Color(0xFF888888)),
+            );
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ 构建图片 Widget 失败: $e');
+      return const Center(
+        child: Icon(Icons.error, color: Colors.red),
+      );
     }
   }
 }
@@ -1482,24 +1930,32 @@ class CharacterData {
   final String name;
   final String description;
   final String? imageUrl;
+  final String? mappingCode;  // ✅ 上传后的@代码
+  final bool isUploaded;       // ✅ 是否已上传
 
   CharacterData({
     required this.id,
     required this.name,
     required this.description,
     this.imageUrl,
+    this.mappingCode,
+    this.isUploaded = false,
   });
 
   CharacterData copyWith({
     String? name,
     String? description,
     String? imageUrl,
+    String? mappingCode,
+    bool? isUploaded,
   }) {
     return CharacterData(
       id: id,
       name: name ?? this.name,
       description: description ?? this.description,
       imageUrl: imageUrl ?? this.imageUrl,
+      mappingCode: mappingCode ?? this.mappingCode,
+      isUploaded: isUploaded ?? this.isUploaded,
     );
   }
 
@@ -1509,15 +1965,23 @@ class CharacterData {
       'name': name,
       'description': description,
       'imageUrl': imageUrl,
+      'mappingCode': mappingCode,
+      'isUploaded': isUploaded,
     };
   }
 
   factory CharacterData.fromJson(Map<String, dynamic> json) {
+    // ✅ 将空字符串转换为 null，避免问题
+    final imageUrl = json['imageUrl'] as String?;
+    final mappingCode = json['mappingCode'] as String?;
+    
     return CharacterData(
       id: json['id'] as String,
       name: json['name'] as String,
       description: json['description'] as String,
-      imageUrl: json['imageUrl'] as String?,
+      imageUrl: (imageUrl == null || imageUrl.isEmpty) ? null : imageUrl,
+      mappingCode: (mappingCode == null || mappingCode.isEmpty) ? null : mappingCode,
+      isUploaded: json['isUploaded'] as bool? ?? false,
     );
   }
 }

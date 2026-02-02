@@ -218,7 +218,12 @@ class _AssetLibrarySelectorState extends State<AssetLibrarySelector> {
     return GestureDetector(
       onTap: () {
         try {
-          Navigator.pop(context, asset.path);
+          // ✅ 返回包含路径和映射代码的对象
+          Navigator.pop(context, {
+            'path': asset.path,
+            'characterInfo': asset.characterInfo,  // ✅ 返回 @code
+            'name': asset.name,
+          });
         } catch (e) {
           debugPrint('选择素材失败: $e');
         }
@@ -242,18 +247,36 @@ class _AssetLibrarySelectorState extends State<AssetLibrarySelector> {
                 child: _buildImagePreview(asset.path),
               ),
             ),
-            // 素材名称
+            // 素材名称（优先显示映射代码）
             Container(
               padding: const EdgeInsets.all(8),
-              child: Text(
-                asset.name,
-                style: const TextStyle(
-                  color: Color(0xFF888888),
-                  fontSize: 12,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
+              child: Column(
+                children: [
+                  // ✅ 如果有映射代码，优先显示映射代码
+                  if (asset.characterInfo != null && asset.characterInfo!.isNotEmpty)
+                    Text(
+                      asset.characterInfo!,
+                      style: const TextStyle(
+                        color: Color(0xFF00E5FF),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  // 文件名（小字显示）
+                  Text(
+                    asset.name,
+                    style: TextStyle(
+                      color: const Color(0xFF888888).withOpacity(0.6),
+                      fontSize: 10,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             ),
           ],

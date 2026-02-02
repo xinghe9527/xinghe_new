@@ -39,6 +39,8 @@ class ProductionSpacePage extends StatefulWidget {
 class _ProductionSpacePageState extends State<ProductionSpacePage> {
   List<StoryboardRow> _storyboards = [];
   bool _isGenerating = false;
+  bool _showScriptColumn = false;  // ✅ 控制剧本列的显示/隐藏
+  Set<int> _selectedStoryboards = {};  // ✅ 选中的分镜索引（用于合并）
   final RealAIService _aiService = RealAIService(); // ✅ 真实 AI 服务
   final ApiRepository _apiRepository = ApiRepository();  // ✅ API Repository
   
@@ -56,6 +58,34 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     super.initState();
     _loadProductionData();
     _initMockAssets();  // 初始化Mock资产用于演示
+    _loadScriptColumnState();  // ✅ 加载剧本列显示状态
+  }
+  
+  /// 加载剧本列显示状态
+  Future<void> _loadScriptColumnState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final showScript = prefs.getBool('show_script_column_${widget.workId}') ?? false;
+      if (mounted) {
+        setState(() {
+          _showScriptColumn = showScript;
+        });
+      }
+      debugPrint('✅ 加载剧本列显示状态: $showScript');
+    } catch (e) {
+      debugPrint('⚠️ 加载剧本列状态失败: $e');
+    }
+  }
+  
+  /// 保存剧本列显示状态
+  Future<void> _saveScriptColumnState(bool show) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('show_script_column_${widget.workId}', show);
+      debugPrint('✅ 保存剧本列显示状态: $show');
+    } catch (e) {
+      debugPrint('⚠️ 保存剧本列状态失败: $e');
+    }
   }
 
   /// 初始化Mock资产（用于演示）
@@ -150,6 +180,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               id: e['id'] as String,
               name: e['name'] as String,
               imageUrl: e['imageUrl'] as String?,
+              mappingCode: e['mappingCode'] as String?,  // ✅ 加载映射代码
               type: AssetType.character,
             );
           }).toList();
@@ -167,6 +198,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               id: e['id'] as String,
               name: e['name'] as String,
               imageUrl: e['imageUrl'] as String?,
+              mappingCode: e['mappingCode'] as String?,  // ✅ 加载映射代码
               type: AssetType.scene,
             );
           }).toList();
@@ -184,6 +216,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               id: e['id'] as String,
               name: e['name'] as String,
               imageUrl: e['imageUrl'] as String?,
+              mappingCode: e['mappingCode'] as String?,  // ✅ 加载映射代码
               type: AssetType.item,
             );
           }).toList();
@@ -249,6 +282,19 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             ),
           ),
           const SizedBox(width: 24),
+          // ✅ 显示剧本按钮 - 浅色渐变
+          _buildLightGradientButton(
+            icon: Icons.menu_book,
+            label: '剧本',
+            onTap: () {
+              final newState = !_showScriptColumn;
+              setState(() {
+                _showScriptColumn = newState;
+              });
+              _saveScriptColumnState(newState);  // ✅ 保存状态
+            },
+          ),
+          const SizedBox(width: 8),
           // 角色按钮 - 浅色渐变
           _buildLightGradientButton(
             icon: Icons.person,
@@ -270,6 +316,15 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             onTap: _openItemGeneration,
           ),
           const Spacer(),
+          // ✅ 合并按钮（选中多个分镜时显示）
+          if (_selectedStoryboards.length >= 2)
+            _buildLightGradientButton(
+              icon: Icons.merge,
+              label: '合并(${_selectedStoryboards.length})',
+              onTap: _mergeSelectedStoryboards,
+            ),
+          if (_selectedStoryboards.length >= 2)
+            const SizedBox(width: 12),
           // 清空分镜按钮（小巧，无文字）
           IconButton(
             onPressed: _storyboards.isEmpty ? null : _clearAllStoryboards,
@@ -562,7 +617,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     );
   }
 
-  /// 分镜行（横向4列：图片提示词 | 图片生成区 | 视频提示词 | 视频生成区）
+  /// 分镜行（可选显示左侧剧本列）
   Widget _buildStoryboardRow(StoryboardRow row, int index) {
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -572,14 +627,95 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         border: Border.all(color: const Color(0xFF3A3A3C), width: 2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity( 0.3),
+            color: Colors.black.withOpacity(0.3),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
         ],
       ),
-      child: Column(
-        children: [
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ✅ 剧本列（左侧，可选显示）
+            if (_showScriptColumn)
+              Container(
+                width: 250,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF1A1A1C),
+                  border: Border(right: BorderSide(color: Color(0xFF3A3A3C), width: 2)),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(10),
+                    bottomLeft: Radius.circular(10),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 标题
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF252629),
+                        border: Border(bottom: BorderSide(color: Color(0xFF3A3A3C))),
+                        borderRadius: BorderRadius.only(topLeft: Radius.circular(10)),
+                      ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.article, color: Color(0xFF888888), size: 14),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            row.isUserCreated ? '用户自定义' : '剧本片段',
+                            style: const TextStyle(
+                              color: Color(0xFF888888),
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        // ✅ 拆分按钮
+                        if (row.scriptSegment.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.call_split, size: 14),
+                            color: const Color(0xFF888888),
+                            onPressed: () => _showSplitDialog(index),
+                            tooltip: '拆分分镜',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            style: IconButton.styleFrom(
+                              padding: const EdgeInsets.all(4),
+                            ),
+                          ),
+                        if (!row.isUserCreated && row.startIndex >= 0)
+                          Text(
+                            '${row.startIndex}-${row.endIndex}',
+                            style: const TextStyle(color: Color(0xFF666666), fontSize: 9),
+                          ),
+                      ],
+                    ),
+                    ),
+                    // 内容
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          row.scriptSegment.isEmpty ? '（未提供剧本片段）' : row.scriptSegment,
+                          style: TextStyle(
+                            color: row.scriptSegment.isEmpty ? const Color(0xFF666666) : const Color(0xFFCCCCCC),
+                            fontSize: 12,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // 分镜内容（右侧，原有内容）
+            Expanded(
+              child: Column(
+                children: [
           // 行头（缩小版）
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -590,24 +726,39 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                 topRight: Radius.circular(10),
               ),
             ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3A3A3C),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '分镜 ${index + 1}',
-                    style: const TextStyle(
-                      color: Color(0xFF888888),
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
+                    child: Row(
+                      children: [
+                        // ✅ 勾选框（用于合并）
+                        Checkbox(
+                          value: _selectedStoryboards.contains(index),
+                          onChanged: (checked) {
+                            setState(() {
+                              if (checked == true) {
+                                _selectedStoryboards.add(index);
+                              } else {
+                                _selectedStoryboards.remove(index);
+                              }
+                            });
+                          },
+                          fillColor: WidgetStateProperty.all(const Color(0xFF3A3A3C)),
+                          checkColor: const Color(0xFF4A9EFF),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3A3A3C),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '分镜 ${index + 1}',
+                            style: const TextStyle(
+                              color: Color(0xFF888888),
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                 // ➕ 手动添加资产按钮
                 MouseRegion(
                   cursor: SystemMouseCursors.click,
@@ -821,6 +972,10 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             ),
           ),
         ],
+      ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1462,18 +1617,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             .replaceAll('{{故事情节}}', widget.scriptContent)
             .replaceAll('{{剧本内容}}', widget.scriptContent);
         
-        // ✅ 简洁明确，只强调完整性
-        fullPrompt = '''$userPrompt
-
-【补充要求】
-请根据完整剧本生成分镜，从开头到结尾完整覆盖，不要遗漏任何场景和情节。
-
-完整剧本内容：
-${widget.scriptContent}
-
-现在开始生成：''';
+        // ✅ 纯粹使用用户的提示词预设，不添加任何额外要求
+        // 用户的预设中应该包含剧本拆分和分镜生成的所有规则
+        fullPrompt = userPrompt;
         
-        print('✅ 使用用户自定义分镜提示词预设（完整覆盖剧本）');
+        print('✅ 使用用户自定义分镜提示词预设（纯净模式）');
       } else {
         // ✅ 如果没有预设，使用简单的基础格式
         fullPrompt = '''请根据以下剧本内容生成分镜脚本。
@@ -1535,23 +1683,56 @@ ${widget.scriptContent}
               if (content.isEmpty) continue;
               
               // ✅ 使用正则表达式匹配所有的 "内容===内容" 对
-              // 匹配模式：非===字符 + === + 非===字符
+              // 改进：使用贪婪匹配直到遇到独立的 === 或结尾
               final storyboardPattern = RegExp(
-                r'([^=]+?)===\s*([^=]+?)(?=\s*===|$)',
+                r'([\s\S]+?)===\s*([\s\S]+?)(?=\s*===\s*[\s\S]+?===|$)',
                 dotAll: true,
+                multiLine: true,
               );
               
               final storyboards = storyboardPattern.allMatches(content);
               
               print('   正则匹配到 ${storyboards.length} 个分镜段落');
               
+              int currentScriptPosition = 0;  // 当前在原剧本中的位置
+              
               for (final sb in storyboards) {
-                final imagePrompt = sb.group(1)?.trim() ?? '';
-                final videoPrompt = sb.group(2)?.trim() ?? '';
+                var imagePrompt = sb.group(1)?.trim() ?? '';
+                var videoPrompt = sb.group(2)?.trim() ?? '';
                 
-                if (imagePrompt.isNotEmpty && videoPrompt.isNotEmpty) {
+                // ✅ 尝试提取剧本片段（如果有）
+                String scriptSegment = '';
+                int startIndex = -1;
+                int endIndex = -1;
+                
+                // 检查图片提示词中是否包含【剧本片段】标记
+                final scriptPattern = RegExp(r'【剧本片段】(.*?)【图片提示词】', dotAll: true);
+                final scriptMatch = scriptPattern.firstMatch(imagePrompt);
+                
+                if (scriptMatch != null) {
+                  scriptSegment = scriptMatch.group(1)?.trim() ?? '';
+                  // 移除【剧本片段】部分，保留纯粹的图片提示词
+                  imagePrompt = imagePrompt.replaceFirst(scriptPattern, '').trim();
+                  
+                  // ✅ 在原剧本中查找该片段的位置
+                  final foundIndex = widget.scriptContent.indexOf(scriptSegment, currentScriptPosition);
+                  if (foundIndex != -1) {
+                    startIndex = foundIndex;
+                    endIndex = foundIndex + scriptSegment.length;
+                    currentScriptPosition = endIndex;  // 下次从这里开始找
+                  }
+                  
+                  print('   📖 剧本片段: ${scriptSegment.substring(0, scriptSegment.length > 40 ? 40 : scriptSegment.length)}...');
+                  print('      位置: $startIndex - $endIndex');
+                }
+                
+                if (imagePrompt.isNotEmpty || videoPrompt.isNotEmpty) {
                   storyboardList.add(StoryboardRow(
                     id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
+                    scriptSegment: scriptSegment,
+                    startIndex: startIndex,
+                    endIndex: endIndex,
+                    isUserCreated: false,
                     imagePrompt: imagePrompt,
                     videoPrompt: videoPrompt,
                     selectedImageAssets: [],
@@ -1660,6 +1841,9 @@ ${widget.scriptContent}
           
           // 自动为每个分镜选中检测到的资产
           _autoSelectAssets();
+          
+          // ✅ 替换视频提示词中的占位符为实际映射代码
+          _replacePlaceholdersWithMappingCodes();
           
           await _saveProductionData();
           
@@ -1984,6 +2168,59 @@ ${widget.scriptContent}
     }
   }
 
+  /// 替换视频提示词中的占位符为实际映射代码
+  void _replacePlaceholdersWithMappingCodes() {
+    debugPrint('\n🔄 替换视频提示词中的占位符');
+    
+    for (var i = 0; i < _storyboards.length; i++) {
+      var videoPrompt = _storyboards[i].videoPrompt;
+      var replacedCount = 0;
+      
+      // 替换角色占位符
+      for (final char in _characters) {
+        if (char.mappingCode != null && char.mappingCode!.isNotEmpty) {
+          // 查找类似 @characterXXX 角色名 的模式
+          final pattern = RegExp(r'@character\d+\s+' + RegExp.escape(char.name));
+          if (videoPrompt.contains(pattern)) {
+            videoPrompt = videoPrompt.replaceAll(pattern, '${char.mappingCode}${char.name}');
+            replacedCount++;
+            debugPrint('   ✅ 分镜${i+1}: 替换 @character → ${char.mappingCode}${char.name}');
+          }
+        }
+      }
+      
+      // 替换场景占位符
+      for (final scene in _scenes) {
+        if (scene.mappingCode != null && scene.mappingCode!.isNotEmpty) {
+          final pattern = RegExp(r'@scene\d+\s+' + RegExp.escape(scene.name));
+          if (videoPrompt.contains(pattern)) {
+            videoPrompt = videoPrompt.replaceAll(pattern, '${scene.mappingCode}${scene.name}');
+            replacedCount++;
+          }
+        }
+      }
+      
+      // 替换物品占位符
+      for (final item in _items) {
+        if (item.mappingCode != null && item.mappingCode!.isNotEmpty) {
+          final pattern = RegExp(r'@(item|asset)\d+\s+' + RegExp.escape(item.name));
+          if (videoPrompt.contains(pattern)) {
+            videoPrompt = videoPrompt.replaceAll(pattern, '${item.mappingCode}${item.name}');
+            replacedCount++;
+          }
+        }
+      }
+      
+      // 如果有替换，更新分镜
+      if (replacedCount > 0) {
+        _storyboards[i] = _storyboards[i].copyWith(videoPrompt: videoPrompt);
+        debugPrint('   📝 分镜${i+1}: 替换了 $replacedCount 个占位符');
+      }
+    }
+    
+    debugPrint('✅ 占位符替换完成\n');
+  }
+
   /// 自动为所有分镜选中检测到的资产
   void _autoSelectAssets() {
     print('\n🔍 开始自动选中资产');
@@ -2220,11 +2457,34 @@ ${widget.scriptContent}
     final row = _storyboards[storyboardIndex];
     final currentSelected = [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
     final newSelected = List<String>.from(currentSelected);
+    final isAdding = !newSelected.contains(assetId);
     
     if (newSelected.contains(assetId)) {
       newSelected.remove(assetId);
+      // TODO: 从视频提示词中移除映射代码（可选）
     } else {
       newSelected.add(assetId);
+      
+      // ✅ 添加资产时，自动在视频提示词前插入映射代码
+      final asset = _findAssetById(assetId);
+      if (asset != null && asset['mappingCode'] != null) {
+        final code = asset['mappingCode'];
+        final name = asset['name'];
+        final insertText = '$code,$name\n';
+        
+        final currentVideoPrompt = row.videoPrompt;
+        final newVideoPrompt = insertText + currentVideoPrompt;
+        
+        setState(() {
+          _storyboards[storyboardIndex] = row.copyWith(
+            selectedImageAssets: newSelected,
+            selectedVideoAssets: newSelected,
+            videoPrompt: newVideoPrompt,  // 更新视频提示词
+          );
+        });
+        _saveProductionData();
+        return;
+      }
     }
     
     setState(() {
@@ -2234,6 +2494,44 @@ ${widget.scriptContent}
       );
     });
     _saveProductionData();
+  }
+  
+  /// 根据ID查找资产
+  Map<String, dynamic>? _findAssetById(String assetId) {
+    // 查找角色
+    for (final char in _characters) {
+      if (char.id == assetId) {
+        return {
+          'id': char.id,
+          'name': char.name,
+          'mappingCode': char.mappingCode,  // ✅ 使用 mappingCode
+          'type': 'character',
+        };
+      }
+    }
+    // 查找场景
+    for (final scene in _scenes) {
+      if (scene.id == assetId) {
+        return {
+          'id': scene.id,
+          'name': scene.name,
+          'mappingCode': scene.mappingCode,
+          'type': 'scene',
+        };
+      }
+    }
+    // 查找物品
+    for (final item in _items) {
+      if (item.id == assetId) {
+        return {
+          'id': item.id,
+          'name': item.name,
+          'mappingCode': item.mappingCode,
+          'type': 'item',
+        };
+      }
+    }
+    return null;
   }
 
   /// 构建可选择的资产芯片
@@ -2758,6 +3056,326 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
     }
   }
 
+  /// 显示拆分对话框（手动选择位置）
+  void _showSplitDialog(int index) {
+    final row = _storyboards[index];
+    if (row.scriptSegment.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('此分镜没有剧本片段，无法拆分')),
+      );
+      return;
+    }
+    
+    if (row.scriptSegment.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('剧本片段太短，无法拆分')),
+      );
+      return;
+    }
+    
+    int? selectedPosition;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          // 预览拆分结果
+          final preview1 = selectedPosition != null 
+              ? row.scriptSegment.substring(0, selectedPosition!)
+              : '';
+          final preview2 = selectedPosition != null
+              ? row.scriptSegment.substring(selectedPosition!)
+              : '';
+          
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E1E20),
+            title: Text('拆分分镜 ${index + 1}', style: const TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: 700,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '点击文本中的位置作为拆分点',
+                    style: TextStyle(color: Color(0xFF888888), fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  // ✅ 可点击的文本（每个字符可点击）
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 200),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF252629),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF3A3A3C)),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        children: row.scriptSegment.split('').asMap().entries.map((entry) {
+                          final i = entry.key;
+                          final char = entry.value;
+                          
+                          if (i == 0 || i == row.scriptSegment.length - 1) {
+                            // 第一个和最后一个字符不能作为拆分点
+                            return Text(char, style: const TextStyle(color: Color(0xFF666666), fontSize: 14));
+                          }
+                          
+                          return GestureDetector(
+                            onTap: () {
+                              setDialogState(() {
+                                selectedPosition = i;
+                              });
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: i == selectedPosition 
+                                    ? const Color(0xFF4A9EFF).withOpacity(0.3)
+                                    : Colors.transparent,
+                                border: i == selectedPosition 
+                                    ? const Border(right: BorderSide(color: Color(0xFF4A9EFF), width: 2))
+                                    : null,
+                              ),
+                              child: Text(
+                                char,
+                                style: TextStyle(
+                                  color: i == selectedPosition ? const Color(0xFF4A9EFF) : const Color(0xFFCCCCCC),
+                                  fontSize: 14,
+                                  fontWeight: i == selectedPosition ? FontWeight.bold : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  if (selectedPosition != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      '拆分位置：第 ${selectedPosition!} 字',
+                      style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('预览：', style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1A1C),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: const Color(0xFF3A3A3C)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('片段1（前${preview1.length}字）：', style: const TextStyle(color: Color(0xFF4A9EFF), fontSize: 11)),
+                          Text(
+                            preview1.substring(0, preview1.length > 100 ? 100 : preview1.length) + (preview1.length > 100 ? '...' : ''),
+                            style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11),
+                          ),
+                          const SizedBox(height: 8),
+                          Text('片段2（后${preview2.length}字）：', style: const TextStyle(color: Color(0xFF4A9EFF), fontSize: 11)),
+                          Text(
+                            preview2.substring(0, preview2.length > 100 ? 100 : preview2.length) + (preview2.length > 100 ? '...' : ''),
+                            style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: selectedPosition != null
+                    ? () {
+                        Navigator.pop(context);
+                        _executeSplitAtPosition(index, selectedPosition!);
+                      }
+                    : null,
+                child: const Text('确认拆分', style: TextStyle(color: Color(0xFF4A9EFF))),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+  
+  /// 按句子拆分文本
+  List<String> _splitIntoSentences(String text) {
+    final sentences = <String>[];
+    final sentenceEndings = ['。', '！', '？', '...', '……', '.', '!', '?'];
+    
+    var current = '';
+    for (var i = 0; i < text.length; i++) {
+      current += text[i];
+      if (sentenceEndings.contains(text[i]) || 
+          (i < text.length - 2 && text.substring(i, i + 3) == '...') ||
+          (i < text.length - 1 && text.substring(i, i + 2) == '……')) {
+        sentences.add(current.trim());
+        current = '';
+      }
+    }
+    
+    if (current.trim().isNotEmpty) {
+      sentences.add(current.trim());
+    }
+    
+    return sentences;
+  }
+  
+  /// 执行拆分（在指定位置）
+  Future<void> _executeSplitAtPosition(int index, int position) async {
+    final row = _storyboards[index];
+    
+    // 在指定位置拆分
+    final part1Text = row.scriptSegment.substring(0, position);
+    final part2Text = row.scriptSegment.substring(position);
+    
+    // 计算新的位置
+    final part1Start = row.startIndex;
+    final part1End = row.startIndex + part1Text.length;
+    final part2Start = part1End;
+    final part2End = row.endIndex;
+    
+    // 创建两个新分镜
+    final storyboard1 = StoryboardRow(
+      id: '${DateTime.now().millisecondsSinceEpoch}_1',
+      scriptSegment: part1Text,
+      startIndex: part1Start,
+      endIndex: part1End,
+      isUserCreated: false,
+      imagePrompt: '',  // 需要重新推理
+      videoPrompt: '',
+    );
+    
+    final storyboard2 = StoryboardRow(
+      id: '${DateTime.now().millisecondsSinceEpoch}_2',
+      scriptSegment: part2Text,
+      startIndex: part2Start,
+      endIndex: part2End,
+      isUserCreated: false,
+      imagePrompt: '',
+      videoPrompt: '',
+    );
+    
+    // 替换原分镜
+    setState(() {
+      _storyboards[index] = storyboard1;
+      _storyboards.insert(index + 1, storyboard2);
+    });
+    
+    await _saveProductionData();
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ 已拆分为分镜 ${index + 1} 和 ${index + 2}\n请分别推理各自的提示词'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  /// 合并选中的分镜
+  Future<void> _mergeSelectedStoryboards() async {
+    if (_selectedStoryboards.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择2个分镜进行合并')),
+      );
+      return;
+    }
+    
+    final indices = _selectedStoryboards.toList()..sort();
+    
+    // 确认对话框
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('确认合并', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '确定要合并 ${indices.length} 个分镜吗？\n'
+          '分镜 ${indices.map((i) => i + 1).join(", ")}\n\n'
+          '合并后需要重新推理提示词。',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('合并', style: TextStyle(color: Color(0xFF4A9EFF))),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed != true) return;
+    
+    // 合并剧本片段
+    final mergedScriptSegments = <String>[];
+    int mergedStartIndex = -1;
+    int mergedEndIndex = -1;
+    
+    for (final i in indices) {
+      final row = _storyboards[i];
+      if (row.scriptSegment.isNotEmpty) {
+        mergedScriptSegments.add(row.scriptSegment);
+        if (mergedStartIndex == -1 || row.startIndex < mergedStartIndex) {
+          mergedStartIndex = row.startIndex;
+        }
+        if (row.endIndex > mergedEndIndex) {
+          mergedEndIndex = row.endIndex;
+        }
+      }
+    }
+    
+    final mergedScript = mergedScriptSegments.join('');
+    
+    // 创建新分镜
+    final mergedStoryboard = StoryboardRow(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      scriptSegment: mergedScript,
+      startIndex: mergedStartIndex,
+      endIndex: mergedEndIndex,
+      isUserCreated: false,
+      imagePrompt: '',  // 需要重新推理
+      videoPrompt: '',
+    );
+    
+    // 替换：删除所有选中的，在第一个位置插入新的
+    setState(() {
+      // 从后往前删除，避免索引变化
+      for (final i in indices.reversed) {
+        _storyboards.removeAt(i);
+      }
+      // 在原来第一个的位置插入合并后的分镜
+      _storyboards.insert(indices.first, mergedStoryboard);
+      _selectedStoryboards.clear();  // 清空选中状态
+    });
+    
+    await _saveProductionData();
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ 已合并为分镜 ${indices.first + 1}\n请推理新的提示词'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   /// 删除分镜
   void _deleteStoryboard(int index) {
     showDialog(
@@ -3099,6 +3717,10 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
 /// 分镜行数据
 class StoryboardRow {
   final String id;
+  final String scriptSegment;           // ✅ 剧本片段文本
+  final int startIndex;                 // ✅ 在原剧本中的起始位置
+  final int endIndex;                   // ✅ 在原剧本中的结束位置
+  final bool isUserCreated;             // ✅ 是否用户手动创建
   final String imagePrompt;
   final String videoPrompt;
   final List<String> imageUrls;         // 多个图片URL（最多4个）
@@ -3109,6 +3731,10 @@ class StoryboardRow {
 
   StoryboardRow({
     required this.id,
+    this.scriptSegment = '',             // ✅ 默认空
+    this.startIndex = -1,                // ✅ -1 表示未定位
+    this.endIndex = -1,
+    this.isUserCreated = false,
     required this.imagePrompt,
     required this.videoPrompt,
     this.imageUrls = const [],
@@ -3123,6 +3749,10 @@ class StoryboardRow {
   String? get videoUrl => videoUrls.isNotEmpty ? videoUrls.first : null;
 
   StoryboardRow copyWith({
+    String? scriptSegment,
+    int? startIndex,
+    int? endIndex,
+    bool? isUserCreated,
     String? imagePrompt,
     String? videoPrompt,
     List<String>? imageUrls,
@@ -3133,6 +3763,10 @@ class StoryboardRow {
   }) {
     return StoryboardRow(
       id: id,
+      scriptSegment: scriptSegment ?? this.scriptSegment,
+      startIndex: startIndex ?? this.startIndex,
+      endIndex: endIndex ?? this.endIndex,
+      isUserCreated: isUserCreated ?? this.isUserCreated,
       imagePrompt: imagePrompt ?? this.imagePrompt,
       videoPrompt: videoPrompt ?? this.videoPrompt,
       imageUrls: imageUrls ?? this.imageUrls,
@@ -3145,6 +3779,10 @@ class StoryboardRow {
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'scriptSegment': scriptSegment,
+        'startIndex': startIndex,
+        'endIndex': endIndex,
+        'isUserCreated': isUserCreated,
         'imagePrompt': imagePrompt,
         'videoPrompt': videoPrompt,
         'imageUrls': imageUrls,
@@ -3157,6 +3795,10 @@ class StoryboardRow {
   factory StoryboardRow.fromJson(Map<String, dynamic> json) {
     return StoryboardRow(
       id: json['id'] as String,
+      scriptSegment: json['scriptSegment'] as String? ?? '',  // ✅ 兼容旧数据
+      startIndex: json['startIndex'] as int? ?? -1,
+      endIndex: json['endIndex'] as int? ?? -1,
+      isUserCreated: json['isUserCreated'] as bool? ?? false,
       imagePrompt: json['imagePrompt'] as String,
       videoPrompt: json['videoPrompt'] as String,
       imageUrls: (json['imageUrls'] as List<dynamic>?)?.cast<String>() ?? 
@@ -3175,12 +3817,14 @@ class AssetReference {
   final String id;
   final String name;
   final String? imageUrl;
+  final String? mappingCode;  // ✅ 上传后的映射代码
   final AssetType type;
 
   AssetReference({
     required this.id,
     required this.name,
     this.imageUrl,
+    this.mappingCode,
     required this.type,
   });
 }

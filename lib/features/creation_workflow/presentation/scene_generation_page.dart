@@ -5,6 +5,7 @@ import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'widgets/custom_title_bar.dart';
@@ -13,6 +14,8 @@ import 'style_reference_dialog.dart';
 import 'asset_library_selector.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
+import '../../../services/upload_queue_manager.dart';
+import '../../../services/api/base/api_config.dart';
 
 /// 场景生成页面
 class SceneGenerationPage extends StatefulWidget {
@@ -31,7 +34,7 @@ class SceneGenerationPage extends StatefulWidget {
   State<SceneGenerationPage> createState() => _SceneGenerationPageState();
 }
 
-class _SceneGenerationPageState extends State<SceneGenerationPage> {
+class _SceneGenerationPageState extends State<SceneGenerationPage> with WidgetsBindingObserver, RouteAware {
   bool _showSettings = false;
   String _selectedPromptName = '默认';
   String _selectedPromptContent = '';
@@ -42,14 +45,174 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> {
   bool _isInferring = false;
   final ApiRepository _apiRepository = ApiRepository();
   final Set<int> _generatingImages = {};
+  final UploadQueueManager _uploadQueue = UploadQueueManager();
+  late StreamSubscription _uploadSubscription;
+  DateTime? _lastSaveTime;  // ✅ 记录最后保存时间
+  bool _isUpdating = false;  // ✅ 标记是否正在更新数据
 
   final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];  // ✅ 比例选项
 
   @override
   void initState() {
     super.initState();
-    _loadSceneData();
-    _loadImageRatio();  // 加载保存的比例设置
+    _initializeData();  // ✅ 异步初始化数据
+    _loadImageRatio();
+    _setupUploadListener();
+    WidgetsBinding.instance.addObserver(this);  // ✅ 添加生命周期监听
+  }
+  
+  /// 初始化数据（先加载数据，再检查已完成任务）
+  Future<void> _initializeData() async {
+    await _loadSceneData();  // ✅ 等待数据加载完成
+    await _checkCompletedTasks();  // ✅ 然后检查已完成的任务
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // ✅ 注册路由监听
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    _uploadSubscription.cancel();
+    WidgetsBinding.instance.removeObserver(this);  // ✅ 移除生命周期监听
+    routeObserver.unsubscribe(this);  // ✅ 取消路由监听
+    super.dispose();
+  }
+  
+  /// 🔄 生命周期监听：当应用从后台返回前台时重新加载数据
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('📱 应用返回前台（不自动加载，避免覆盖）');
+      if (!_isUpdating) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _checkCompletedTasks();
+          }
+        });
+      }
+    }
+  }
+  
+  /// 🔄 页面重新显示时（从其他页面返回）
+  @override
+  void didPopNext() {
+    debugPrint('📄 场景页面重新显示');
+    // ✅ 不自动重新加载数据，避免覆盖正在编辑的内容
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted && !_isUpdating) {
+        _checkCompletedTasks();
+      }
+    });
+  }
+  
+  /// 🔄 页面首次显示时
+  @override
+  void didPush() {
+    debugPrint('📄 场景页面首次显示');
+  }
+  
+  /// 🔄 页面被遮挡时
+  @override
+  void didPushNext() {
+    debugPrint('📄 场景页面被遮挡');
+  }
+  
+  /// 🔄 页面被移除时
+  @override
+  void didPop() {
+    debugPrint('📄 场景页面被移除');
+  }
+  
+  /// 🔍 检查已完成的上传任务（页面初始化时调用）
+  Future<void> _checkCompletedTasks() async {
+    debugPrint('🔍 [场景] 检查是否有已完成的上传任务...');
+    
+    final completedTasks = _uploadQueue.getCompletedTasks();
+    if (completedTasks.isEmpty) {
+      debugPrint('   没有已完成的任务');
+      return;
+    }
+    
+    debugPrint('   找到 ${completedTasks.length} 个已完成的任务');
+    
+    bool hasUpdate = false;
+    for (final task in completedTasks) {
+      if (task.characterInfo != null) {
+        bool found = false;
+        for (var i = 0; i < _scenes.length; i++) {
+          if (_scenes[i].imageUrl == task.id || 
+              _scenes[i].imageUrl == task.imageFile.path) {
+            debugPrint('   ✅ 找到匹配的场景: ${_scenes[i].name}, 映射代码: ${task.characterInfo}');
+            found = true;
+            
+            if (_scenes[i].mappingCode != task.characterInfo) {
+              _scenes[i] = _scenes[i].copyWith(
+                mappingCode: task.characterInfo,
+                isUploaded: true,
+                description: '${task.characterInfo}${_scenes[i].name}',
+              );
+              hasUpdate = true;
+            }
+            break;
+          }
+        }
+        
+        if (!found) {
+          debugPrint('   ⚠️ 任务 ${task.assetName} 没有找到匹配的场景');
+        }
+      }
+    }
+    
+    if (hasUpdate) {
+      debugPrint('   💾 发现新的上传结果，保存数据并更新 UI');
+      await _saveSceneData();
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+  
+  void _setupUploadListener() {
+    _uploadSubscription = _uploadQueue.statusStream.listen((task) {
+      debugPrint('📥 [场景] 收到上传状态: ${task.id}, ${task.status}, ${task.characterInfo}');
+      
+      if (task.status == UploadTaskStatus.completed && task.characterInfo != null) {
+        for (var i = 0; i < _scenes.length; i++) {
+          if (_scenes[i].imageUrl == task.id || _scenes[i].imageUrl == task.imageFile.path) {
+            debugPrint('✅ 找到匹配的场景: ${_scenes[i].name}');
+            
+            _scenes[i] = _scenes[i].copyWith(
+              mappingCode: task.characterInfo,
+              isUploaded: true,
+              description: '${task.characterInfo}${_scenes[i].name}',
+            );
+            
+            _saveSceneData();
+            
+            if (mounted) {
+              setState(() {});
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ ${_scenes[i].name} 上传成功\n映射代码: ${task.characterInfo}'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            } else {
+              debugPrint('⚠️ 页面不可见，数据已保存，等待页面返回时刷新');
+            }
+            break;
+          }
+        }
+      }
+    });
   }
 
   /// 加载图片比例设置
@@ -81,6 +244,12 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> {
 
   Future<void> _loadSceneData() async {
     try {
+      // ✅ 如果正在更新数据，跳过加载
+      if (_isUpdating) {
+        debugPrint('⏭️ [场景] 跳过加载（正在更新数据中）');
+        return;
+      }
+      
       final prefs = await SharedPreferences.getInstance();
       final key = 'scenes_${widget.workId}';
       final dataJson = prefs.getString(key);
@@ -385,6 +554,19 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> {
                             style: IconButton.styleFrom(
                               backgroundColor: const Color(0xFF3A3A3C),
                               foregroundColor: const Color(0xFF888888),
+                              padding: const EdgeInsets.all(8),
+                            ),
+                          ),
+                          // ✅ 上传按钮
+                          IconButton(
+                            onPressed: scene.imageUrl != null && !scene.isUploaded
+                                ? () => _uploadScene(index)
+                                : null,
+                            icon: Icon(scene.isUploaded ? Icons.cloud_done : Icons.cloud_upload, size: 16),
+                            tooltip: scene.isUploaded ? '已上传' : '上传获取映射代码',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF3A3A3C),
+                              foregroundColor: scene.isUploaded ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
                               padding: const EdgeInsets.all(8),
                             ),
                           ),
@@ -996,6 +1178,42 @@ ${widget.scriptContent}
     }
   }
 
+  /// 上传场景
+  Future<void> _uploadScene(int index) async {
+    final scene = _scenes[index];
+    if (scene.imageUrl == null) return;
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('upload_provider') ?? 'geeknow';
+      final storage = SecureStorageManager();
+      final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'upload');
+      final apiKey = await storage.getApiKey(provider: provider, modelType: 'upload');
+      
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置上传API');
+      }
+      
+      final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+      final task = UploadTask(
+        id: scene.imageUrl!,
+        imageFile: File(scene.imageUrl!),
+        assetName: scene.name,
+        apiConfig: config,
+      );
+      
+      _uploadQueue.addTask(task);
+      debugPrint('✅ ${scene.name} 上传任务已加入队列');
+      
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('上传失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   /// 批量生成所有场景图片
   Future<void> _generateImages() async {
     if (_scenes.isEmpty) return;
@@ -1145,23 +1363,61 @@ ${widget.scriptContent}
   }
 
   Future<void> _selectFromLibrary(int index) async {
-    final selectedPath = await showDialog<String>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => const AssetLibrarySelector(
         category: AssetCategory.scene,  // 只显示场景素材
       ),
     );
 
-    if (selectedPath != null && mounted) {
-      setState(() {
-        _scenes[index] = _scenes[index].copyWith(imageUrl: selectedPath);
-      });
-      await _saveSceneData();
+    if (result != null && mounted) {
+      final selectedPath = result['path'] as String?;
+      final characterInfo = result['characterInfo'] as String?;
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ 已从素材库选择图片')),
-        );
+      if (selectedPath != null) {
+        // ✅ 设置更新标志，阻止并发的重新加载
+        _isUpdating = true;
+        _lastSaveTime = DateTime.now();
+        
+        try {
+          // ✅ 直接创建新对象，同时设置映射代码
+          String newDescription = _scenes[index].description.replaceAll(RegExp(r'@\w+,'), '').trim();
+          
+          // ✅ 如果素材已上传，使用素材的映射代码
+          if (characterInfo != null && characterInfo.isNotEmpty) {
+            newDescription = '$characterInfo${_scenes[index].name}';
+          }
+          
+          _scenes[index] = SceneData(
+            id: _scenes[index].id,
+            name: _scenes[index].name,
+            description: newDescription,
+            imageUrl: selectedPath,
+            mappingCode: characterInfo,
+            isUploaded: characterInfo != null && characterInfo.isNotEmpty,
+          );
+          
+          await _saveSceneData();
+          
+          debugPrint('✅ 已从素材库选择场景图片');
+          debugPrint('   - 映射代码: $characterInfo');
+          
+          if (mounted) {
+            setState(() {});
+            
+            final message = characterInfo != null && characterInfo.isNotEmpty
+                ? '✅ 已选择图片并设置映射代码'
+                : '✅ 已选择图片（未上传的素材）';
+            
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(message)),
+            );
+          }
+        } finally {
+          Future.delayed(const Duration(seconds: 2), () {
+            _isUpdating = false;
+          });
+        }
       }
     }
   }
@@ -1173,16 +1429,33 @@ ${widget.scriptContent}
     );
 
     if (result != null && result.files.isNotEmpty && mounted) {
-      final filePath = result.files.first.path!;
-      setState(() {
-        _scenes[index] = _scenes[index].copyWith(imageUrl: filePath);
-      });
-      await _saveSceneData();
+      _isUpdating = true;
+      _lastSaveTime = DateTime.now();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ 已插入图片')),
+      try {
+        final filePath = result.files.first.path!;
+        
+        _scenes[index] = SceneData(
+          id: _scenes[index].id,
+          name: _scenes[index].name,
+          description: _scenes[index].description.replaceAll(RegExp(r'@\w+,'), '').trim(),
+          imageUrl: filePath,
+          mappingCode: null,
+          isUploaded: false,
         );
+        
+        await _saveSceneData();
+        
+        if (mounted) {
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ 已插入图片')),
+          );
+        }
+      } finally {
+        Future.delayed(const Duration(seconds: 2), () {
+          _isUpdating = false;
+        });
       }
     }
   }
@@ -1221,6 +1494,10 @@ ${widget.scriptContent}
         details.globalPosition.dx,
         details.globalPosition.dy,
       ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFF3A3A3C)),
+      ),
       items: const [
         PopupMenuItem(
           value: 'open_folder',
@@ -1232,12 +1509,102 @@ ${widget.scriptContent}
             ],
           ),
         ),
+        PopupMenuItem(
+          value: 'delete_image',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 16, color: Colors.red),
+              SizedBox(width: 8),
+              Text('删除图片', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
       ],
     ).then((value) {
       if (value == 'open_folder') {
         _openSaveFolder();
+      } else if (value == 'delete_image') {
+        _deleteImage(imageUrl);
       }
     });
+  }
+  
+  /// 删除图片
+  Future<void> _deleteImage(String imageUrl) async {
+    final index = _scenes.indexWhere((s) => s.imageUrl == imageUrl);
+    if (index == -1) return;
+    
+    final scene = _scenes[index];
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E20),
+        title: const Text('确认删除', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '确定要删除"${scene.name}"的图片吗？',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      _isUpdating = true;
+      _lastSaveTime = DateTime.now();
+      
+      try {
+        // 删除本地文件（如果是本地路径且不为空）
+        if (imageUrl.isNotEmpty && !imageUrl.startsWith('http')) {
+          try {
+            final file = File(imageUrl);
+            if (await file.exists()) {
+              await file.delete();
+              debugPrint('✅ 已删除本地文件: $imageUrl');
+            }
+          } catch (e) {
+            debugPrint('⚠️ 删除本地文件失败: $e');
+          }
+        }
+        
+        // 清除场景的图片URL
+        _scenes[index] = SceneData(
+          id: _scenes[index].id,
+          name: _scenes[index].name,
+          description: _scenes[index].description.replaceAll(RegExp(r'@\w+,'), '').trim(),
+          imageUrl: null,
+          mappingCode: null,
+          isUploaded: false,
+        );
+        
+        await _saveSceneData();
+        
+        debugPrint('✅ 已删除场景图片: ${scene.name}');
+        
+        if (mounted) {
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ 已删除"${scene.name}"的图片'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } finally {
+        Future.delayed(const Duration(seconds: 2), () {
+          _isUpdating = false;
+        });
+      }
+    }
   }
 
   void _openSaveFolder() async {
@@ -1277,20 +1644,26 @@ class SceneData {
   final String name;
   final String description;
   final String? imageUrl;
+  final String? mappingCode;
+  final bool isUploaded;
 
   SceneData({
     required this.id,
     required this.name,
     required this.description,
     this.imageUrl,
+    this.mappingCode,
+    this.isUploaded = false,
   });
 
-  SceneData copyWith({String? name, String? description, String? imageUrl}) {
+  SceneData copyWith({String? name, String? description, String? imageUrl, String? mappingCode, bool? isUploaded}) {
     return SceneData(
       id: id,
       name: name ?? this.name,
       description: description ?? this.description,
       imageUrl: imageUrl ?? this.imageUrl,
+      mappingCode: mappingCode ?? this.mappingCode,
+      isUploaded: isUploaded ?? this.isUploaded,
     );
   }
 
@@ -1299,6 +1672,8 @@ class SceneData {
         'name': name,
         'description': description,
         'imageUrl': imageUrl,
+        'mappingCode': mappingCode,
+        'isUploaded': isUploaded,
       };
 
   factory SceneData.fromJson(Map<String, dynamic> json) {
@@ -1307,6 +1682,8 @@ class SceneData {
       name: json['name'] as String,
       description: json['description'] as String,
       imageUrl: json['imageUrl'] as String?,
+      mappingCode: json['mappingCode'] as String?,
+      isUploaded: json['isUploaded'] as bool? ?? false,
     );
   }
 }
