@@ -6,6 +6,7 @@ import 'video_space.dart';
 import 'asset_library.dart';
 import 'system_log.dart';
 import 'widgets/creation_space.dart';
+import 'package:xinghe_new/core/widgets/window_border.dart';  // ✅ 导入窗口边框
 import 'package:xinghe_new/main.dart'; // 引入全局 themeNotifier 和 AppTheme
 import 'package:xinghe_new/core/update/update_checker.dart'; // 自动更新
 
@@ -46,7 +47,8 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context, themeIndex, _) {
         return Scaffold(
           backgroundColor: AppTheme.scaffoldBackground,
-          body: Column(
+          body: WindowBorder(
+            child: Column(
             children: [
               // 1. 自定义可拖动标题栏 + 右上角窗口控制按钮
               Stack(
@@ -186,6 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
               ),
             ],
+            ),
           ),
         );
       },

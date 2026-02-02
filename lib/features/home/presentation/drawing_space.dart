@@ -40,6 +40,7 @@ class DrawingSpace extends StatefulWidget {
 class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver {
   final List<DrawingTask> _tasks = [DrawingTask.create()];
   final LogManager _logger = LogManager();
+  final SecureStorageManager _storage = SecureStorageManager();  // ✅ 添加存储管理器
   String _lastKnownProvider = '';  // 记录上次加载的服务商
 
   @override
@@ -96,10 +97,31 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
       final tasksJson = prefs.getString('drawing_tasks');
       if (tasksJson != null && tasksJson.isNotEmpty && mounted) {
         final tasksList = jsonDecode(tasksJson) as List;
+        final tasks = tasksList.map((json) => DrawingTask.fromJson(json)).toList();
+        
+        // ✅ 自动重置任务状态（清理生成中的状态）
+        var resetCount = 0;
+        for (var task in tasks) {
+          if (task.status == TaskStatus.generating) {
+            task.status = TaskStatus.idle;
+            resetCount++;
+          }
+        }
+        
+        if (resetCount > 0) {
+          _logger.success('重置了 $resetCount 个任务的状态', module: '绘图空间');
+        }
+        
         setState(() {
           _tasks.clear();
-          _tasks.addAll(tasksList.map((json) => DrawingTask.fromJson(json)).toList());
+          _tasks.addAll(tasks);
         });
+        
+        // ✅ 保存重置后的任务
+        if (resetCount > 0) {
+          _saveTasks();
+        }
+        
         _logger.success('成功加载 ${_tasks.length} 个绘图任务', module: '绘图空间');
       }
     } catch (e) {
@@ -119,16 +141,16 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
 
   void _addNewTask() {
     if (mounted) {
-      // 如果有现有任务，从最新任务复制设置
+      // 如果有现有任务，从最后一个任务复制设置
       final newTask = _tasks.isEmpty 
           ? DrawingTask.create()
           : DrawingTask.create().copyWith(
-              model: _tasks.first.model,
-              ratio: _tasks.first.ratio,
-              quality: _tasks.first.quality,
-              batchCount: _tasks.first.batchCount,
+              model: _tasks.last.model,  // ✅ 从最后一个任务复制
+              ratio: _tasks.last.ratio,
+              quality: _tasks.last.quality,
+              batchCount: _tasks.last.batchCount,
             );
-      setState(() => _tasks.insert(0, newTask));
+      setState(() => _tasks.add(newTask));  // ✅ 修改：添加到末尾
       _saveTasks();
       _logger.success('创建新的绘图任务', module: '绘图空间', extra: {
         'model': newTask.model,
@@ -153,6 +175,158 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
         if (index != -1) _tasks[index] = task;
       });
       _saveTasks();
+    }
+  }
+
+  /// 批量生成所有任务
+  Future<void> _generateAllTasks() async {
+    // 获取所有待生成的任务（状态为idle且有提示词）
+    final tasksToGenerate = _tasks.where((t) => 
+      t.status == TaskStatus.idle && t.prompt.trim().isNotEmpty
+    ).toList();
+    
+    if (tasksToGenerate.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('没有可生成的任务\n请确保任务有提示词且未在生成中'),
+            backgroundColor: Color(0xFFFF6B6B),
+          ),
+        );
+      }
+      return;
+    }
+    
+    _logger.success('🚀 开始批量生成 ${tasksToGenerate.length} 个任务', module: '绘图空间', extra: {
+      '总任务数': _tasks.length,
+      '待生成': tasksToGenerate.length,
+    });
+    
+    // 并发生成所有任务（每个任务按其批量设置生成）
+    await Future.wait(
+      tasksToGenerate.map((task) => _generateSingleTask(task)),
+      eagerError: false,  // 即使有错误也继续其他任务
+    );
+    
+    _logger.success('✅ 批量生成完成', module: '绘图空间');
+  }
+  
+  /// 生成单个任务（支持批量）
+  Future<void> _generateSingleTask(DrawingTask task) async {
+    try {
+      // 标记为生成中
+      final updatedTask = task.copyWith(status: TaskStatus.generating);
+      _updateTask(updatedTask);
+      
+      _logger.info('开始生成任务: ${task.prompt.substring(0, task.prompt.length > 20 ? 20 : task.prompt.length)}...', 
+        module: '绘图空间',
+        extra: {
+          '批量': task.batchCount,
+          '比例': task.ratio,
+          '质量': task.quality,
+        },
+      );
+      
+      // 读取服务商配置
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('image_provider') ?? 'openai';
+      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
+      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
+      
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置图片 API');
+      }
+      
+      final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+      final apiFactory = ApiFactory();
+      final service = apiFactory.createService(provider, config);
+      
+      // 按批量设置生成多次
+      final allImageUrls = <String>[];
+      
+      for (int i = 0; i < task.batchCount; i++) {
+        ApiResponse<dynamic> result;
+        
+        if (provider == 'comfyui') {
+          result = await service.generateImages(
+            prompt: task.prompt,
+            model: task.model,
+            referenceImages: task.referenceImages.isNotEmpty ? task.referenceImages : null,
+            parameters: {'size': task.ratio, 'quality': task.quality},
+          );
+        } else if (service is OpenAIService) {
+          result = await service.generateImagesByChat(
+            prompt: task.prompt,
+            model: task.model,
+            referenceImagePaths: task.referenceImages.isNotEmpty ? task.referenceImages : null,
+            parameters: {'n': 1, 'size': task.ratio, 'quality': task.quality},
+          );
+        } else {
+          result = await service.generateImages(
+            prompt: task.prompt,
+            model: task.model,
+            referenceImages: task.referenceImages.isNotEmpty ? task.referenceImages : null,
+            parameters: {'size': task.ratio, 'quality': task.quality},
+          );
+        }
+        
+        // 提取图片URL
+        List<String> imageUrls = [];
+        if (result.isSuccess && result.data != null) {
+          if (result.data is ChatImageResponse) {
+            imageUrls = (result.data as ChatImageResponse).imageUrls;
+          } else if (result.data is List) {
+            imageUrls = (result.data as List).map((img) => img.imageUrl as String).toList();
+          }
+        }
+        
+        allImageUrls.addAll(imageUrls);
+        
+        // 避免请求过快
+        if (i < task.batchCount - 1) {
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+      }
+      
+      if (allImageUrls.isNotEmpty) {
+        // 下载并保存图片
+        final savedPaths = <String>[];
+        for (var url in allImageUrls) {
+          try {
+            final response = await http.get(Uri.parse(url));
+            if (response.statusCode == 200) {
+              final prefs = await SharedPreferences.getInstance();
+              final imagePath = prefs.getString('image_save_path') ?? '';
+              final dir = Directory(imagePath.isNotEmpty ? imagePath : Directory.systemTemp.path);
+              if (!await dir.exists()) await dir.create(recursive: true);
+              
+              final filename = 'image_${DateTime.now().millisecondsSinceEpoch}_${savedPaths.length}.png';
+              final filePath = '${dir.path}${Platform.pathSeparator}$filename';
+              final file = File(filePath);
+              await file.writeAsBytes(response.bodyBytes);
+              
+              savedPaths.add(filePath);
+            }
+          } catch (e) {
+            _logger.error('下载图片失败: $e', module: '绘图空间');
+          }
+        }
+        
+        // 更新任务状态
+        final completedTask = task.copyWith(
+          status: TaskStatus.idle,
+          generatedImages: [...task.generatedImages, ...savedPaths],
+        );
+        _updateTask(completedTask);
+        
+        _logger.success('任务生成完成: ${savedPaths.length} 张图片', module: '绘图空间');
+      } else {
+        throw Exception('生成失败');
+      }
+    } catch (e) {
+      _logger.error('任务生成失败: $e', module: '绘图空间');
+      final failedTask = task.copyWith(status: TaskStatus.idle);
+      _updateTask(failedTask);
     }
   }
 
@@ -225,6 +399,9 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
             );
           }),
           const SizedBox(width: 12),
+          // ✅ 批量生成全部按钮
+          _batchGenerateAllButton(),
+          const SizedBox(width: 12),
           _newTaskButton(),
         ],
       ),
@@ -245,6 +422,54 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
               const SizedBox(width: 6),
               Text(label, style: TextStyle(color: color ?? AppTheme.subTextColor, fontSize: 13)),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 批量生成按钮
+  Widget _batchGenerateAllButton() {
+    // ✅ 修复：检查是否有提示词，而不是检查状态
+    final hasValidTasks = _tasks.any((t) => t.prompt.trim().isNotEmpty && t.status != TaskStatus.generating);
+    final isAnyGenerating = _tasks.any((t) => t.status == TaskStatus.generating);
+    
+    return MouseRegion(
+      cursor: hasValidTasks && !isAnyGenerating ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: hasValidTasks && !isAnyGenerating ? _generateAllTasks : null,
+        child: Opacity(
+          opacity: hasValidTasks && !isAnyGenerating ? 1.0 : 0.5,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),  // ✅ 与新建任务保持一致
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)],  // 橙红色渐变
+              ),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: hasValidTasks && !isAnyGenerating
+                  ? [BoxShadow(color: const Color(0xFFFF6B6B).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 2))]
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isAnyGenerating ? Icons.hourglass_empty : Icons.flash_on,
+                  color: Colors.white,
+                  size: 18,  // ✅ 与新建任务图标大小一致
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  isAnyGenerating ? '生成中...' : '批量生成',  // ✅ 简化文字
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,  // ✅ 与新建任务字体大小一致
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -327,6 +552,7 @@ class TaskCard extends StatefulWidget {
 
 class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;  // ✅ 添加焦点节点
   List<String> _models = ['DALL-E 3', 'Midjourney', 'Stable Diffusion', 'Flux'];
   final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];
   final List<String> _qualities = ['1K', '2K', '4K'];
@@ -341,6 +567,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.task.prompt);
+    _focusNode = FocusNode();  // ✅ 初始化焦点节点
     WidgetsBinding.instance.addObserver(this);  // 添加生命周期监听
     _loadImageProvider();  // 加载服务商和模型列表
   }
@@ -433,6 +660,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);  // 移除监听
     _controller.dispose();
+    _focusNode.dispose();  // ✅ 销毁焦点节点
     super.dispose();
   }
 
@@ -995,17 +1223,25 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Listener(
-              onPointerSignal: (event) {
-                // 消费滚轮事件，阻止向外传播
-              },
-              child: Container(
-                decoration: BoxDecoration(color: AppTheme.inputBackground, borderRadius: BorderRadius.circular(10)),
-                padding: const EdgeInsets.all(14),
-                child: SingleChildScrollView(
+            child: MouseRegion(
+              cursor: SystemMouseCursors.text,  // ✅ 整个区域显示文本光标
+              child: GestureDetector(
+                onTap: () {
+                  // ✅ 点击任意位置都请求焦点
+                  _focusNode.requestFocus();
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.inputBackground,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.all(14),
                   child: TextField(
                     controller: _controller,
-                    maxLines: null,
+                    focusNode: _focusNode,
+                    maxLines: null,  // ✅ 多行输入（不限制）
+                    keyboardType: TextInputType.multiline,
+                    textAlignVertical: TextAlignVertical.top,  // ✅ 文本从顶部开始
                     style: TextStyle(color: AppTheme.textColor, fontSize: 13),
                     decoration: InputDecoration(
                       hintText: '输入画面描述...',

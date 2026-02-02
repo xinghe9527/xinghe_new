@@ -104,10 +104,32 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
       final tasksJson = prefs.getString('video_tasks');
       if (tasksJson != null && tasksJson.isNotEmpty && mounted) {
         final tasksList = jsonDecode(tasksJson) as List;
+        final tasks = tasksList.map((json) => VideoTask.fromJson(json)).toList();
+        
+        // ✅ 自动清理遗留的占位符
+        var cleanedCount = 0;
+        for (var task in tasks) {
+          final originalCount = task.generatedVideos.length;
+          task.generatedVideos.removeWhere((v) => 
+            v.startsWith('loading_') || v.startsWith('failed_')
+          );
+          cleanedCount += originalCount - task.generatedVideos.length;
+        }
+        
+        if (cleanedCount > 0) {
+          _logger.success('清理了 $cleanedCount 个遗留占位符', module: '视频空间');
+        }
+        
         setState(() {
           _tasks.clear();
-          _tasks.addAll(tasksList.map((json) => VideoTask.fromJson(json)).toList());
+          _tasks.addAll(tasks);
         });
+        
+        // ✅ 保存清理后的任务
+        if (cleanedCount > 0) {
+          _saveTasks();
+        }
+        
         _logger.success('成功加载 ${_tasks.length} 个视频任务', module: '视频空间');
       }
     } catch (e) {
@@ -127,17 +149,17 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
 
   void _addNewTask() {
     if (mounted) {
-      // 如果有现有任务，从最新任务复制设置
+      // 如果有现有任务，从最后一个任务复制设置
       final newTask = _tasks.isEmpty 
           ? VideoTask.create()
           : VideoTask.create().copyWith(
-              model: _tasks.first.model,
-              ratio: _tasks.first.ratio,
-              quality: _tasks.first.quality,
-              batchCount: _tasks.first.batchCount,
-              seconds: _tasks.first.seconds,  // ✅ 复制时间设置
+              model: _tasks.last.model,  // ✅ 从最后一个任务复制
+              ratio: _tasks.last.ratio,
+              quality: _tasks.last.quality,
+              batchCount: _tasks.last.batchCount,
+              seconds: _tasks.last.seconds,
             );
-      setState(() => _tasks.insert(0, newTask));
+      setState(() => _tasks.add(newTask));  // ✅ 修改：添加到末尾
       _saveTasks();
       _logger.success('创建新的视频任务', module: '视频空间', extra: {
         'model': newTask.model,
@@ -239,6 +261,9 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
             );
           }),
           const SizedBox(width: 12),
+          // ✅ 批量生成按钮
+          _batchGenerateAllButton(),
+          const SizedBox(width: 12),
           _newTaskButton(),
         ],
       ),
@@ -259,6 +284,56 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
               const SizedBox(width: 6),
               Text(label, style: TextStyle(color: color ?? AppTheme.subTextColor, fontSize: 13)),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 批量生成按钮
+  Widget _batchGenerateAllButton() {
+    // ✅ 修复：更准确的状态检测
+    final hasValidTasks = _tasks.any((t) => t.prompt.trim().isNotEmpty);
+    final isAnyGenerating = _tasks.any((t) => 
+      t.generatedVideos.any((v) => v.startsWith('loading_'))
+    );
+    
+    return MouseRegion(
+      cursor: hasValidTasks && !isAnyGenerating ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: hasValidTasks && !isAnyGenerating ? _generateAllTasks : null,
+        child: Opacity(
+          opacity: hasValidTasks && !isAnyGenerating ? 1.0 : 0.5,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)],  // 橙红色渐变
+              ),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: hasValidTasks && !isAnyGenerating
+                  ? [BoxShadow(color: const Color(0xFFFF6B6B).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 2))]
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isAnyGenerating ? Icons.hourglass_empty : Icons.flash_on,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  isAnyGenerating ? '生成中...' : '批量生成',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -287,6 +362,276 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  /// 批量生成所有任务
+  Future<void> _generateAllTasks() async {
+    // 获取所有有提示词的任务
+    final tasksToGenerate = _tasks.where((t) => t.prompt.trim().isNotEmpty).toList();
+    
+    if (tasksToGenerate.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('没有可生成的任务\n请确保任务有提示词'),
+            backgroundColor: Color(0xFFFF6B6B),
+          ),
+        );
+      }
+      return;
+    }
+    
+    _logger.success('🚀 开始批量生成 ${tasksToGenerate.length} 个视频任务', module: '视频空间', extra: {
+      '总任务数': _tasks.length,
+      '待生成': tasksToGenerate.length,
+    });
+    
+    // 并发生成所有任务
+    await Future.wait(
+      tasksToGenerate.map((task) => _generateSingleTask(task)),
+      eagerError: false,
+    );
+    
+    _logger.success('✅ 批量生成完成', module: '视频空间');
+  }
+  
+  /// 生成单个任务（支持批量）
+  Future<void> _generateSingleTask(VideoTask task) async {
+    if (task.prompt.trim().isEmpty) return;
+    
+    final batchCount = task.batchCount;
+    
+    // 立即添加占位符
+    final placeholders = List.generate(
+      batchCount,
+      (i) => 'loading_${DateTime.now().millisecondsSinceEpoch}_${task.id}_$i',
+    );
+    
+    // 初始化进度
+    for (var placeholder in placeholders) {
+      _globalVideoProgress[placeholder] = 0;
+    }
+    
+    // 更新任务，添加占位符
+    final updatedTask = task.copyWith(
+      generatedVideos: [...task.generatedVideos, ...placeholders],
+    );
+    _updateTask(updatedTask);
+    
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('video_provider') ?? 'geeknow';
+      final baseUrl = await SecureStorageManager().getBaseUrl(provider: provider, modelType: 'video');
+      final apiKey = await SecureStorageManager().getApiKey(provider: provider, modelType: 'video');
+      
+      if (baseUrl == null || apiKey == null) {
+        throw Exception('未配置视频 API');
+      }
+      
+      final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+      final apiFactory = ApiFactory();
+      final service = apiFactory.createService(provider, config);
+      
+      final size = _convertRatioToSize(task.ratio, task.quality, task.model);
+      final seconds = _parseSeconds(task.seconds);
+      
+      // ComfyUI 同步生成
+      if (provider.toLowerCase() == 'comfyui') {
+        final generateFutures = List.generate(batchCount, (i) async {
+          final placeholder = placeholders[i];
+          
+          try {
+            final result = await service.generateVideos(
+              prompt: task.prompt,
+              model: task.model,
+              ratio: size,
+              referenceImages: task.referenceImages,
+              parameters: {'seconds': seconds},
+            );
+            
+            if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
+              final videoUrl = result.data!.first.videoUrl;
+              final savedPath = await _downloadSingleVideoForTask(videoUrl, i, task.id);
+              
+              final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+              
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = savedPath;
+                _globalVideoProgress.remove(placeholder);
+                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+              }
+              
+              return true;
+            }
+          } catch (e) {
+            _logger.error('视频生成失败: $e', module: '视频空间');
+            
+            final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _globalVideoProgress.remove(placeholder);
+              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+            }
+          }
+          
+          return false;
+        });
+        
+        await Future.wait(generateFutures, eagerError: false);
+      } else {
+        // 其他服务的异步轮询模式
+        final helper = VeoVideoHelper(service as VeoVideoService);
+        
+        final submitFutures = List.generate(batchCount, (i) async {
+          final result = await service.generateVideos(
+            prompt: task.prompt,
+            model: task.model,
+            ratio: size,
+            referenceImages: task.referenceImages,
+            parameters: {'seconds': seconds},
+          );
+          
+          if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
+            return {'index': i, 'taskId': result.data!.first.videoId, 'placeholder': placeholders[i]};
+          } else {
+            throw Exception('提交失败: ${result.errorMessage}');
+          }
+        });
+        
+        final submittedTasks = await Future.wait(submitFutures);
+        
+        final pollFutures = submittedTasks.map((taskInfo) async {
+          final index = taskInfo['index'] as int;
+          final taskId = taskInfo['taskId'] as String?;
+          final placeholder = taskInfo['placeholder'] as String;
+          
+          if (taskId == null) return false;
+          
+          try {
+            final statusResult = await helper.pollTaskUntilComplete(
+              taskId: taskId,
+              maxWaitMinutes: 15,
+              onProgress: (progress, status) {
+                _globalVideoProgress[placeholder] = progress;
+                if (mounted) setState(() {});
+              },
+            );
+            
+            if (statusResult.isSuccess && statusResult.data!.hasVideo) {
+              final videoUrl = statusResult.data!.videoUrl!;
+              final savedPath = await _downloadSingleVideoForTask(videoUrl, index, task.id);
+              
+              final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+              
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = savedPath;
+                _globalVideoProgress.remove(placeholder);
+                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+              }
+              
+              return true;
+            }
+          } catch (e) {
+            final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _globalVideoProgress.remove(placeholder);
+              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+            }
+          }
+          
+          return false;
+        }).toList();
+        
+        await Future.wait(pollFutures, eagerError: false);
+      }
+    } catch (e) {
+      _logger.error('任务生成失败: $e', module: '视频空间');
+      
+      // 清理占位符
+      final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+      final currentVideos = List<String>.from(currentTask.generatedVideos);
+      for (var placeholder in placeholders) {
+        final index = currentVideos.indexOf(placeholder);
+        if (index != -1) {
+          currentVideos[index] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+          _globalVideoProgress.remove(placeholder);
+        }
+      }
+      _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+    }
+  }
+  
+  /// 下载单个视频（用于批量生成）
+  Future<String> _downloadSingleVideoForTask(String videoUrl, int index, String taskId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savePath = prefs.getString('video_save_path');
+      
+      if (savePath == null || savePath.isEmpty) {
+        return videoUrl;
+      }
+      
+      final response = await http.get(Uri.parse(videoUrl)).timeout(
+        const Duration(minutes: 5),
+      );
+      
+      if (response.statusCode == 200) {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final fileName = 'video_${timestamp}_${taskId}_$index.mp4';
+        final filePath = path.join(savePath, fileName);
+        
+        await File(filePath).writeAsBytes(response.bodyBytes);
+        
+        // 提取首帧
+        try {
+          final thumbnailPath = filePath.replaceAll('.mp4', '.jpg');
+          final ffmpeg = FFmpegService();
+          await ffmpeg.extractFrame(videoPath: filePath, outputPath: thumbnailPath);
+        } catch (e) {
+          // 忽略首帧提取失败
+        }
+        
+        return filePath;
+      }
+    } catch (e) {
+      _logger.error('下载视频失败: $e', module: '视频空间');
+    }
+    
+    return videoUrl;
+  }
+  
+  /// 将时长字符串转换为整数
+  int _parseSeconds(String secondsStr) {
+    final numStr = secondsStr.replaceAll('秒', '');
+    return int.tryParse(numStr) ?? 10;
+  }
+  
+  /// 将比例转换为尺寸
+  String _convertRatioToSize(String ratio, String quality, String model) {
+    // 简化版本，返回标准尺寸
+    switch (ratio) {
+      case '16:9':
+        return '1280x720';
+      case '9:16':
+        return '720x1280';
+      case '1:1':
+        return '1024x1024';
+      default:
+        return '1280x720';
+    }
   }
 
   Widget _buildEmptyState() {
@@ -341,6 +686,7 @@ class TaskCard extends StatefulWidget {
 
 class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;  // ✅ 添加焦点节点
   List<String> _models = ['Runway Gen-3', 'Pika 1.5', 'Stable Video', 'AnimateDiff'];
   final List<String> _ratios = ['16:9', '9:16', '1:1', '4:3', '3:4'];
   final List<String> _qualities = ['720P', '1080P', '2K', '4K'];
@@ -356,6 +702,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.task.prompt);
+    _focusNode = FocusNode();  // ✅ 初始化焦点节点
     WidgetsBinding.instance.addObserver(this);  // 添加生命周期监听
     _loadVideoProvider();  // 加载服务商和模型列表
   }
@@ -371,6 +718,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);  // 移除监听
     _controller.dispose();
+    _focusNode.dispose();  // ✅ 销毁焦点节点
     super.dispose();
   }
 
@@ -1432,17 +1780,25 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Listener(
-              onPointerSignal: (event) {
-                // 消费滚轮事件，阻止向外传播
-              },
-              child: Container(
-                decoration: BoxDecoration(color: AppTheme.inputBackground, borderRadius: BorderRadius.circular(10)),
-                padding: const EdgeInsets.all(14),
-                child: SingleChildScrollView(
+            child: MouseRegion(
+              cursor: SystemMouseCursors.text,  // ✅ 整个区域显示文本光标
+              child: GestureDetector(
+                onTap: () {
+                  // ✅ 点击容器任意位置，让文本框获得焦点
+                  _focusNode.requestFocus();
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.inputBackground,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.all(14),
                   child: TextField(
                     controller: _controller,
-                    maxLines: null,
+                    focusNode: _focusNode,  // ✅ 绑定焦点节点
+                    maxLines: null,  // ✅ 多行输入
+                    keyboardType: TextInputType.multiline,
+                    textAlignVertical: TextAlignVertical.top,  // ✅ 文本从顶部开始
                     style: TextStyle(color: AppTheme.textColor, fontSize: 13),
                     decoration: InputDecoration(
                       hintText: '输入视频描述...',

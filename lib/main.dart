@@ -43,7 +43,7 @@ void main() async {
 
   WindowOptions windowOptions = const WindowOptions(
     size: Size(1280, 720),
-    minimumSize: Size(1000, 600),
+    minimumSize: Size(1280, 720),  // ✅ 最小尺寸改为1280x720
     center: true,
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
@@ -56,7 +56,8 @@ void main() async {
     await windowManager.setAsFrameless();
     await windowManager.setTitle('星橙AI动漫制作');
     await windowManager.setSize(const Size(1280, 720));
-    await windowManager.setMinimumSize(const Size(1000, 600));
+    await windowManager.setMinimumSize(const Size(1280, 720));  // ✅ 最小尺寸1280x720
+    await windowManager.setResizable(true);  // ✅ 启用调整大小
     await windowManager.center();
     await windowManager.show();
     await windowManager.focus();
