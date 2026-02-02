@@ -203,7 +203,7 @@ class _ScenePromptManagerState extends State<ScenePromptManager> {
                   ),
                   onChanged: (value) {
                     _presets[_selectedIndex]['name'] = value;
-                    _savePresets();
+                    // 只更新数据，不自动保存。用户需要点击保存按钮
                   },
                 ),
               ),
@@ -237,7 +237,7 @@ class _ScenePromptManagerState extends State<ScenePromptManager> {
               ),
               onChanged: (value) {
                 _presets[_selectedIndex]['content'] = value;
-                _savePresets();
+                // 只更新数据，不自动保存。用户需要点击保存按钮
               },
             ),
           ),
