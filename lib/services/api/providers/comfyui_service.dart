@@ -781,22 +781,66 @@ class ComfyUIService extends ApiServiceBase {
           
           if (data[promptId] != null) {
             final history = data[promptId] as Map<String, dynamic>;
+            
+            // ✅ 检查任务状态（是否失败）
+            final status = history['status'] as Map<String, dynamic>?;
+            if (status != null) {
+              final completed = status['completed'] as bool? ?? false;
+              final statusMessages = status['messages'] as List?;
+              
+              // 检查是否有错误消息
+              if (statusMessages != null && statusMessages.isNotEmpty) {
+                final errorMessages = statusMessages
+                    .where((msg) => msg is List && msg.length >= 2 && msg[0] == 'error')
+                    .map((msg) => msg[1].toString())
+                    .toList();
+                
+                if (errorMessages.isNotEmpty) {
+                  final errorDetail = errorMessages.join('\n');
+                  debugPrint('   ❌ ComfyUI 任务失败: $errorDetail');
+                  throw Exception('ComfyUI 工作流执行失败\n\n错误详情:\n$errorDetail\n\n💡 建议：\n1. 检查工作流是否包含视频生成节点（如 VHS_VideoCombine）\n2. 检查ComfyUI控制台是否有详细错误日志\n3. 确认所有必需的自定义节点已安装');
+                }
+              }
+              
+              if (completed) {
+                debugPrint('   ℹ️ 任务已完成，但未找到视频输出');
+              }
+            }
+            
             final outputs = history['outputs'] as Map<String, dynamic>?;
             
             if (outputs != null) {
               // 查找视频输出节点（VHS_VideoCombine 或其他）
-              for (final output in outputs.values) {
+              for (final entry in outputs.entries) {
+                final output = entry.value;
                 if (output is Map && output['gifs'] != null) {
-                  debugPrint('   ✅ 视频生成完成！');
+                  debugPrint('   ✅ 视频生成完成！（节点: ${entry.key}）');
                   return List<Map<String, dynamic>>.from(
                     (output['gifs'] as List).map((vid) => Map<String, dynamic>.from(vid as Map))
                   );
                 }
               }
+              
+              // ✅ 如果有outputs但没有gifs，打印详细信息
+              if (outputs.isNotEmpty) {
+                debugPrint('   ⚠️ 找到outputs但没有视频数据');
+                debugPrint('   📋 输出节点类型: ${outputs.keys.join(", ")}');
+                for (final entry in outputs.entries) {
+                  if (entry.value is Map) {
+                    final keys = (entry.value as Map).keys.join(", ");
+                    debugPrint('   📋 节点 ${entry.key} 的输出字段: $keys');
+                  }
+                }
+              }
             }
           }
+        } else {
+          debugPrint('   ⚠️ HTTP ${response.statusCode}: ${response.body}');
         }
       } catch (e) {
+        if (e is Exception && e.toString().contains('ComfyUI 工作流执行失败')) {
+          rethrow;  // 重新抛出工作流错误
+        }
         debugPrint('   ⚠️ 查询状态失败: $e');
       }
       
@@ -805,7 +849,7 @@ class ComfyUIService extends ApiServiceBase {
       }
     }
     
-    throw Exception('视频生成超时（20分钟）\n可能原因：\n1. ComfyUI 队列繁忙\n2. 视频生成缓慢\n3. 生成失败但未报错');
+    throw Exception('视频生成超时（20分钟）\n\n可能原因：\n1. ComfyUI 队列繁忙\n2. 视频生成缓慢\n3. 工作流没有视频输出节点\n\n💡 建议：\n1. 检查 ComfyUI 控制台日志\n2. 确认工作流包含 VHS_VideoCombine 等视频生成节点\n3. 手动在 ComfyUI 中测试该工作流');
   }
 
   @override

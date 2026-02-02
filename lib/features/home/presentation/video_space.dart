@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
+import 'package:xinghe_new/services/api/api_factory.dart';  // ✅ 导入 API 工厂
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
@@ -484,6 +485,56 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       }
     });
   }
+  
+  /// 显示错误对话框
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceBackground,
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 24),
+            const SizedBox(width: 12),
+            Text(
+              title,
+              style: TextStyle(
+                color: AppTheme.textColor,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Container(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: SingleChildScrollView(
+            child: SelectableText(
+              message,
+              style: TextStyle(
+                color: AppTheme.textColor,
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              '确定',
+              style: TextStyle(
+                color: AppTheme.accentColor,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// 真实的视频生成
   Future<void> _generateVideos() async {
@@ -520,8 +571,35 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
       
-      if (baseUrl == null || apiKey == null) {
-        throw Exception('未配置视频 API');
+      _logger.info('视频生成配置', module: '视频空间', extra: {
+        'provider': provider,
+        'baseUrl': baseUrl ?? '(未配置)',
+        'hasApiKey': apiKey != null && apiKey.isNotEmpty,
+      });
+      
+      if (baseUrl == null || baseUrl.isEmpty) {
+        throw Exception('未配置视频 Base URL\n\n请前往设置页面配置 API 地址');
+      }
+      
+      if (apiKey == null || apiKey.isEmpty) {
+        throw Exception('未配置视频 API Key\n\n请前往设置页面配置 API 密钥');
+      }
+      
+      // ComfyUI 特殊检查：需要选择工作流
+      if (provider.toLowerCase() == 'comfyui') {
+        final selectedWorkflow = prefs.getString('comfyui_selected_video_workflow');
+        if (selectedWorkflow == null || selectedWorkflow.isEmpty) {
+          throw Exception('未选择 ComfyUI 视频工作流\n\n请前往设置页面选择一个视频工作流');
+        }
+        
+        final workflowsJson = prefs.getString('comfyui_workflows');
+        if (workflowsJson == null || workflowsJson.isEmpty) {
+          throw Exception('未找到 ComfyUI 工作流数据\n\n请前往设置页面重新读取工作流');
+        }
+        
+        _logger.info('使用 ComfyUI 工作流', module: '视频空间', extra: {
+          'workflow': selectedWorkflow,
+        });
       }
       
       // 创建配置
@@ -531,9 +609,13 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         apiKey: apiKey,
       );
       
-      // 创建服务
-      final service = VeoVideoService(config);
-      final helper = VeoVideoHelper(service);
+      // ✅ 使用 API 工厂创建服务（支持所有服务商，包括 ComfyUI）
+      final apiFactory = ApiFactory();
+      final service = apiFactory.createService(provider, config);
+      
+      _logger.success('创建 $provider 视频服务', module: '视频空间', extra: {
+        'serviceType': service.runtimeType.toString(),
+      });
       
       // 准备参数
       final size = _convertRatioToSize(widget.task.ratio, widget.task.quality, widget.task.model);
@@ -545,6 +627,87 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         'seconds': seconds,
       });
       
+      // ✅ ComfyUI 服务的特殊处理（同步生成，不需要轮询）
+      if (provider.toLowerCase() == 'comfyui') {
+        _logger.info('使用 ComfyUI 同步生成模式', module: '视频空间');
+        
+        // ComfyUI 直接生成，无需分步骤
+        final generateFutures = List.generate(batchCount, (i) async {
+          final placeholder = placeholders[i];
+          
+          try {
+            _logger.info('开始生成第 ${i + 1}/$batchCount 个视频', module: '视频空间');
+            
+            // ComfyUI的generateVideos内部已处理轮询，直接返回视频URL
+            final result = await service.generateVideos(
+              prompt: widget.task.prompt,
+              model: widget.task.model,
+              ratio: size,
+              referenceImages: widget.task.referenceImages,  // ✅ 修复：直接传递参考图片
+              parameters: {
+                'seconds': seconds,
+              },
+            );
+            
+            if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
+              final videoUrl = result.data!.first.videoUrl;
+              _logger.success('视频 ${i + 1} 生成完成', module: '视频空间', extra: {'url': videoUrl});
+              
+              // 下载并保存
+              final savedPath = await _downloadSingleVideo(videoUrl, i);
+              
+              // 替换占位符
+              final currentVideos = List<String>.from(widget.task.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+              
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = savedPath;
+                _globalVideoProgress.remove(placeholder);
+                _update(widget.task.copyWith(generatedVideos: currentVideos));
+                
+                if (mounted) {
+                  setState(() {});
+                }
+              }
+              
+              return true;
+            } else {
+              throw Exception('生成失败: ${result.errorMessage}');
+            }
+          } catch (e) {
+            _logger.error('视频 ${i + 1} 生成失败: $e', module: '视频空间');
+            
+            // 标记为失败
+            final currentVideos = List<String>.from(widget.task.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _globalVideoProgress.remove(placeholder);
+              _update(widget.task.copyWith(generatedVideos: currentVideos));
+              
+              if (mounted) {
+                setState(() {});
+              }
+            }
+            
+            return false;
+          }
+        });
+        
+        // 等待所有视频生成完成
+        await Future.wait(generateFutures, eagerError: false);
+        _logger.success('所有 ComfyUI 视频已处理完成', module: '视频空间');
+        
+        return;  // ✅ ComfyUI处理完成，直接返回
+      }
+      
+      // ✅ 其他服务（GeekNow/Yunwu/OpenAI等）的异步轮询模式
+      _logger.info('使用异步轮询模式（适用于 $provider）', module: '视频空间');
+      
+      // 创建辅助类（用于轮询和下载）
+      final helper = VeoVideoHelper(service as VeoVideoService);
+      
       // 步骤1：并发提交所有任务
       final submitFutures = List.generate(batchCount, (i) async {
         _logger.info('提交第 ${i + 1}/$batchCount 个视频任务', module: '视频空间');
@@ -553,9 +716,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           prompt: widget.task.prompt,
           model: widget.task.model,
           ratio: size,
+          referenceImages: widget.task.referenceImages,  // ✅ 修复：直接传递参考图片
           parameters: {
             'seconds': seconds,
-            'referenceImagePaths': widget.task.referenceImages,
           },
         );
         
@@ -700,9 +863,20 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         final index = currentVideos.indexOf(placeholder);
         if (index != -1) {
           currentVideos[index] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+          // 清理全局进度
+          _globalVideoProgress.remove(placeholder);
         }
       }
       _update(widget.task.copyWith(generatedVideos: currentVideos));
+      
+      // ✅ 显示详细的错误信息给用户
+      if (mounted) {
+        final errorMessage = e.toString();
+        _showErrorDialog(
+          '视频生成失败',
+          errorMessage,
+        );
+      }
     }
   }
 

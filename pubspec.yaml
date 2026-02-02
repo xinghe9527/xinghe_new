@@ -52,6 +52,11 @@ dependencies:
   
   # 网络请求
   dio: ^5.9.0
+  
+  # 自动更新功能
+  package_info_plus: ^8.1.2
+  archive: ^4.0.7
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

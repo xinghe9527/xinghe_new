@@ -817,11 +817,11 @@ class _SettingsPageState extends State<SettingsPage> {
           if (json['metadata']?['type'] != null) {
             workflowType = json['metadata']['type'];
           } else {
-            // 方法2：检查文件名前缀
-            final filename = file.uri.pathSegments.last;
-            if (filename.startsWith('video_')) {
+            // 方法2：检查文件名前缀（✅ 支持横杠和下划线）
+            final filename = file.uri.pathSegments.last.toLowerCase();
+            if (filename.startsWith('video_') || filename.startsWith('video-')) {
               workflowType = 'video';
-            } else if (filename.startsWith('image_')) {
+            } else if (filename.startsWith('image_') || filename.startsWith('image-')) {
               workflowType = 'image';
             }
           }

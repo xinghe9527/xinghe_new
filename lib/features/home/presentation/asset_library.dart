@@ -576,17 +576,37 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
 
   // 获取图片信息（宽高）
   Future<ImageInfo> _getImageInfo(String imagePath) async {
-    final completer = Completer<ImageInfo>();
-    final img = FileImage(File(imagePath));
-    final stream = img.resolve(const ImageConfiguration());
-    
-    stream.addListener(ImageStreamListener((info, _) {
-      if (!completer.isCompleted) {
-        completer.complete(info);
-      }
-    }));
-    
-    return completer.future;
+    try {
+      final completer = Completer<ImageInfo>();
+      final img = FileImage(File(imagePath));
+      final stream = img.resolve(const ImageConfiguration());
+      
+      stream.addListener(ImageStreamListener(
+        (info, _) {
+          if (!completer.isCompleted) {
+            completer.complete(info);
+          }
+        },
+        onError: (error, stackTrace) {
+          debugPrint('图片加载失败: $imagePath, 错误: $error');
+          if (!completer.isCompleted) {
+            completer.completeError(error);
+          }
+        },
+      ));
+      
+      // 添加超时处理（5秒）
+      return completer.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          debugPrint('图片加载超时: $imagePath');
+          throw TimeoutException('图片加载超时');
+        },
+      );
+    } catch (e) {
+      debugPrint('获取图片信息失败: $imagePath, 错误: $e');
+      rethrow;
+    }
   }
 
   // 显示图片预览（放大查看）
