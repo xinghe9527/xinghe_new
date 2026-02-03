@@ -788,8 +788,23 @@ class ComfyUIService extends ApiServiceBase {
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           
+          // ✅ 调试：打印完整响应结构（只在第一次）
+          if (i == 1) {
+            debugPrint('   🔍 [调试] History API 响应数据结构:');
+            debugPrint('       - 顶层keys: ${data.keys.join(", ")}');
+            debugPrint('       - promptId存在: ${data.containsKey(promptId)}');
+          }
+          
           if (data[promptId] != null) {
             final history = data[promptId] as Map<String, dynamic>;
+            
+            // ✅ 调试：打印history结构（只在第一次）
+            if (i == 1) {
+              debugPrint('   🔍 [调试] history结构:');
+              debugPrint('       - 字段: ${history.keys.join(", ")}');
+              debugPrint('       - 有outputs: ${history.containsKey('outputs')}');
+              debugPrint('       - 有status: ${history.containsKey('status')}');
+            }
             
             // ✅ 检查任务状态（是否失败）
             final status = history['status'] as Map<String, dynamic>?;
@@ -819,25 +834,69 @@ class ComfyUIService extends ApiServiceBase {
             final outputs = history['outputs'] as Map<String, dynamic>?;
             
             if (outputs != null) {
-              // 查找视频输出节点（VHS_VideoCombine 或其他）
+              // ✅ 增强检测：支持多种视频输出格式
               for (final entry in outputs.entries) {
                 final output = entry.value;
-                if (output is Map && output['gifs'] != null) {
-                  debugPrint('   ✅ 视频生成完成！（节点: ${entry.key}）');
-                  return List<Map<String, dynamic>>.from(
-                    (output['gifs'] as List).map((vid) => Map<String, dynamic>.from(vid as Map))
-                  );
+                if (output is Map) {
+                  // 尝试查找多种可能的视频输出字段
+                  List<Map<String, dynamic>>? videos;
+                  
+                  // 1. VHS_VideoCombine 节点 → 'gifs' 字段
+                  if (output['gifs'] != null) {
+                    debugPrint('   ✅ 找到视频输出（gifs字段）- 节点: ${entry.key}');
+                    videos = List<Map<String, dynamic>>.from(
+                      (output['gifs'] as List).map((vid) => Map<String, dynamic>.from(vid as Map))
+                    );
+                  }
+                  // 2. SaveVideo 节点 → 'videos' 字段
+                  else if (output['videos'] != null) {
+                    debugPrint('   ✅ 找到视频输出（videos字段）- 节点: ${entry.key}');
+                    videos = List<Map<String, dynamic>>.from(
+                      (output['videos'] as List).map((vid) => Map<String, dynamic>.from(vid as Map))
+                    );
+                  }
+                  // 3. 其他节点 → 'filenames' 字段
+                  else if (output['filenames'] != null) {
+                    debugPrint('   ✅ 找到视频输出（filenames字段）- 节点: ${entry.key}');
+                    final filenames = output['filenames'] as List;
+                    videos = filenames.map((filename) => {
+                      'filename': filename,
+                      'subfolder': output['subfolder'] ?? '',
+                      'type': output['type'] ?? 'output',
+                    }).toList().cast<Map<String, dynamic>>();
+                  }
+                  // 4. WAN 视频节点 → 直接包含 filename
+                  else if (output['filename'] != null) {
+                    debugPrint('   ✅ 找到视频输出（单个filename）- 节点: ${entry.key}');
+                    videos = [{
+                      'filename': output['filename'],
+                      'subfolder': output['subfolder'] ?? '',
+                      'type': output['type'] ?? 'output',
+                    }];
+                  }
+                  
+                  if (videos != null && videos.isNotEmpty) {
+                    debugPrint('   ✅ 视频生成完成！获取到 ${videos.length} 个视频');
+                    return videos;
+                  }
                 }
               }
               
-              // ✅ 如果有outputs但没有gifs，打印详细信息
+              // ✅ 如果有outputs但没找到视频，打印完整结构
               if (outputs.isNotEmpty) {
-                debugPrint('   ⚠️ 找到outputs但没有视频数据');
+                debugPrint('   ⚠️ 找到outputs但没有识别的视频数据');
                 debugPrint('   📋 输出节点类型: ${outputs.keys.join(", ")}');
                 for (final entry in outputs.entries) {
                   if (entry.value is Map) {
-                    final keys = (entry.value as Map).keys.join(", ");
+                    final output = entry.value as Map;
+                    final keys = output.keys.join(", ");
                     debugPrint('   📋 节点 ${entry.key} 的输出字段: $keys');
+                    
+                    // 打印每个字段的值类型
+                    for (final key in output.keys) {
+                      final value = output[key];
+                      debugPrint('       - $key: ${value.runtimeType} ${value is List ? "(${value.length}项)" : ""}');
+                    }
                   }
                 }
               }

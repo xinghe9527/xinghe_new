@@ -10,6 +10,7 @@ import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/features/home/domain/video_task.dart';
+import 'package:xinghe_new/features/home/presentation/batch_video_space.dart';  // ✅ 导入批量空间
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
@@ -235,6 +236,8 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         children: [
           Text('视频空间', style: TextStyle(color: AppTheme.textColor, fontSize: 18, fontWeight: FontWeight.bold)),
           const Spacer(),
+          
+          // ✅ 清空全部按钮（位置提前）
           _toolButton(Icons.delete_sweep_rounded, '清空全部', () {
             if (_tasks.isEmpty) return;
             showDialog(
@@ -261,7 +264,49 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
             );
           }),
           const SizedBox(width: 12),
-          // ✅ 批量生成按钮
+          
+          // ✅ 表格视图按钮（进入批量空间）
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const BatchVideoSpace()),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF4C83FF), Color(0xFF2AFADF)],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF4C83FF).withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.table_chart, color: Colors.white, size: 16),
+                    const SizedBox(width: 6),
+                    Text('表格视图', style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    )),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          
+          // 批量生成按钮
           _batchGenerateAllButton(),
           const SizedBox(width: 12),
           _newTaskButton(),
