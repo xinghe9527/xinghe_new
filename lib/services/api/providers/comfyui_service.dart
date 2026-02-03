@@ -623,7 +623,8 @@ class ComfyUIService extends ApiServiceBase {
   Future<List<Map<String, dynamic>>> _waitForCompletion(String promptId) async {
     debugPrint('   ⏳ 等待生成完成（包括排队时间）...');
     
-    for (var i = 0; i < 600; i++) {  // ✅ 最多等待 10 分钟（考虑排队）
+    // ✅ 增加到30分钟，支持大批量图片生成
+    for (var i = 0; i < 1800; i++) {  // 30分钟 = 1800秒
       await Future.delayed(const Duration(seconds: 1));
       
       try {
@@ -655,12 +656,19 @@ class ComfyUIService extends ApiServiceBase {
         debugPrint('   ⚠️ 查询状态失败: $e');
       }
       
-      if (i % 5 == 0) {
-        debugPrint('   ⏳ 已等待 ${i + 1} 秒...');
+      // ✅ 改进日志输出（减少刷屏）
+      if (i == 0 || i == 30 || i == 60 || (i > 60 && i % 60 == 0)) {
+        final minutes = (i / 60).floor();
+        final seconds = i % 60;
+        if (minutes > 0) {
+          debugPrint('   ⏳ 已等待 $minutes 分 $seconds 秒...');
+        } else {
+          debugPrint('   ⏳ 已等待 $seconds 秒...');
+        }
       }
     }
     
-    throw Exception('生成超时（10分钟）\n可能原因：\n1. ComfyUI 队列繁忙\n2. 模型加载缓慢\n3. 生成失败但未报错');
+    throw Exception('生成超时（30分钟）\n\n可能原因：\n1. ComfyUI 队列繁忙\n2. 模型加载缓慢\n3. 生成失败但未报错\n\n💡 建议：\n1. 检查 ComfyUI 控制台日志\n2. 减少批量生成的数量（建议单次不超过20个）');
   }
 
   @override
@@ -768,7 +776,8 @@ class ComfyUIService extends ApiServiceBase {
   Future<List<Map<String, dynamic>>> _waitForVideoCompletion(String promptId) async {
     debugPrint('   ⏳ 等待视频生成完成（包括排队时间）...');
     
-    for (var i = 0; i < 1200; i++) {  // ✅ 最多等待 20 分钟（视频生成慢+排队）
+    // ✅ 增加到120分钟，支持超大批量生成（最多40-50个视频）
+    for (var i = 0; i < 7200; i++) {  // 120分钟 = 7200秒
       await Future.delayed(const Duration(seconds: 1));
       
       try {
@@ -844,12 +853,19 @@ class ComfyUIService extends ApiServiceBase {
         debugPrint('   ⚠️ 查询状态失败: $e');
       }
       
-      if (i % 10 == 0) {
-        debugPrint('   ⏳ 已等待 ${i + 1} 秒...');
+      // ✅ 改进日志输出频率（减少刷屏）
+      if (i == 0 || i == 30 || i == 60 || (i > 60 && i % 60 == 0)) {
+        final minutes = (i / 60).floor();
+        final seconds = i % 60;
+        if (minutes > 0) {
+          debugPrint('   ⏳ 已等待 $minutes 分 $seconds 秒...');
+        } else {
+          debugPrint('   ⏳ 已等待 $seconds 秒...');
+        }
       }
     }
     
-    throw Exception('视频生成超时（20分钟）\n\n可能原因：\n1. ComfyUI 队列繁忙\n2. 视频生成缓慢\n3. 工作流没有视频输出节点\n\n💡 建议：\n1. 检查 ComfyUI 控制台日志\n2. 确认工作流包含 VHS_VideoCombine 等视频生成节点\n3. 手动在 ComfyUI 中测试该工作流');
+    throw Exception('视频生成超时（120分钟）\n\n可能原因：\n1. ComfyUI 队列中有大量任务\n2. 视频生成非常缓慢\n3. 工作流执行失败但未报错\n\n💡 建议：\n1. 检查 ComfyUI 控制台日志\n2. 查看 ComfyUI 队列中的任务数量\n3. 如果超过120分钟，建议分批生成\n4. 确认工作流包含 VHS_VideoCombine 等视频生成节点');
   }
 
   @override

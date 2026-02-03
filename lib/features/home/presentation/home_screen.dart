@@ -8,7 +8,7 @@ import 'system_log.dart';
 import 'widgets/creation_space.dart';
 import 'package:xinghe_new/core/widgets/window_border.dart';  // ✅ 导入窗口边框
 import 'package:xinghe_new/main.dart'; // 引入全局 themeNotifier 和 AppTheme
-import 'package:xinghe_new/core/update/update_checker.dart'; // 自动更新
+import 'package:xinghe_new/core/update/update_service.dart'; // 自动更新
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -36,7 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // 延迟检查更新，确保页面加载完成
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      UpdateChecker.checkOnStartup(context);
+      UpdateService.checkOnStartup(context);
     });
   }
 
