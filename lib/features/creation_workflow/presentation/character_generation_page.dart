@@ -1755,12 +1755,12 @@ ${widget.scriptContent}
       ),
       items: [
         const PopupMenuItem(
-          value: 'open_folder',
+          value: 'locate_file',
           child: Row(
             children: [
               Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
               SizedBox(width: 8),
-              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+              Text('定位文件', style: TextStyle(color: Color(0xFF888888))),
             ],
           ),
         ),
@@ -1776,8 +1776,8 @@ ${widget.scriptContent}
         ),
       ],
     ).then((value) {
-      if (value == 'open_folder') {
-        _openSaveFolder();
+      if (value == 'locate_file') {
+        _locateFile(imageUrl);
       } else if (value == 'delete_image') {
         _deleteImage(imageUrl);
       }
@@ -1859,24 +1859,38 @@ ${widget.scriptContent}
     }
   }
 
-  /// 打开保存文件夹
-  void _openSaveFolder() async {
-    final savePath = imageSavePathNotifier.value;
-    if (savePath != '未设置' && savePath.isNotEmpty) {
-      try {
-        if (Platform.isWindows) {
-          Process.run('explorer', [savePath]);
-        } else if (Platform.isMacOS) {
-          Process.run('open', [savePath]);
-        } else if (Platform.isLinux) {
-          Process.run('xdg-open', [savePath]);
-        }
-      } catch (e) {
-        debugPrint('打开文件夹失败: $e');
-      }
-    } else {
+  /// 定位文件
+  void _locateFile(String imageUrl) async {
+    // 检查是否为本地文件
+    if (imageUrl.isEmpty || imageUrl.startsWith('http')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先在设置中配置图片保存路径')),
+        const SnackBar(content: Text('只能定位本地文件')),
+      );
+      return;
+    }
+    
+    try {
+      final file = File(imageUrl);
+      if (await file.exists()) {
+        if (Platform.isWindows) {
+          await Process.run('explorer', ['/select,', imageUrl]);
+          debugPrint('✅ 已定位文件: $imageUrl');
+        } else if (Platform.isMacOS) {
+          await Process.run('open', ['-R', imageUrl]);
+        } else if (Platform.isLinux) {
+          // Linux 上定位到文件所在文件夹
+          final directory = file.parent.path;
+          await Process.run('xdg-open', [directory]);
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文件不存在')),
+        );
+      }
+    } catch (e) {
+      debugPrint('定位文件失败: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('定位文件失败: $e')),
       );
     }
   }

@@ -1645,22 +1645,22 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     final menuItems = <PopupMenuEntry<String>>[
       if (isLocalFile) ...[
         const PopupMenuItem(
-          value: 'open_folder',
-          child: Row(
-            children: [
-              Icon(Icons.folder_open, size: 18),
-              SizedBox(width: 8),
-              Text('查看文件夹'),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
           value: 'open_video',
           child: Row(
             children: [
               Icon(Icons.play_circle_outline, size: 18),
               SizedBox(width: 8),
-              Text('用播放器打开'),
+              Text('播放视频'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'show_in_explorer',
+          child: Row(
+            children: [
+              Icon(Icons.location_searching, size: 18),
+              SizedBox(width: 8),
+              Text('在文件夹中显示'),
             ],
           ),
         ),
@@ -1693,10 +1693,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       position: menuPosition,
       items: menuItems,
     ).then((value) async {
-      if (value == 'open_folder') {
-        _openFileLocation(videoPath);
-      } else if (value == 'open_video') {
+      if (value == 'open_video') {
         _showVideoPreview(videoPath);
+      } else if (value == 'show_in_explorer') {
+        _showInExplorer(videoPath);
       } else if (value == 'open_browser') {
         // 在浏览器中打开在线 URL
         await Process.start(
@@ -1717,17 +1717,29 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     });
   }
 
-  /// 打开文件所在文件夹
-  Future<void> _openFileLocation(String filePath) async {
+  /// 在资源管理器中显示文件（定位并选中文件）
+  Future<void> _showInExplorer(String filePath) async {
     try {
       final file = File(filePath);
       if (await file.exists()) {
-        final directory = file.parent.path;
-        await Process.run('explorer', [directory]);
-        _logger.info('打开文件夹', module: '视频空间', extra: {'path': directory});
+        // ✅ 使用 /select 参数定位并选中文件
+        await Process.run('explorer', ['/select,', filePath]);
+        _logger.success('已在资源管理器中定位到文件', module: '视频空间', extra: {'path': filePath});
+      } else {
+        _logger.error('文件不存在', module: '视频空间', extra: {'path': filePath});
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('文件不存在')),
+          );
+        }
       }
     } catch (e) {
-      _logger.error('打开文件夹失败: $e', module: '视频空间');
+      _logger.error('定位文件失败: $e', module: '视频空间');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('定位文件失败: $e')),
+        );
+      }
     }
   }
 

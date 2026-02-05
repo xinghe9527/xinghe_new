@@ -9,9 +9,9 @@ import 'storyboard_prompt_manager.dart';
 import 'character_generation_page.dart';
 import 'scene_generation_page.dart';
 import 'item_generation_page.dart';
-import '../data/real_ai_service.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
+import '../../../services/ffmpeg_service.dart';
 
 /// 分镜空间页面（分镜生成和管理 - Excel风格）
 class ProductionSpacePage extends StatefulWidget {
@@ -41,7 +41,6 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   bool _isGenerating = false;
   bool _showScriptColumn = false;  // ✅ 控制剧本列的显示/隐藏
   Set<int> _selectedStoryboards = {};  // ✅ 选中的分镜索引（用于合并）
-  final RealAIService _aiService = RealAIService(); // ✅ 真实 AI 服务
   final ApiRepository _apiRepository = ApiRepository();  // ✅ API Repository
   
   // 全局主题提示词
@@ -1190,7 +1189,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             children: [
               Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
               SizedBox(width: 8),
-              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+              Text('定位文件', style: TextStyle(color: Color(0xFF888888))),
             ],
           ),
         ),
@@ -1209,7 +1208,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       if (value == 'view') {
         _viewImage(imageUrl);
       } else if (value == 'folder') {
-        _openImageFolder();
+        _locateImageFile(imageUrl);
       } else if (value == 'delete') {
         _deleteImage(storyboardIndex, gridIndex);
       }
@@ -1258,23 +1257,37 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     );
   }
 
-  void _openImageFolder() {
-    final savePath = imageSavePathNotifier.value;
-    if (savePath != '未设置' && savePath.isNotEmpty) {
-      try {
-        if (Platform.isWindows) {
-          Process.run('explorer', [savePath]);
-        } else if (Platform.isMacOS) {
-          Process.run('open', [savePath]);
-        } else if (Platform.isLinux) {
-          Process.run('xdg-open', [savePath]);
-        }
-      } catch (e) {
-        debugPrint('打开文件夹失败: $e');
-      }
-    } else {
+  void _locateImageFile(String imageUrl) async {
+    // 检查是否为本地文件
+    if (imageUrl.isEmpty || imageUrl.startsWith('http')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先在设置中配置图片保存路径')),
+        const SnackBar(content: Text('只能定位本地文件')),
+      );
+      return;
+    }
+    
+    try {
+      final file = File(imageUrl);
+      if (await file.exists()) {
+        if (Platform.isWindows) {
+          await Process.run('explorer', ['/select,', imageUrl]);
+          debugPrint('✅ 已定位文件: $imageUrl');
+        } else if (Platform.isMacOS) {
+          await Process.run('open', ['-R', imageUrl]);
+        } else if (Platform.isLinux) {
+          // Linux 上定位到文件所在文件夹
+          final directory = file.parent.path;
+          await Process.run('xdg-open', [directory]);
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文件不存在')),
+        );
+      }
+    } catch (e) {
+      debugPrint('定位文件失败: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('定位文件失败: $e')),
       );
     }
   }
@@ -1406,27 +1419,30 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                     border: Border.all(color: const Color(0xFF3A3A3C)),
                   ),
                   child: hasVideo
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.play_circle_outline,
-                                size: 32,
-                                color: Color(0xFF888888),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                videoUrl!.split('/').last,
-                                style: const TextStyle(
-                                  color: Color(0xFF666666),
-                                  fontSize: 9,
+                      ? Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            // 视频缩略图（首帧）
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: _buildVideoThumbnail(videoUrl!),
+                            ),
+                            // 播放按钮
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.5),
+                                  shape: BoxShape.circle,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                child: const Icon(
+                                  Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         )
                       : Center(
                           child: Icon(
@@ -1477,7 +1493,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             children: [
               Icon(Icons.folder_open, size: 16, color: Color(0xFF888888)),
               SizedBox(width: 8),
-              Text('打开文件夹', style: TextStyle(color: Color(0xFF888888))),
+              Text('定位文件', style: TextStyle(color: Color(0xFF888888))),
             ],
           ),
         ),
@@ -1494,29 +1510,175 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       ],
     ).then((value) {
       if (value == 'folder') {
-        _openVideoFolder();
+        _locateVideoFile(videoUrl);
       } else if (value == 'delete') {
         _deleteVideo(storyboardIndex, gridIndex);
       }
     });
   }
 
-  void _playVideo(String videoUrl) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('播放视频: $videoUrl')),
-    );
+  /// 构建视频缩略图（显示首帧）
+  Widget _buildVideoThumbnail(String videoUrl) {
+    final isLocalFile = !videoUrl.startsWith('http');
+    
+    if (isLocalFile) {
+      // 本地视频：检查是否有对应的首帧图片
+      final thumbnailPath = videoUrl.replaceAll('.mp4', '.jpg');
+      final thumbnailFile = File(thumbnailPath);
+      
+      return FutureBuilder<bool>(
+        key: ValueKey(thumbnailPath),  // ✅ 添加 key，确保每次都重新检查
+        future: thumbnailFile.exists(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            // 加载中
+            return Container(
+              color: const Color(0xFF1A1A1C),
+              child: const Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF888888)),
+                ),
+              ),
+            );
+          }
+          
+          if (snapshot.data == true) {
+            // 显示首帧图片
+            debugPrint('📷 显示首帧: $thumbnailPath');
+            return Image.file(
+              thumbnailFile,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                debugPrint('⚠️ 首帧加载失败: $error');
+                return Container(
+                  color: const Color(0xFF1A1A1C),
+                  child: const Center(
+                    child: Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 32,
+                    ),
+                  ),
+                );
+              },
+            );
+          } else {
+            // 首帧不存在，显示默认图标
+            debugPrint('⚠️ 首帧不存在: $thumbnailPath');
+            return Container(
+              color: const Color(0xFF1A1A1C),
+              child: const Center(
+                child: Icon(
+                  Icons.videocam,
+                  color: Color(0xFF888888),
+                  size: 32,
+                ),
+              ),
+            );
+          }
+        },
+      );
+    } else {
+      // 在线 URL：显示默认图标
+      return Container(
+        color: const Color(0xFF1A1A1C),
+        child: const Center(
+          child: Icon(
+            Icons.videocam,
+            color: Color(0xFF888888),
+            size: 32,
+          ),
+        ),
+      );
+    }
   }
 
-  void _openVideoFolder() {
-    final savePath = videoSavePathNotifier.value;
-    if (savePath != '未设置' && savePath.isNotEmpty) {
-      try {
-        if (Platform.isWindows) {
-          Process.run('explorer', [savePath]);
+  Future<void> _playVideo(String videoUrl) async {
+    try {
+      // 检查是否是本地文件
+      final isLocalFile = !videoUrl.startsWith('http');
+      
+      if (isLocalFile) {
+        // 本地文件：检查是否存在
+        final file = File(videoUrl);
+        if (await file.exists()) {
+          // Windows: 使用 cmd /c start 打开（兼容性最好）
+          final result = await Process.run(
+            'cmd',
+            ['/c', 'start', '', videoUrl],
+            runInShell: true,
+          );
+          
+          if (result.exitCode == 0) {
+            debugPrint('✅ 已用默认播放器打开视频: $videoUrl');
+          } else {
+            debugPrint('❌ 打开视频失败: exitCode=${result.exitCode}');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('打开视频失败')),
+              );
+            }
+          }
+        } else {
+          debugPrint('❌ 视频文件不存在: $videoUrl');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('视频文件不存在')),
+            );
+          }
         }
-      } catch (e) {
-        debugPrint('打开视频文件夹失败: $e');
+      } else {
+        // 网络 URL：用默认浏览器打开
+        await Process.run(
+          'cmd',
+          ['/c', 'start', '', videoUrl],
+          runInShell: true,
+        );
+        debugPrint('✅ 已在浏览器中打开: $videoUrl');
       }
+    } catch (e) {
+      debugPrint('❌ 打开视频失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开视频失败: $e')),
+        );
+      }
+    }
+  }
+
+  void _locateVideoFile(String videoUrl) async {
+    // 检查是否为本地文件
+    if (videoUrl.isEmpty || videoUrl.startsWith('http')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('只能定位本地文件')),
+      );
+      return;
+    }
+    
+    try {
+      final file = File(videoUrl);
+      if (await file.exists()) {
+        if (Platform.isWindows) {
+          await Process.run('explorer', ['/select,', videoUrl]);
+          debugPrint('✅ 已定位文件: $videoUrl');
+        } else if (Platform.isMacOS) {
+          await Process.run('open', ['-R', videoUrl]);
+        } else if (Platform.isLinux) {
+          // Linux 上定位到文件所在文件夹
+          final directory = file.parent.path;
+          await Process.run('xdg-open', [directory]);
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文件不存在')),
+        );
+      }
+    } catch (e) {
+      debugPrint('定位文件失败: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('定位文件失败: $e')),
+      );
     }
   }
 
@@ -2457,7 +2619,6 @@ ${widget.scriptContent}
     final row = _storyboards[storyboardIndex];
     final currentSelected = [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
     final newSelected = List<String>.from(currentSelected);
-    final isAdding = !newSelected.contains(assetId);
     
     if (newSelected.contains(assetId)) {
       newSelected.remove(assetId);
@@ -3208,29 +3369,6 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
     );
   }
   
-  /// 按句子拆分文本
-  List<String> _splitIntoSentences(String text) {
-    final sentences = <String>[];
-    final sentenceEndings = ['。', '！', '？', '...', '……', '.', '!', '?'];
-    
-    var current = '';
-    for (var i = 0; i < text.length; i++) {
-      current += text[i];
-      if (sentenceEndings.contains(text[i]) || 
-          (i < text.length - 2 && text.substring(i, i + 3) == '...') ||
-          (i < text.length - 1 && text.substring(i, i + 2) == '……')) {
-        sentences.add(current.trim());
-        current = '';
-      }
-    }
-    
-    if (current.trim().isNotEmpty) {
-      sentences.add(current.trim());
-    }
-    
-    return sentences;
-  }
-  
   /// 执行拆分（在指定位置）
   Future<void> _executeSplitAtPosition(int index, int position) async {
     final row = _storyboards[index];
@@ -3612,7 +3750,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         print('✅ 视频生成成功: $videoUrl');
         print('💾 下载并保存到本地...');
         
-        // ✅ 下载并保存视频到本地
+        // ✅ 下载并保存视频到本地（包括首帧提取）
         final savedPath = await _downloadAndSaveVideo(videoUrl, 'storyboard_${index + 1}');
         
         print('✅ 保存完成（使用本地路径）\n');
@@ -3623,6 +3761,12 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
             _storyboards[index] = row.copyWith(videoUrls: newUrls);
           });
           await _saveProductionData();
+          
+          // ✅ 延迟一下，确保首帧文件系统写入完成，然后再次刷新界面
+          await Future.delayed(const Duration(milliseconds: 300));
+          if (mounted) {
+            setState(() {});  // 再次刷新，显示首帧
+          }
           
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -3693,6 +3837,38 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
             await file.writeAsBytes(response.bodyBytes);
             
             debugPrint('✅ 视频已保存: $filePath');
+            
+            // ✅ 提取视频首帧
+            try {
+              debugPrint('📸 开始提取视频首帧...');
+              final ffmpegService = FFmpegService();
+              final thumbnailPath = filePath.replaceAll('.mp4', '.jpg');
+              debugPrint('   视频路径: $filePath');
+              debugPrint('   首帧路径: $thumbnailPath');
+              
+              final success = await ffmpegService.extractFrame(
+                videoPath: filePath,
+                outputPath: thumbnailPath,
+              );
+              
+              if (success) {
+                debugPrint('✅ 视频首帧提取成功: $thumbnailPath');
+                // 验证文件是否真的存在
+                final thumbnailFile = File(thumbnailPath);
+                if (await thumbnailFile.exists()) {
+                  final fileSize = await thumbnailFile.length();
+                  debugPrint('✅ 首帧文件已确认存在，大小: ${fileSize} 字节');
+                } else {
+                  debugPrint('⚠️ 首帧文件不存在！');
+                }
+              } else {
+                debugPrint('⚠️ 提取首帧失败: success = false');
+              }
+            } catch (e, stackTrace) {
+              debugPrint('⚠️ 提取首帧失败: $e');
+              debugPrint('堆栈: $stackTrace');
+            }
+            
             return filePath;
           } else {
             debugPrint('⚠️ 下载失败 (重试 $retry/3): HTTP ${response.statusCode}');

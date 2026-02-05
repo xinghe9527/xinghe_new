@@ -94,7 +94,16 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           );
     setState(() => _tasks.add(newTask));
     _saveTasks();
-    _logger.success('创建新的批量任务', module: '批量空间');
+    _logger.success('创建新的批量任务', module: '批量空间', extra: {
+      'taskId': newTask.id,
+      '任务索引': _tasks.length - 1,
+      '任务总数': _tasks.length,
+    });
+    
+    // 输出所有任务的ID，方便调试
+    for (var i = 0; i < _tasks.length; i++) {
+      _logger.info('任务 $i: ID=${_tasks[i].id}', module: '批量空间');
+    }
   }
 
   void _deleteTask(String taskId) {
@@ -124,8 +133,30 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   void _updateTask(VideoTask task) {
     final index = _tasks.indexWhere((t) => t.id == task.id);
     if (index != -1) {
+      _logger.info('【_updateTask】准备更新任务 [$index]', module: '批量空间', extra: {
+        'taskId': task.id,
+        '旧图片数': _tasks[index].referenceImages.length,
+        '新图片数': task.referenceImages.length,
+      });
+      
       _tasks[index] = task;
+      
+      _logger.success('【_updateTask】任务已更新', module: '批量空间', extra: {
+        'taskId': task.id,
+        'index': index,
+        'prompt': task.prompt.length > 20 ? '${task.prompt.substring(0, 20)}...' : task.prompt,
+        'images': task.referenceImages.length,
+        'videos': task.generatedVideos.length,
+      });
+      
+      // 输出更新后所有任务的状态
+      for (var i = 0; i < _tasks.length; i++) {
+        _logger.info('  更新后任务[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}', module: '批量空间');
+      }
+      
       _saveTasks();
+    } else {
+      _logger.warning('【_updateTask】任务不存在！', module: '批量空间', extra: {'taskId': task.id});
     }
     if (mounted) {
       setState(() {});
@@ -193,13 +224,19 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           }
         }
         
-        newTasks.add(VideoTask.create().copyWith(
+        // ✅ 创建唯一ID：时间戳 + 索引，确保每个任务ID都不同
+        final uniqueId = '${DateTime.now().millisecondsSinceEpoch}_$i';
+        final newTask = VideoTask(
+          id: uniqueId,
           prompt: prompt,
           ratio: ratio,
           seconds: seconds,
           batchCount: batchCount,
           referenceImages: referenceImages,
-        ));
+        );
+        
+        newTasks.add(newTask);
+        _logger.info('创建CSV任务 $i', module: '批量空间', extra: {'taskId': uniqueId});
       }
       
       if (newTasks.isEmpty) {
@@ -216,6 +253,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         _saveTasks();
         _logger.success('成功导入 ${newTasks.length} 个任务', module: '批量空间');
         _showMessage('成功导入 ${newTasks.length} 个任务');
+        
+        // ✅ 输出所有任务的ID，确认没有重复
+        _logger.info('导入后的任务列表:', module: '批量空间');
+        for (var i = 0; i < _tasks.length; i++) {
+          _logger.info('  任务[$i]: ID=${_tasks[i].id}, 提示词=${_tasks[i].prompt.length > 20 ? _tasks[i].prompt.substring(0, 20) : _tasks[i].prompt}...', module: '批量空间');
+        }
       }
     } catch (e) {
       _logger.error('导入CSV失败: $e', module: '批量空间');
@@ -414,6 +457,52 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         throw Exception('未配置视频 API');
       }
       
+      _logger.info('【批量空间】使用 Provider: $provider', module: '批量空间');
+      _logger.info('【批量空间】任务信息', module: '批量空间', extra: {
+        'taskId': task.id,
+        'prompt': task.prompt.substring(0, task.prompt.length > 30 ? 30 : task.prompt.length),
+        'model': task.model,
+        'ratio': task.ratio,
+        'seconds': task.seconds,
+        'batchCount': task.batchCount,
+        'referenceImages': task.referenceImages.length,
+      });
+      
+      // ✅ ComfyUI 特殊检查：需要选择工作流
+      if (provider.toLowerCase() == 'comfyui') {
+        final selectedWorkflow = prefs.getString('comfyui_selected_video_workflow');
+        if (selectedWorkflow == null || selectedWorkflow.isEmpty) {
+          throw Exception('未选择 ComfyUI 视频工作流\n\n请前往设置页面选择一个视频工作流');
+        }
+        
+        final workflowsJson = prefs.getString('comfyui_workflows');
+        if (workflowsJson == null || workflowsJson.isEmpty) {
+          throw Exception('未找到 ComfyUI 工作流数据\n\n请前往设置页面重新读取工作流');
+        }
+        
+        _logger.success('【批量空间】使用 ComfyUI 工作流: $selectedWorkflow', module: '批量空间');
+        
+        // ✅ 检查工作流类型
+        final workflows = List<Map<String, dynamic>>.from(
+          (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+        );
+        final workflow = workflows.firstWhere(
+          (w) => w['id'] == selectedWorkflow,
+          orElse: () => throw Exception('工作流未找到: $selectedWorkflow'),
+        );
+        
+        final workflowType = workflow['type'] as String?;
+        _logger.info('【批量空间】工作流类型: $workflowType', module: '批量空间');
+        
+        if (workflowType != 'video') {
+          _logger.warning('⚠️ 选中的工作流不是视频类型！', module: '批量空间', extra: {
+            'workflowName': workflow['name'],
+            'workflowType': workflowType,
+          });
+          throw Exception('选中的工作流不是视频类型\n\n当前工作流: ${workflow['name']}\n类型: $workflowType\n\n请在设置中选择一个视频工作流（类型应为 video）');
+        }
+      }
+      
       final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
       final apiFactory = ApiFactory();
       final service = apiFactory.createService(provider, config);
@@ -453,6 +542,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                 currentVideos[placeholderIndex] = savedPath;
                 _batchVideoProgress.remove(placeholder);
                 _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                
+                // ✅ 延迟后再次刷新，确保首帧显示
+                await Future.delayed(const Duration(milliseconds: 500));
+                if (mounted) {
+                  setState(() {});
+                }
               }
               
               return true;
@@ -526,6 +621,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                 currentVideos[placeholderIndex] = savedPath;
                 _batchVideoProgress.remove(placeholder);
                 _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                
+                // ✅ 延迟后再次刷新，确保首帧显示
+                await Future.delayed(const Duration(milliseconds: 500));
+                if (mounted) {
+                  setState(() {});
+                }
               }
               
               return true;
@@ -596,6 +697,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         // ✅ 提取首帧
         try {
           final thumbnailPath = filePath.replaceAll('.mp4', '.jpg');
+          _logger.info('开始提取视频首帧', module: '批量空间', extra: {
+            'video': filePath,
+            'thumbnail': thumbnailPath,
+          });
+          
           final ffmpeg = FFmpegService();
           final success = await ffmpeg.extractFrame(
             videoPath: filePath, 
@@ -1082,7 +1188,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       return MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onTap: () => _showImageSourceDialog(task),
+          onTap: () {
+            _logger.info('点击添加图片', module: '批量空间', extra: {'taskId': task.id});
+            _showImageSourceDialog(task.id);  // ✅ 传递 task ID
+          },
           child: Center(
             child: Icon(
               Icons.add_photo_alternate_outlined,
@@ -1099,7 +1208,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       return MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onTap: () => _showImagesDialog(task),  // 点击查看大图并可添加更多
+          onTap: () {
+            _logger.info('点击查看图片', module: '批量空间', extra: {'taskId': task.id});
+            _showImagesDialog(task.id);  // ✅ 传递 task ID
+          },
           child: Container(
             height: 60,
             decoration: BoxDecoration(
@@ -1118,7 +1230,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
-        onTap: () => _showImagesDialog(task),
+        onTap: () {
+          _logger.info('点击查看多张图片', module: '批量空间', extra: {'taskId': task.id, '图片数': task.referenceImages.length});
+          _showImagesDialog(task.id);  // ✅ 传递 task ID
+        },
         child: Container(
           height: 60,
           decoration: BoxDecoration(
@@ -1173,9 +1288,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   Widget _buildPromptCell(VideoTask task) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: TextField(
-        controller: TextEditingController(text: task.prompt),
-        maxLines: 2,
+      child: TextFormField(
+        initialValue: task.prompt,
+        maxLines: null,  // ✅ 允许多行
+        minLines: 1,
         style: TextStyle(color: AppTheme.textColor, fontSize: 13),
         decoration: InputDecoration(
           hintText: '输入视频描述...',
@@ -1184,21 +1300,30 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           contentPadding: EdgeInsets.zero,
           isDense: true,
         ),
-        onChanged: (v) => _updateTask(task.copyWith(prompt: v)),
+        onChanged: (v) {
+          // ✅ 使用 post frame callback 避免在构建期间调用 setState
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _updateTask(task.copyWith(prompt: v));
+          });
+        },
       ),
     );
   }
 
   /// 构建视频单元格
   Widget _buildVideoCell(VideoTask task) {
-    // 过滤掉占位符，只显示真实视频
-    final realVideos = task.generatedVideos.where((v) => 
-      !v.startsWith('loading_') && !v.startsWith('failed_')
+    // 过滤掉失败的占位符，保留真实视频和加载中的视频
+    final allVideos = task.generatedVideos.where((v) => 
+      !v.startsWith('failed_')
     ).toList();
     
-    // 检查是否有加载中的视频
-    final hasLoading = task.generatedVideos.any((v) => v.startsWith('loading_'));
+    // 真实视频（不包括 loading）
+    final realVideos = allVideos.where((v) => !v.startsWith('loading_')).toList();
     
+    // 检查是否有加载中的视频
+    final hasLoading = allVideos.any((v) => v.startsWith('loading_'));
+    
+    // ✅ 如果没有任何视频（包括加载中），显示"等待生成"
     if (realVideos.isEmpty && !hasLoading) {
       return Center(
         child: Text(
@@ -1211,7 +1336,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       );
     }
     
-    if (hasLoading) {
+    // ✅ 如果只有加载中的视频，没有真实视频，显示加载圈
+    if (realVideos.isEmpty && hasLoading) {
       return Center(
         child: SizedBox(
           width: 20,
@@ -1224,43 +1350,95 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       );
     }
     
+    // ✅ 单个真实视频
     if (realVideos.length == 1) {
-      // 单个视频直接显示播放按钮
-      return MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: () => _playVideo(realVideos.first),
-          child: Container(
-            height: 60,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-              color: AppTheme.textColor.withOpacity(0.05),
-            ),
-            child: const Center(
-              child: Icon(Icons.play_circle_outline, color: Colors.white, size: 32),
+      final videoPath = realVideos.first;
+      
+      if (!hasLoading) {
+        // 只有一个视频且没有生成中的，直接显示
+        return MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: () => _playVideo(videoPath),
+            onSecondaryTapDown: (details) => _showSingleVideoContextMenu(context, details, videoPath, task),
+            child: _buildVideoThumbnail(videoPath, clickable: false),
+          ),
+        );
+      } else {
+        // 有一个视频 + 有生成中的，显示视频 + 生成中标记
+        final loadingVideos = allVideos.where((v) => v.startsWith('loading_')).toList();
+        
+        return MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: () => _showVideosDialog(task.id),  // ✅ 点击弹出对话框
+            child: Stack(
+              children: [
+                _buildVideoThumbnail(videoPath, clickable: false),
+                // 生成中标记
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.orange,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 10,
+                          height: 10,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${loadingVideos.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-      );
+        );
+      }
     }
     
-    // 多个视频显示数量 - 点击弹出对话框
+    // ✅ 有真实视频（可能还有生成中的）- 点击弹出对话框查看所有视频（包括生成中的）
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
-        onTap: () => _showVideosDialog(task, realVideos),
+        onTap: () => _showVideosDialog(task.id),  // ✅ 传递 task ID
         child: Stack(
           children: [
             // ✅ 背景显示第一个视频的缩略图
             _buildVideoThumbnail(realVideos.first),
-            // 数量标记
+            // 数量标记（显示已完成/总数）
             Positioned(
               top: 4,
               right: 4,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppTheme.accentColor,
+                  color: hasLoading ? Colors.orange : AppTheme.accentColor,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
@@ -1270,7 +1448,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   ],
                 ),
                 child: Text(
-                  '${realVideos.length}',
+                  hasLoading ? '${realVideos.length}/${allVideos.length}' : '${realVideos.length}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -1306,6 +1484,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     final thumbnailFile = File(thumbnailPath);
     
     Widget content = FutureBuilder<bool>(
+      key: ValueKey(thumbnailPath),  // ✅ 添加 key 确保每次都重新检查
       future: thumbnailFile.exists(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -1551,7 +1730,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   }
 
   /// 显示图片来源选择对话框
-  void _showImageSourceDialog(VideoTask task) {
+  void _showImageSourceDialog(String taskId) {
+    _logger.info('显示图片来源对话框', module: '批量空间', extra: {'taskId': taskId});
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1566,7 +1746,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               child: GestureDetector(
                 onTap: () {
                   Navigator.pop(context);
-                  _addLocalImages(task);
+                  // ✅ 传递 task ID
+                  _addLocalImages(taskId);
                 },
                 child: Container(
                   padding: const EdgeInsets.all(20),
@@ -1609,7 +1790,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               child: GestureDetector(
                 onTap: () {
                   Navigator.pop(context);
-                  _addAssetLibraryImages(task);
+                  // ✅ 传递 task ID
+                  _addAssetLibraryImages(taskId);
                 },
                 child: Container(
                   padding: const EdgeInsets.all(20),
@@ -1658,8 +1840,15 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   }
 
   /// 添加本地图片
-  Future<void> _addLocalImages(VideoTask task) async {
+  Future<void> _addLocalImages(String taskId) async {
     try {
+      _logger.info('【添加本地图片】开始', module: '批量空间', extra: {'接收到的taskId': taskId});
+      
+      // ✅ 先输出所有任务的ID，确认列表状态
+      for (var i = 0; i < _tasks.length; i++) {
+        _logger.info('  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}', module: '批量空间');
+      }
+      
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: true,
@@ -1667,22 +1856,46 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       
       if (result != null && result.files.isNotEmpty) {
         final newImages = result.files.map((f) => f.path!).toList();
+        _logger.info('【添加本地图片】选择了 ${newImages.length} 张图片', module: '批量空间');
+        
+        // ✅ 从列表中获取正确的 task
+        final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
+        if (taskIndex == -1) {
+          _logger.error('【添加本地图片】未找到任务！', module: '批量空间', extra: {'taskId': taskId});
+          _showMessage('任务不存在', isError: true);
+          return;
+        }
+        
+        final task = _tasks[taskIndex];
+        _logger.info('【添加本地图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}', module: '批量空间');
+        
         final updatedTask = task.copyWith(
           referenceImages: [...task.referenceImages, ...newImages],
         );
+        
+        _logger.info('更新任务，图片总数: ${updatedTask.referenceImages.length}', module: '批量空间');
         _updateTask(updatedTask);
         _showMessage('添加了 ${newImages.length} 张图片');
-        _logger.success('添加本地图片', module: '批量空间', extra: {'数量': newImages.length});
+        _logger.success('添加本地图片成功', module: '批量空间', extra: {'数量': newImages.length, '任务索引': taskIndex});
+      } else {
+        _logger.info('用户取消选择图片', module: '批量空间');
       }
-    } catch (e) {
-      _logger.error('添加本地图片失败: $e', module: '批量空间');
+    } catch (e, stackTrace) {
+      _logger.error('添加本地图片失败: $e', module: '批量空间', extra: {'stackTrace': stackTrace.toString()});
       _showMessage('添加失败: $e', isError: true);
     }
   }
 
   /// 添加素材库图片
-  Future<void> _addAssetLibraryImages(VideoTask task) async {
+  Future<void> _addAssetLibraryImages(String taskId) async {
     try {
+      _logger.info('【添加素材库图片】开始', module: '批量空间', extra: {'接收到的taskId': taskId});
+      
+      // ✅ 先输出所有任务的ID，确认列表状态
+      for (var i = 0; i < _tasks.length; i++) {
+        _logger.info('  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}', module: '批量空间');
+      }
+      
       // 加载素材库数据
       final prefs = await SharedPreferences.getInstance();
       final assetsJson = prefs.getString('asset_library_data');
@@ -1710,6 +1923,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         }
       });
       
+      _logger.info('素材库中找到 ${allAssets.length} 张图片', module: '批量空间');
+      
       if (allAssets.isEmpty) {
         _showMessage('素材库中没有图片\n请先在素材库中添加图片', isError: true);
         return;
@@ -1720,15 +1935,32 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       
       if (selectedAssets != null && selectedAssets.isNotEmpty) {
         final newImages = selectedAssets.map((asset) => asset['path']!).toList();
+        _logger.info('【添加素材库图片】选择了 ${newImages.length} 张图片', module: '批量空间');
+        
+        // ✅ 从列表中获取正确的 task
+        final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
+        if (taskIndex == -1) {
+          _logger.error('【添加素材库图片】未找到任务！', module: '批量空间', extra: {'taskId': taskId});
+          _showMessage('任务不存在', isError: true);
+          return;
+        }
+        
+        final task = _tasks[taskIndex];
+        _logger.info('【添加素材库图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}', module: '批量空间');
+        
         final updatedTask = task.copyWith(
           referenceImages: [...task.referenceImages, ...newImages],
         );
+        
+        _logger.info('更新任务，图片总数: ${updatedTask.referenceImages.length}', module: '批量空间');
         _updateTask(updatedTask);
         _showMessage('从素材库添加了 ${newImages.length} 张图片');
-        _logger.success('从素材库添加图片', module: '批量空间', extra: {'数量': newImages.length});
+        _logger.success('从素材库添加图片成功', module: '批量空间', extra: {'数量': newImages.length, '任务索引': taskIndex});
+      } else {
+        _logger.info('用户取消选择', module: '批量空间');
       }
-    } catch (e) {
-      _logger.error('从素材库添加图片失败: $e', module: '批量空间');
+    } catch (e, stackTrace) {
+      _logger.error('从素材库添加图片失败: $e', module: '批量空间', extra: {'stackTrace': stackTrace.toString()});
       _showMessage('添加失败: $e', isError: true);
     }
   }
@@ -1882,13 +2114,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   }
 
   /// 显示图片对话框
-  void _showImagesDialog(VideoTask task) {
+  void _showImagesDialog(String taskId) {
     showDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           // ✅ 实时获取最新的task数据
-          final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+          final currentTask = _tasks.firstWhere((t) => t.id == taskId);
           
           return AlertDialog(
             backgroundColor: AppTheme.surfaceBackground,
@@ -1905,7 +2137,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   child: GestureDetector(
                     onTap: () {
                       Navigator.pop(dialogContext);
-                      _showImageSourceDialog(task);
+                      _showImageSourceDialog(taskId);  // ✅ 传递 task ID
                     },
                     child: Container(
                       padding: const EdgeInsets.all(8),
@@ -1948,7 +2180,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                           ElevatedButton.icon(
                             onPressed: () {
                               Navigator.pop(dialogContext);
-                              _showImageSourceDialog(currentTask);
+                              _showImageSourceDialog(taskId);  // ✅ 传递 task ID
                             },
                             icon: const Icon(Icons.add),
                             label: const Text('添加图片'),
@@ -2036,22 +2268,37 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     );
   }
 
-  /// 显示视频对话框
-  void _showVideosDialog(VideoTask task, List<String> realVideos) {
+  /// 显示视频对话框（包括已完成和生成中的视频）
+  void _showVideosDialog(String taskId) {
     showDialog(
       context: context,
+      barrierDismissible: true,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           // ✅ 实时获取最新的task数据
-          final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
-          final currentRealVideos = currentTask.generatedVideos.where((v) => 
-            !v.startsWith('loading_') && !v.startsWith('failed_')
+          final currentTask = _tasks.firstWhere((t) => t.id == taskId);
+          
+          // 所有视频（包括生成中的，但不包括失败的）
+          final allVideos = currentTask.generatedVideos.where((v) => 
+            !v.startsWith('failed_')
           ).toList();
+          
+          final realVideos = allVideos.where((v) => !v.startsWith('loading_')).toList();
+          final loadingVideos = allVideos.where((v) => v.startsWith('loading_')).toList();
+          
+          // ✅ 如果有生成中的视频，定期刷新对话框
+          if (loadingVideos.isNotEmpty) {
+            Future.delayed(const Duration(seconds: 1), () {
+              if (context.mounted) {
+                setDialogState(() {});
+              }
+            });
+          }
           
           return AlertDialog(
             backgroundColor: AppTheme.surfaceBackground,
             title: Text(
-              '生成视频 (${currentRealVideos.length})',
+              '生成视频 (${realVideos.length}${loadingVideos.isNotEmpty ? " + ${loadingVideos.length}生成中" : ""})',
               style: TextStyle(color: AppTheme.textColor),
             ),
             content: SizedBox(
@@ -2064,9 +2311,61 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   mainAxisSpacing: 12,
                   childAspectRatio: 16 / 9,
                 ),
-                itemCount: currentRealVideos.length,
+                itemCount: allVideos.length,  // ✅ 显示所有视频（包括生成中的）
                 itemBuilder: (context, index) {
-                  final videoPath = currentRealVideos[index];
+                  final videoPath = allVideos[index];
+                  
+                  // ✅ 如果是加载中的视频，显示进度
+                  if (videoPath.startsWith('loading_')) {
+                    final progress = _batchVideoProgress[videoPath] ?? 0;
+                    
+                    return Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: AppTheme.inputBackground,
+                        border: Border.all(color: AppTheme.accentColor.withOpacity(0.3)),
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  CircularProgressIndicator(
+                                    value: progress / 100.0,
+                                    strokeWidth: 3,
+                                    backgroundColor: Colors.grey.withOpacity(0.2),
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      progress == 0 ? Colors.blue : AppTheme.accentColor,
+                                    ),
+                                  ),
+                                  Text(
+                                    '$progress%',
+                                    style: TextStyle(
+                                      color: AppTheme.textColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              progress == 0 ? '等待中...' : '生成中...',
+                              style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  
+                  // ✅ 真实视频
                   final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
                   final thumbnailFile = File(thumbnailPath);
                   
@@ -2093,6 +2392,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(8),
                               child: FutureBuilder<bool>(
+                                key: ValueKey(thumbnailPath),  // ✅ 添加 key
                                 future: thumbnailFile.exists(),
                                 builder: (context, snapshot) {
                                   if (snapshot.data == true) {
@@ -2169,7 +2469,98 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     );
   }
 
-  /// 显示视频右键菜单
+  /// 显示单个视频右键菜单（表格行内）
+  void _showSingleVideoContextMenu(
+    BuildContext context,
+    TapDownDetails details,
+    String videoPath,
+    VideoTask task,
+  ) {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final menuPosition = RelativeRect.fromRect(
+      Rect.fromPoints(details.globalPosition, details.globalPosition),
+      Offset.zero & overlay.size,
+    );
+    
+    showMenu(
+      context: context,
+      position: menuPosition,
+      color: AppTheme.surfaceBackground,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      items: [
+        PopupMenuItem(
+          value: 'play',
+          child: Row(
+            children: [
+              Icon(Icons.play_circle_outline, size: 18, color: AppTheme.textColor),
+              const SizedBox(width: 12),
+              Text('播放视频', style: TextStyle(color: AppTheme.textColor)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'open_folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 18, color: AppTheme.textColor),
+              const SizedBox(width: 12),
+              Text('定位文件', style: TextStyle(color: AppTheme.textColor)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+              const SizedBox(width: 12),
+              Text('删除视频', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) async {
+      if (value == 'play') {
+        await _playVideo(videoPath);
+      } else if (value == 'open_folder') {
+        try {
+          await Process.run('explorer', ['/select,', videoPath]);
+          _logger.success('已定位文件', module: '批量空间');
+        } catch (e) {
+          _logger.error('定位文件失败: $e', module: '批量空间');
+          _showMessage('定位文件失败', isError: true);
+        }
+      } else if (value == 'delete') {
+        // 删除视频
+        final newVideos = List<String>.from(task.generatedVideos);
+        newVideos.remove(videoPath);
+        _updateTask(task.copyWith(generatedVideos: newVideos));
+        
+        _logger.info('删除视频', module: '批量空间', extra: {'path': videoPath});
+        
+        // 删除本地文件
+        try {
+          if (!videoPath.startsWith('http')) {
+            final file = File(videoPath);
+            if (await file.exists()) {
+              await file.delete();
+              // 同时删除首帧
+              final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+              final thumbnailFile = File(thumbnailPath);
+              if (await thumbnailFile.exists()) {
+                await thumbnailFile.delete();
+              }
+              _logger.success('已删除本地文件', module: '批量空间');
+            }
+          }
+        } catch (e) {
+          _logger.error('删除本地文件失败: $e', module: '批量空间');
+        }
+      }
+    });
+  }
+
+  /// 显示视频右键菜单（对话框内）
   void _showVideoContextMenu(
     BuildContext context,
     TapDownDetails details,
@@ -2205,7 +2596,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             children: [
               Icon(Icons.folder_open, size: 18, color: AppTheme.textColor),
               const SizedBox(width: 12),
-              Text('查看文件夹', style: TextStyle(color: AppTheme.textColor)),
+              Text('定位文件', style: TextStyle(color: AppTheme.textColor)),
             ],
           ),
         ),
@@ -2224,13 +2615,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       if (value == 'play') {
         await _playVideo(videoPath);
       } else if (value == 'open_folder') {
-        final directory = path.dirname(videoPath);
         try {
-          await Process.run('explorer', [directory]);
-          _logger.success('已打开文件夹', module: '批量空间');
+          await Process.run('explorer', ['/select,', videoPath]);
+          _logger.success('已定位文件', module: '批量空间');
         } catch (e) {
-          _logger.error('打开文件夹失败: $e', module: '批量空间');
-          _showMessage('打开文件夹失败', isError: true);
+          _logger.error('定位文件失败: $e', module: '批量空间');
+          _showMessage('定位文件失败', isError: true);
         }
       } else if (value == 'delete') {
         // 删除视频

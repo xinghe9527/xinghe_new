@@ -35,7 +35,7 @@ class UpdateService {
       final latestVersion = response['version'] as String;
       final minVersion = response['min_version'] as String?;
       final forceUpdate = response['force_update'] as bool? ?? false;
-      final downloadUrl = response['update_package_url'] as String;
+      final downloadUrl = response['download_url'] as String;
       final updateLog = response['update_log'] as String?;
 
       debugPrint('🆕 最新版本: $latestVersion');

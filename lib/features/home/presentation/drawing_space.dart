@@ -1134,7 +1134,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     final menuItems = <PopupMenuEntry<String>>[];
     
     if (isLocalFile) {
-      // 本地文件：显示"查看文件夹"
+      // 本地文件：显示"定位文件"
       menuItems.add(
         PopupMenuItem<String>(
           value: 'open_folder',
@@ -1142,7 +1142,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             children: [
               Icon(Icons.folder_open, size: 18, color: AppTheme.textColor),
               const SizedBox(width: 12),
-              Text('查看文件夹', style: TextStyle(color: AppTheme.textColor)),
+              Text('定位文件', style: TextStyle(color: AppTheme.textColor)),
             ],
           ),
         ),
@@ -1182,17 +1182,16 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     });
   }
 
-  // 打开文件所在文件夹
+  // 定位文件
   Future<void> _openFileLocation(String filePath) async {
     try {
       final file = File(filePath);
       if (await file.exists()) {
-        final directory = file.parent.path;
         await Process.run('explorer', ['/select,', filePath], runInShell: true);
-        _logger.success('已打开文件夹', module: '绘图空间', extra: {'path': directory});
+        _logger.success('已定位文件', module: '绘图空间', extra: {'path': filePath});
       }
     } catch (e) {
-      _logger.error('打开文件夹失败: $e', module: '绘图空间');
+      _logger.error('定位文件失败: $e', module: '绘图空间');
     }
   }
 
