@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'features/home/presentation/home_screen.dart';
 import 'core/logger/log_manager.dart';
@@ -20,24 +18,8 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // 1. 加载环境变量
-  try {
-    await dotenv.load(fileName: ".env");
-    debugPrint('✅ 环境变量加载成功');
-  } catch (e) {
-    debugPrint('⚠️ 环境变量加载失败: $e');
-  }
-  
-  // 2. 初始化 Supabase
-  try {
-    await Supabase.initialize(
-      url: dotenv.env['SUPABASE_URL'] ?? '',
-      anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
-    );
-    debugPrint('✅ Supabase 初始化成功');
-  } catch (e) {
-    debugPrint('⚠️ Supabase 初始化失败: $e');
-  }
+  // ✅ 已移除 Supabase 初始化，改用阿里云 OSS
+  debugPrint('✅ 应用初始化开始');
   
   await windowManager.ensureInitialized();
 

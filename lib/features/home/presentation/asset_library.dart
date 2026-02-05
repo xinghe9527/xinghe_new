@@ -1279,7 +1279,7 @@ class AssetItem {
   bool isUploading;
   String? uploadedId;
   String? characterInfo;  // 角色信息（格式：@username,）
-  String? videoUrl;       // Supabase 视频 URL
+  String? videoUrl;       // ✅ 阿里云 OSS 视频 URL
 
   AssetItem({
     required this.path,

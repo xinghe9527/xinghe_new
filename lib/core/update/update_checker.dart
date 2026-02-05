@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'update_info.dart';
 import 'update_dialog.dart';
 
-/// 版本检测器
+/// 版本检测器（使用阿里云 OSS）
 class UpdateChecker {
-  final supabase = Supabase.instance.client;
+  // ✅ 阿里云 OSS 版本配置文件地址
+  static const String _versionUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/version.json';
 
   /// 检查更新
   /// 
@@ -19,26 +21,27 @@ class UpdateChecker {
 
       debugPrint('📱 当前版本: $currentVersion');
 
-      // 2. 从 Supabase 查询最新版本信息
-      final response = await supabase
-          .from('app_versions')
-          .select()
-          .eq('is_active', true)
-          .order('created_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
+      // 2. 从阿里云 OSS 获取版本信息
+      debugPrint('🔍 检查更新: $_versionUrl');
+      final response = await http.get(Uri.parse(_versionUrl)).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw Exception('请求超时'),
+      );
 
-      if (response == null) {
-        debugPrint('⚠️ 未找到版本信息');
+      if (response.statusCode != 200) {
+        debugPrint('⚠️ 获取版本信息失败: HTTP ${response.statusCode}');
         return null;
       }
 
-      final latestVersion = response['version'] as String;
-      final minVersion = response['min_version'] as String?;
-      final forceUpdate = response['force_update'] as bool? ?? false;
-      final updateUrl = response['update_package_url'] as String;
-      final updateLog = response['update_log'] as String?;
-      final fileSize = response['file_size'] as int?;
+      // 3. 解析版本信息
+      final versionData = jsonDecode(response.body) as Map<String, dynamic>;
+      
+      final latestVersion = versionData['version'] as String;
+      final minVersion = versionData['min_version'] as String?;
+      final forceUpdate = versionData['force_update'] as bool? ?? false;
+      final updateUrl = versionData['download_url'] as String;
+      final updateLog = versionData['update_log'] as String?;
+      final fileSize = versionData['file_size'] as int?;
 
       debugPrint('🆕 最新版本: $latestVersion');
       debugPrint('📦 下载链接: $updateUrl');

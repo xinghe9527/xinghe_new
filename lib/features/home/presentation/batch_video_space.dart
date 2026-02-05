@@ -224,6 +224,20 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           }
         }
         
+        // 解析生成视频
+        final generatedVideos = <String>[];
+        if (parts.length > 5 && parts[5].trim().isNotEmpty) {
+          final videoPaths = parts[5].split('|');
+          for (var videoPath in videoPaths) {
+            final trimmedPath = videoPath.trim();
+            if (trimmedPath.isNotEmpty && File(trimmedPath).existsSync()) {
+              generatedVideos.add(trimmedPath);
+            } else if (trimmedPath.isNotEmpty) {
+              warnings.add('第${i + 2}行: 视频路径无效 - $trimmedPath');
+            }
+          }
+        }
+        
         // ✅ 创建唯一ID：时间戳 + 索引，确保每个任务ID都不同
         final uniqueId = '${DateTime.now().millisecondsSinceEpoch}_$i';
         final newTask = VideoTask(
@@ -233,6 +247,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           seconds: seconds,
           batchCount: batchCount,
           referenceImages: referenceImages,
+          generatedVideos: generatedVideos,
         );
         
         newTasks.add(newTask);
@@ -311,6 +326,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
 
   /// 显示导入预览对话框
   Future<bool?> _showImportPreview(List<VideoTask> tasks, List<String> warnings) async {
+    // 统计视频信息
+    final tasksWithVideos = tasks.where((t) => t.generatedVideos.isNotEmpty).length;
+    final totalVideos = tasks.fold<int>(0, (sum, t) => sum + t.generatedVideos.length);
+    
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -326,6 +345,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                 '即将导入 ${tasks.length} 个任务',
                 style: TextStyle(color: AppTheme.textColor, fontSize: 16, fontWeight: FontWeight.bold),
               ),
+              if (tasksWithVideos > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '其中 $tasksWithVideos 个任务包含 $totalVideos 个生成视频',
+                  style: TextStyle(color: AppTheme.accentColor, fontSize: 14),
+                ),
+              ],
               if (warnings.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -384,12 +410,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       if (result == null) return;
       
       final lines = <String>[];
-      lines.add('提示词,比例,时长,批量,参考图片');
+      lines.add('提示词,比例,时长,批量,参考图片,生成视频');
       
       for (var task in _tasks) {
         final prompt = task.prompt.contains(',') ? '"${task.prompt}"' : task.prompt;
         final images = task.referenceImages.join('|');
-        lines.add('$prompt,${task.ratio},${task.seconds},${task.batchCount},$images');
+        final videos = task.generatedVideos.join('|');
+        lines.add('$prompt,${task.ratio},${task.seconds},${task.batchCount},$images,$videos');
       }
       
       final file = File(result);

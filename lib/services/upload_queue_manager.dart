@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
-import 'package:xinghe_new/services/supabase_upload_service.dart';
+import 'package:xinghe_new/services/aliyun_oss_upload_service.dart';  // ✅ 改为阿里云上传服务
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
@@ -53,7 +53,7 @@ class UploadQueueManager {
   bool _ffmpegLocked = false;  // ✅ FFmpeg 串行锁
   
   final FFmpegService _ffmpegService = FFmpegService();
-  final SupabaseUploadService _uploadService = SupabaseUploadService();
+  final AliyunOssUploadService _uploadService = AliyunOssUploadService();  // ✅ 使用阿里云上传服务
   final LogManager _logger = LogManager();
   
   // 任务状态更新回调
@@ -97,12 +97,13 @@ class UploadQueueManager {
       task.status = UploadTaskStatus.ffmpegCompleted;
       _notifyStatusChange(task);
       
-      // Step 2: 上传到 Supabase（并发，不需要等待）
+      // Step 2: 上传到阿里云 OSS（并发，不需要等待）
       task.status = UploadTaskStatus.uploading;
       _notifyStatusChange(task);
-      _logger.info('Step 2/4: 上传到 Supabase', module: '上传队列');
+      _logger.info('Step 2/4: 上传到阿里云 OSS', module: '上传队列');
       final videoUrl = await _uploadService.uploadVideo(videoFile);
       task.videoUrl = videoUrl;
+      _logger.success('视频上传成功，URL: $videoUrl', module: '上传队列');
       
       // Step 3: 调用 Sora API 创建角色
       _logger.info('Step 3/4: 创建 Sora 角色', module: '上传队列');
