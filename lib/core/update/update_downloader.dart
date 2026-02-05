@@ -10,21 +10,21 @@ class UpdateDownloader {
   final ValueNotifier<double> progressNotifier = ValueNotifier<double>(0.0);
   final ValueNotifier<String> statusNotifier = ValueNotifier<String>('准备下载...');
 
-  /// 下载更新包
+  /// 下载更新包（EXE 安装程序）
   /// 
   /// 返回: 下载的文件路径，失败返回 null
   Future<String?> download(String url) async {
     try {
       // 1. 获取临时目录
       final tempDir = await getTemporaryDirectory();
-      final savePath = '${tempDir.path}\\xinghe_update.zip';
+      final savePath = '${tempDir.path}\\xinghe_update.exe';  // ✅ 改为 .exe
 
       debugPrint('📥 开始下载更新包');
       debugPrint('📂 保存路径: $savePath');
 
       statusNotifier.value = '正在下载...';
 
-      // 2. 下载文件
+      // 2. 下载文件（添加防盗链 Referer）
       await _dio.download(
         url,
         savePath,
@@ -43,6 +43,10 @@ class UpdateDownloader {
         options: Options(
           receiveTimeout: const Duration(minutes: 10),
           sendTimeout: const Duration(minutes: 10),
+          headers: {
+            'Referer': 'xinghe.ros',        // ✅ 防盗链 Referer
+            'x-xinghe-token': 'xinghe5201314',  // ✅ 安全暗号
+          },
         ),
       );
 

@@ -5,10 +5,16 @@ import 'dart:convert';
 import 'update_info.dart';
 import 'update_dialog.dart';
 
-/// 版本检测器（使用阿里云 OSS）
+/// 版本检测器（使用阿里云函数计算）
 class UpdateChecker {
-  // ✅ 阿里云 OSS 版本配置文件地址
-  static const String _versionUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/version.json';
+  // ✅ 阿里云函数计算公网地址
+  static const String _versionUrl = 'https://xinghe-angchuan-agxvbiyacd.cn-chengdu.fcapp.run';
+  
+  // ✅ 安全暗号 (Token)
+  static const String _token = 'xinghe5201314';
+  
+  // ✅ 固定的下载地址
+  static const String _downloadUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/app_release/xingheAI_v1.0.1.exe';
 
   /// 检查更新
   /// 
@@ -21,9 +27,14 @@ class UpdateChecker {
 
       debugPrint('📱 当前版本: $currentVersion');
 
-      // 2. 从阿里云 OSS 获取版本信息
+      // 2. 从阿里云函数计算获取版本信息
       debugPrint('🔍 检查更新: $_versionUrl');
-      final response = await http.get(Uri.parse(_versionUrl)).timeout(
+      final response = await http.get(
+        Uri.parse(_versionUrl),
+        headers: {
+          'x-xinghe-token': _token,  // ✅ 添加安全暗号
+        },
+      ).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw Exception('请求超时'),
       );
@@ -33,18 +44,24 @@ class UpdateChecker {
         return null;
       }
 
-      // 3. 解析版本信息
+      // 3. 解析版本信息（后端返回格式: {"status":"running", "version":"1.0.0"}）
       final versionData = jsonDecode(response.body) as Map<String, dynamic>;
       
-      final latestVersion = versionData['version'] as String;
+      debugPrint('📦 后端返回数据: $versionData');
+      
+      // 从后端返回中提取版本号
+      final latestVersion = versionData['version'] as String? ?? '1.0.0';
       final minVersion = versionData['min_version'] as String?;
       final forceUpdate = versionData['force_update'] as bool? ?? false;
-      final updateUrl = versionData['download_url'] as String;
       final updateLog = versionData['update_log'] as String?;
-      final fileSize = versionData['file_size'] as int?;
+      // ✅ 支持 double 类型的 file_size（例如 11.63）
+      final fileSize = (versionData['file_size'] as num?)?.toDouble();
+      
+      // 使用固定的下载地址
+      final updateUrl = _downloadUrl;
 
       debugPrint('🆕 最新版本: $latestVersion');
-      debugPrint('📦 下载链接: $updateUrl');
+      debugPrint('📥 下载地址: $updateUrl');
 
       // 3. 对比版本
       final needUpdate = UpdateInfo.compareVersion(currentVersion, latestVersion) < 0;

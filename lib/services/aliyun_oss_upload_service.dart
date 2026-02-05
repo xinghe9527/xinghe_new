@@ -13,6 +13,9 @@ class AliyunOssUploadService {
   // ✅ 阿里云函数计算公网地址
   static const String _uploadUrl = 'https://xinghe-angchuan-agxvbiyacd.cn-chengdu.fcapp.run';
   
+  // ✅ 安全暗号 (Token)
+  static const String _token = 'xinghe5201314';
+  
   /// 上传视频文件到阿里云 OSS（带重试）
   /// 
   /// [videoFile] 本地视频文件
@@ -35,7 +38,8 @@ class AliyunOssUploadService {
         // 3. 准备 multipart 请求
         final request = http.MultipartRequest('POST', Uri.parse(_uploadUrl));
         
-        // ✅ 不添加任何自定义 Header，让 http 包自动处理
+        // ✅ 添加 Token 校验头
+        request.headers['x-xinghe-token'] = _token;
         
         // 4. 添加文件（字段名：file）
         final fileName = 'video_${DateTime.now().millisecondsSinceEpoch}.mp4';
@@ -118,7 +122,8 @@ class AliyunOssUploadService {
       // 准备 multipart 请求
       final request = http.MultipartRequest('POST', Uri.parse(_uploadUrl));
       
-      // ✅ 不添加任何自定义 Header，让 http 包自动处理
+      // ✅ 添加 Token 校验头
+      request.headers['x-xinghe-token'] = _token;
       
       // 添加文件
       final fileName = 'image_${DateTime.now().millisecondsSinceEpoch}.$extension';

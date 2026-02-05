@@ -4,10 +4,16 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-/// 版本更新服务（使用阿里云 OSS）
+/// 版本更新服务（使用阿里云函数计算）
 class UpdateService {
-  // ✅ 阿里云 OSS 版本配置文件地址
-  static const String _versionUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/version.json';
+  // ✅ 阿里云函数计算公网地址
+  static const String _versionUrl = 'https://xinghe-angchuan-agxvbiyacd.cn-chengdu.fcapp.run';
+  
+  // ✅ 安全暗号 (Token)
+  static const String _token = 'xinghe5201314';
+  
+  // ✅ 固定的下载地址
+  static const String _downloadUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/app_release/xingheAI_v1.0.1.exe';
 
   /// 检查更新
   /// 返回: UpdateInfo 如果有更新, null 如果无需更新或检查失败
@@ -19,9 +25,14 @@ class UpdateService {
 
       debugPrint('📱 当前版本: $localVersion');
 
-      // 2. 从阿里云 OSS 获取版本信息
+      // 2. 从阿里云函数计算获取版本信息
       debugPrint('🔍 检查更新: $_versionUrl');
-      final response = await http.get(Uri.parse(_versionUrl)).timeout(
+      final response = await http.get(
+        Uri.parse(_versionUrl),
+        headers: {
+          'x-xinghe-token': _token,
+        },
+      ).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw Exception('请求超时'),
       );
@@ -31,17 +42,23 @@ class UpdateService {
         return null;
       }
 
-      // 3. 解析版本信息
+      // 3. 解析版本信息（后端返回格式: {"status":"running", "version":"1.0.0"}）
       final versionData = jsonDecode(response.body) as Map<String, dynamic>;
       
-      final latestVersion = versionData['version'] as String;
+      debugPrint('📦 后端返回数据: $versionData');
+      
+      // 从后端返回中提取版本号
+      final latestVersion = versionData['version'] as String? ?? '1.0.0';
       final minVersion = versionData['min_version'] as String?;
       final forceUpdate = versionData['force_update'] as bool? ?? false;
-      final downloadUrl = versionData['download_url'] as String;
       final updateLog = versionData['update_log'] as String?;
+      
+      // 使用固定的下载地址
+      final downloadUrl = _downloadUrl;
 
       debugPrint('🆕 最新版本: $latestVersion');
       debugPrint('🔒 最低版本: $minVersion');
+      debugPrint('📥 下载地址: $downloadUrl');
 
       // 4. 版本比较
       final hasUpdate = _compareVersion(localVersion, latestVersion) < 0;

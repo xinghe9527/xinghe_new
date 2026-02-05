@@ -450,14 +450,21 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
   // 上传素材并创建角色（使用队列）
   Future<void> _uploadAsset(AssetItem asset) async {
     try {
-      // 获取 API 配置
+      // 获取 API 配置（从"上传设置"）
       final prefs = await SharedPreferences.getInstance();
-      final provider = prefs.getString('upload_provider') ?? 'geeknow';
+      final provider = prefs.getString('upload_provider') ?? 'openai';  // ✅ 统一默认值
+      
+      debugPrint('[素材库] 读取上传配置:');
+      debugPrint('[素材库] - provider: $provider');
+      
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'upload');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'upload');
       
+      debugPrint('[素材库] - baseUrl: $baseUrl');
+      debugPrint('[素材库] - apiKey: ${apiKey != null ? "${apiKey.substring(0, 8)}..." : "null"}');
+      
       if (baseUrl == null || apiKey == null) {
-        _showMessage('未配置视频 API，请先在设置中配置', isError: true);
+        _showMessage('未配置上传 API，请先在【设置 → API设置 → 上传设置】中配置', isError: true);
         return;
       }
       

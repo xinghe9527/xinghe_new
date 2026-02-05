@@ -217,22 +217,15 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     setState(() => _isDownloading = true);
 
     try {
-      // 1. 下载更新包
-      final zipPath = await _downloader.download(widget.updateInfo.downloadUrl);
-      if (zipPath == null) {
+      // 1. 下载安装程序
+      final exePath = await _downloader.download(widget.updateInfo.downloadUrl);
+      if (exePath == null) {
         _showError('下载失败，请稍后重试');
         return;
       }
 
-      // 2. 解压更新包
-      final extractPath = await _downloader.extractZip(zipPath);
-      if (extractPath == null) {
-        _showError('解压失败，请稍后重试');
-        return;
-      }
-
-      // 3. 执行更新
-      await _executeUpdate(extractPath);
+      // 2. 运行安装程序
+      await _runInstaller(exePath);
 
       setState(() => _downloadComplete = true);
     } catch (e) {
@@ -242,56 +235,36 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     }
   }
 
-  Future<void> _executeUpdate(String updateFilesPath) async {
+  /// 运行安装程序
+  Future<void> _runInstaller(String installerPath) async {
     try {
-      // 获取当前应用的安装目录
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.path;
+      debugPrint('📦 安装程序路径: $installerPath');
 
-      debugPrint('📂 应用目录: $appDir');
-      debugPrint('📂 更新文件: $updateFilesPath');
-
-      // 创建更新脚本（批处理文件）
-      final scriptPath = '${Directory.systemTemp.path}\\xinghe_updater.bat';
-      final script = '''
-@echo off
-echo 正在更新星橙AI动漫制作...
-timeout /t 2 /nobreak > nul
-
-REM 复制更新文件
-xcopy /E /Y "$updateFilesPath\\*" "$appDir\\"
-
-REM 重新启动应用
-start "" "$exePath"
-
-REM 删除临时文件
-rd /s /q "$updateFilesPath"
-del /f /q "$scriptPath"
-''';
-
-      await File(scriptPath).writeAsString(script);
-
-      debugPrint('✅ 更新脚本已创建: $scriptPath');
-
-      // 运行更新脚本
+      // 运行安装程序
       await Process.start(
-        'cmd.exe',
-        ['/c', scriptPath],
+        installerPath,
+        [],
         mode: ProcessStartMode.detached,
       );
 
-      // 退出当前应用
+      debugPrint('✅ 安装程序已启动');
+
+      // 提示用户
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('更新程序已启动，应用即将重启...')),
+          const SnackBar(
+            content: Text('安装程序已启动，请按照向导完成更新'),
+            duration: Duration(seconds: 3),
+          ),
         );
       }
 
+      // 延迟1秒后关闭当前应用，让用户看到提示
       await Future.delayed(const Duration(seconds: 1));
       exit(0);
     } catch (e) {
-      debugPrint('❌ 执行更新失败: $e');
-      _showError('执行更新失败: $e');
+      debugPrint('❌ 启动安装程序失败: $e');
+      _showError('启动安装程序失败: $e');
     }
   }
 

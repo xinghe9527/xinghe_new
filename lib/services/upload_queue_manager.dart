@@ -107,10 +107,14 @@ class UploadQueueManager {
       
       // Step 3: 调用 Sora API 创建角色
       _logger.info('Step 3/4: 创建 Sora 角色', module: '上传队列');
+      debugPrint('[队列管理器] 开始创建角色，视频URL: $videoUrl');
+      debugPrint('[队列管理器] API配置: ${task.apiConfig.provider}, ${task.apiConfig.baseUrl}');
+      
       final result = await _createCharacter(videoUrl, task.apiConfig);
       
       if (result != null) {
         task.characterInfo = '@${result.username},';
+        debugPrint('[队列管理器] ✅ 角色创建成功: ${task.characterInfo}');
         
         _logger.success('上传任务完成', module: '上传队列', extra: {
           'taskId': task.id,
@@ -119,6 +123,7 @@ class UploadQueueManager {
         
         task.status = UploadTaskStatus.completed;
       } else {
+        debugPrint('[队列管理器] ❌ 角色创建失败：API 返回空结果');
         throw Exception('角色创建失败：API 返回空结果');
       }
       
@@ -169,18 +174,30 @@ class UploadQueueManager {
   /// 调用 Sora API 创建角色
   Future<SoraCharacter?> _createCharacter(String videoUrl, ApiConfig config) async {
     try {
+      debugPrint('[队列管理器] 创建 VeoVideoService...');
       final service = VeoVideoService(config);
+      
+      debugPrint('[队列管理器] 调用 createCharacter API...');
+      debugPrint('[队列管理器] - videoUrl: $videoUrl');
+      debugPrint('[队列管理器] - timestamps: 0,3');
+      
       final result = await service.createCharacter(
         timestamps: '0,3',
         url: videoUrl,
       );
       
+      debugPrint('[队列管理器] API 响应: isSuccess=${result.isSuccess}');
+      
       if (result.isSuccess) {
+        debugPrint('[队列管理器] 角色数据: ${result.data?.username}');
         return result.data;
       } else {
+        debugPrint('[队列管理器] ❌ API 错误: ${result.errorMessage}');
         throw Exception(result.errorMessage ?? '创建角色失败');
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('[队列管理器] ❌ _createCharacter 异常: $e');
+      debugPrint('[队列管理器] ❌ Stack Trace: $stackTrace');
       _logger.error('Sora API 调用失败: $e', module: '上传队列');
       rethrow;
     }

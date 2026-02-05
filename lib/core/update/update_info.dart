@@ -6,7 +6,7 @@ class UpdateInfo {
   final bool forceUpdate;       // 是否强制更新
   final String downloadUrl;     // 下载链接
   final String? updateLog;      // 更新日志
-  final int? fileSize;          // 文件大小（字节）
+  final double? fileSize;       // 文件大小（MB，支持小数）
   final bool isBlocked;         // 是否被阻止使用（版本过低）
 
   UpdateInfo({
@@ -26,8 +26,8 @@ class UpdateInfo {
   /// 获取文件大小的友好显示
   String get fileSizeText {
     if (fileSize == null) return '未知';
-    final mb = fileSize! / 1024 / 1024;
-    return '${mb.toStringAsFixed(2)} MB';
+    // fileSize 已经是 MB 单位，直接显示
+    return '${fileSize!.toStringAsFixed(2)} MB';
   }
 
   /// 版本号比较（公开方法，供外部调用）
