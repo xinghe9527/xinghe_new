@@ -196,6 +196,162 @@ class FFmpegService {
     
     return success;
   }
+
+  /// 合成视频和音频（支持音频延迟）
+  /// 
+  /// [videoPath] 输入视频路径
+  /// [audioPath] 输入音频路径
+  /// [audioStartTime] 音频在视频中的起始时间（秒），默认0
+  /// [outputPath] 输出路径（可选，不提供则自动生成）
+  /// [isPreview] 是否为预览模式（预览模式会降低质量以加快速度）
+  /// 
+  /// 返回合成后的视频文件路径
+  Future<String?> mergeVideoAudioWithTiming({
+    required String videoPath,
+    required String audioPath,
+    double audioStartTime = 0.0,
+    String? outputPath,
+    bool isPreview = false,
+  }) async {
+    try {
+      debugPrint('[FFmpeg] 开始合成音视频');
+      debugPrint('[FFmpeg] - 视频: $videoPath');
+      debugPrint('[FFmpeg] - 音频: $audioPath');
+      debugPrint('[FFmpeg] - 音频起始时间: ${audioStartTime}秒');
+      debugPrint('[FFmpeg] - 预览模式: $isPreview');
+      
+      // 验证输入文件
+      if (!await File(videoPath).exists()) {
+        throw Exception('视频文件不存在: $videoPath');
+      }
+      if (!await File(audioPath).exists()) {
+        throw Exception('音频文件不存在: $audioPath');
+      }
+      
+      // 生成输出路径
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final finalOutputPath = outputPath ?? 
+          path.join(
+            (await getTemporaryDirectory()).path,
+            '${isPreview ? "preview" : "merged"}_$timestamp.mp4',
+          );
+      
+      final ffmpegPath = await _getFFmpegPath();
+      
+      // 构建 FFmpeg 命令
+      List<String> args;
+      
+      if (audioStartTime > 0.0) {
+        // 音频需要延迟
+        final delayMs = (audioStartTime * 1000).toInt();
+        
+        args = [
+          '-y',
+          '-i', videoPath,
+          '-i', audioPath,
+          '-filter_complex',
+          // adelay 滤镜：延迟音频（毫秒）
+          '[1:a]adelay=$delayMs|$delayMs[delayed];'
+          // amix 滤镜：混合视频原音轨和延迟后的配音
+          '[0:a][delayed]amix=inputs=2:duration=first:dropout_transition=2',
+          '-c:v', isPreview ? 'libx264' : 'copy',  // 预览模式重新编码，正式模式直接复制
+          '-c:a', 'aac',
+          '-b:a', isPreview ? '128k' : '192k',     // 预览模式降低音频比特率
+          '-preset', isPreview ? 'ultrafast' : 'fast',  // 预览模式使用最快预设
+          '-shortest',  // 以最短流为准
+          finalOutputPath,
+        ];
+      } else {
+        // 音频从0秒开始，不需要延迟
+        args = [
+          '-y',
+          '-i', videoPath,
+          '-i', audioPath,
+          '-filter_complex',
+          '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2',
+          '-c:v', isPreview ? 'libx264' : 'copy',
+          '-c:a', 'aac',
+          '-b:a', isPreview ? '128k' : '192k',
+          '-preset', isPreview ? 'ultrafast' : 'fast',
+          '-shortest',
+          finalOutputPath,
+        ];
+      }
+      
+      debugPrint('[FFmpeg] 执行命令: $ffmpegPath ${args.join(" ")}');
+      
+      final result = await compute(_runFFmpegProcess, _FFmpegParams(
+        command: ffmpegPath,
+        args: args,
+      ));
+      
+      if (result.exitCode == 0) {
+        final outputFile = File(finalOutputPath);
+        if (await outputFile.exists()) {
+          final fileSize = await outputFile.length();
+          debugPrint('[FFmpeg] ✅ 合成成功: $finalOutputPath (${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB)');
+          return finalOutputPath;
+        } else {
+          throw Exception('FFmpeg 合成成功但输出文件不存在');
+        }
+      } else {
+        debugPrint('[FFmpeg] ❌ 合成失败');
+        debugPrint('[FFmpeg] Exit Code: ${result.exitCode}');
+        debugPrint('[FFmpeg] Stderr: ${result.stderr}');
+        throw Exception('FFmpeg 合成失败\nExit Code: ${result.exitCode}');
+      }
+    } catch (e) {
+      debugPrint('[FFmpeg] ❌ 合成异常: $e');
+      return null;
+    }
+  }
+
+  /// 获取视频时长（秒）
+  /// 
+  /// [videoPath] 视频文件路径
+  /// 返回视频时长（秒），失败返回 null
+  Future<double?> getVideoDuration(String videoPath) async {
+    try {
+      if (!await File(videoPath).exists()) {
+        return null;
+      }
+      
+      final ffmpegPath = await _getFFmpegPath();
+      
+      // 使用 ffprobe 获取视频信息（如果有的话）
+      // 否则用 ffmpeg 快速探测
+      final args = [
+        '-i', videoPath,
+        '-f', 'null',
+        '-',
+      ];
+      
+      final result = await Process.run(
+        ffmpegPath,
+        args,
+        runInShell: true,
+      );
+      
+      // 从 stderr 中解析时长（FFmpeg 输出信息在 stderr）
+      final stderr = result.stderr.toString();
+      final durationMatch = RegExp(r'Duration: (\d+):(\d+):(\d+\.\d+)').firstMatch(stderr);
+      
+      if (durationMatch != null) {
+        final hours = int.parse(durationMatch.group(1)!);
+        final minutes = int.parse(durationMatch.group(2)!);
+        final seconds = double.parse(durationMatch.group(3)!);
+        
+        final totalSeconds = hours * 3600 + minutes * 60 + seconds;
+        debugPrint('[FFmpeg] ✅ 视频时长: ${totalSeconds.toStringAsFixed(2)}秒');
+        return totalSeconds;
+      }
+      
+      return null;
+    } catch (e) {
+      debugPrint('[FFmpeg] ❌ 获取视频时长失败: $e');
+      return null;
+    }
+  }
 }
 
 /// FFmpeg 进程参数

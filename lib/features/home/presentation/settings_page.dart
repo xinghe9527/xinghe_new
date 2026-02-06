@@ -40,7 +40,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _uploadApiKeyVisible = false;
 
   final List<String> _mainTabs = ['API设置', '风格设置', '保存设置'];
-  final List<String> _apiSubTabs = ['LLM模型', '图片模型', '视频模型', '上传设置'];
+  final List<String> _apiSubTabs = ['LLM模型', '图片模型', '视频模型', '上传设置', '语音合成'];
 
   // API配置状态
   final SecureStorageManager _storage = SecureStorageManager();
@@ -71,6 +71,15 @@ class _SettingsPageState extends State<SettingsPage> {
   String _uploadProvider = 'openai';
   final TextEditingController _uploadApiKeyController = TextEditingController();
   final TextEditingController _uploadBaseUrlController = TextEditingController();
+
+  // 语音合成 配置
+  bool _voiceEnabled = false;  // 是否启用语音合成
+  final TextEditingController _voiceServiceUrlController = TextEditingController();
+  String _audioSavePath = '未设置';
+  String _indexttsPath = 'D:\\Index-TTS2_XH';  // IndexTTS 安装路径
+  double _defaultEmotionAlpha = 0.6;
+  bool _isPickingAudioPath = false;
+  bool _isPickingIndexTTSPath = false;
 
   // GeekNow 模型列表
   final Map<String, List<String>> _geekNowModels = {
@@ -187,6 +196,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _videoModelController.dispose();
     _uploadApiKeyController.dispose();
     _uploadBaseUrlController.dispose();
+    _voiceServiceUrlController.dispose();  // ✅ 释放语音服务URL控制器
     super.dispose();
   }
 
@@ -195,6 +205,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await _loadImageConfig();
     await _loadVideoConfig();
     await _loadUploadConfig();
+    await _loadVoiceConfig();  // ✅ 加载语音合成配置
     await _loadSavePathsConfig();
     await _loadComfyUIConfig();  // ✅ 加载 ComfyUI 配置
   }
@@ -352,6 +363,55 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     } catch (e) {
       _logger.error('加载上传配置失败: $e', module: '设置');
+    }
+  }
+
+  Future<void> _loadVoiceConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('voice_enabled') ?? false;
+      final serviceUrl = prefs.getString('voice_service_url') ?? 'http://127.0.0.1:7860';
+      final audioPath = prefs.getString('audio_save_path');
+      final indexttsPath = prefs.getString('indextts_path') ?? 'D:\\Index-TTS2_XH';
+      final emotionAlpha = prefs.getDouble('default_emotion_alpha') ?? 0.6;
+
+      if (mounted) {
+        setState(() {
+          _voiceEnabled = enabled;
+          _voiceServiceUrlController.text = serviceUrl;
+          _audioSavePath = audioPath ?? '未设置';
+          _indexttsPath = indexttsPath;
+          _defaultEmotionAlpha = emotionAlpha;
+        });
+      }
+      _logger.info('加载语音合成配置', module: '设置', extra: {
+        'enabled': enabled,
+        'serviceUrl': serviceUrl,
+        'indexttsPath': indexttsPath,
+      });
+    } catch (e) {
+      _logger.error('加载语音合成配置失败: $e', module: '设置');
+    }
+  }
+
+  Future<void> _saveVoiceConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('voice_enabled', _voiceEnabled);
+      await prefs.setString('voice_service_url', _voiceServiceUrlController.text);
+      await prefs.setString('audio_save_path', _audioSavePath);
+      await prefs.setString('indextts_path', _indexttsPath);
+      await prefs.setDouble('default_emotion_alpha', _defaultEmotionAlpha);
+
+      _logger.success('保存语音合成配置成功', module: '设置', extra: {
+        'enabled': _voiceEnabled,
+        'serviceUrl': _voiceServiceUrlController.text,
+        'indexttsPath': _indexttsPath,
+      });
+      _showMessage('语音合成配置已保存');
+    } catch (e) {
+      _logger.error('保存语音合成配置失败: $e', module: '设置');
+      _showMessage('保存失败: $e', isError: true);
     }
   }
 
@@ -740,6 +800,80 @@ class _SettingsPageState extends State<SettingsPage> {
     } finally {
       if (mounted) {
         setState(() => _isPickingWorkPath = false);
+      }
+    }
+  }
+
+  /// 选择音频保存路径
+  Future<void> _pickAudioDirectory() async {
+    if (_isPickingAudioPath) return;
+    
+    setState(() => _isPickingAudioPath = true);
+    
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择音频保存文件夹',
+        lockParentWindow: true,
+      );
+      
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        setState(() {
+          _audioSavePath = selectedDirectory;
+        });
+        
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('audio_save_path', selectedDirectory);
+        
+        _logger.success('设置音频保存路径', module: '设置', extra: {'path': selectedDirectory});
+        if (mounted) {
+          _showMessage('音频保存路径已更新: $selectedDirectory');
+        }
+      }
+    } catch (e) {
+      _logger.error('选择音频路径失败: $e', module: '设置');
+      if (mounted) {
+        _showMessage('选择文件夹时出错: ${e.toString()}', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingAudioPath = false);
+      }
+    }
+  }
+
+  /// 选择 IndexTTS 安装路径
+  Future<void> _pickIndexTTSDirectory() async {
+    if (_isPickingIndexTTSPath) return;
+    
+    setState(() => _isPickingIndexTTSPath = true);
+    
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择 IndexTTS 安装目录',
+        lockParentWindow: true,
+      );
+      
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        setState(() {
+          _indexttsPath = selectedDirectory;
+        });
+        
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('indextts_path', selectedDirectory);
+        
+        _logger.success('设置 IndexTTS 路径', module: '设置', extra: {'path': selectedDirectory});
+        if (mounted) {
+          _showMessage('IndexTTS 路径已更新: $selectedDirectory');
+        }
+      }
+    } catch (e) {
+      _logger.error('选择 IndexTTS 路径失败: $e', module: '设置');
+      if (mounted) {
+        _showMessage('选择文件夹时出错: ${e.toString()}', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingIndexTTSPath = false);
       }
     }
   }
@@ -1344,6 +1478,9 @@ class _SettingsPageState extends State<SettingsPage> {
       case 3: // 上传设置
         formContent = _buildUploadForm();
         break;
+      case 4: // 语音合成
+        formContent = _buildVoiceForm();
+        break;
       default:
         formContent = _buildPlaceholderView();
     }
@@ -1700,6 +1837,275 @@ class _SettingsPageState extends State<SettingsPage> {
             Expanded(child: _buildTestButton(() => _testUploadConnection())),
           ],
         ),
+      ],
+    );
+  }
+
+  Widget _buildVoiceForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 启用开关
+        Row(
+          children: [
+            Icon(Icons.mic, color: AppTheme.accentColor, size: 24),
+            const SizedBox(width: 12),
+            Text(
+              '语音合成功能',
+              style: TextStyle(
+                color: AppTheme.textColor,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Spacer(),
+            Switch(
+              value: _voiceEnabled,
+              activeColor: AppTheme.accentColor,
+              onChanged: (value) {
+                setState(() => _voiceEnabled = value);
+                _saveVoiceConfig();
+              },
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _voiceEnabled ? '已启用' : '已禁用',
+              style: TextStyle(
+                color: _voiceEnabled ? AppTheme.accentColor : AppTheme.subTextColor,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '集成 IndexTTS 实现 AI 语音合成，为视频生成配音',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
+        ),
+        const SizedBox(height: 40),
+
+        // IndexTTS 服务地址
+        _buildFieldLabel('IndexTTS 服务地址'),
+        const SizedBox(height: 6),
+        Text(
+          '本地运行的 IndexTTS 服务地址（需要先安装并启动 IndexTTS）',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        _buildEditableTextField(
+          _voiceServiceUrlController,
+          'http://127.0.0.1:7860',
+          onSave: () => _debouncedSave(_saveVoiceConfig),
+        ),
+
+        const SizedBox(height: 30),
+        
+        // IndexTTS 安装路径
+        _buildFieldLabel('IndexTTS 安装路径'),
+        const SizedBox(height: 6),
+        Text(
+          'IndexTTS 的安装目录（包含 checkpoints 文件夹）',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceBackground,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                ),
+                child: Text(
+                  _indexttsPath,
+                  style: TextStyle(
+                    color: AppTheme.textColor,
+                    fontSize: 14,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            MouseRegion(
+              cursor: _isPickingIndexTTSPath ? SystemMouseCursors.wait : SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: _isPickingIndexTTSPath ? null : _pickIndexTTSDirectory,
+                child: Opacity(
+                  opacity: _isPickingIndexTTSPath ? 0.6 : 1.0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        if (_isPickingIndexTTSPath)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        else
+                          const Icon(Icons.folder_open_rounded, color: Colors.white, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          _isPickingIndexTTSPath ? '选择中...' : '更改目录',
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 30),
+        
+        // 音频保存路径
+        _buildFieldLabel('音频保存路径'),
+        const SizedBox(height: 6),
+        Text(
+          '生成的配音文件保存位置',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceBackground,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                ),
+                child: Text(
+                  _audioSavePath,
+                  style: TextStyle(
+                    color: _audioSavePath == '未设置' 
+                        ? AppTheme.subTextColor 
+                        : AppTheme.textColor,
+                    fontSize: 14,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            MouseRegion(
+              cursor: _isPickingAudioPath ? SystemMouseCursors.wait : SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: _isPickingAudioPath ? null : _pickAudioDirectory,
+                child: Opacity(
+                  opacity: _isPickingAudioPath ? 0.6 : 1.0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        if (_isPickingAudioPath)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        else
+                          const Icon(Icons.folder_open_rounded, color: Colors.white, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          _isPickingAudioPath ? '选择中...' : '更改目录',
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 30),
+        
+        // 默认情感强度
+        _buildFieldLabel('默认情感强度'),
+        const SizedBox(height: 6),
+        Text(
+          '配音时的默认情感表达强度（0.0 - 1.0）',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Slider(
+                value: _defaultEmotionAlpha,
+                min: 0.0,
+                max: 1.0,
+                divisions: 10,
+                activeColor: AppTheme.accentColor,
+                inactiveColor: AppTheme.textColor.withOpacity(0.1),
+                onChanged: (value) {
+                  setState(() => _defaultEmotionAlpha = value);
+                },
+                onChangeEnd: (value) {
+                  _saveVoiceConfig();
+                },
+              ),
+            ),
+            const SizedBox(width: 16),
+            Container(
+              width: 60,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceBackground,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+              ),
+              child: Text(
+                _defaultEmotionAlpha.toStringAsFixed(1),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppTheme.textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 40),
+        
+        // 测试和保存按钮
+        Row(
+          children: [
+            Expanded(child: _buildSaveButton(() => _saveVoiceConfig())),
+            const SizedBox(width: 12),
+            Expanded(child: _buildTestButton(() => _testVoiceConnection())),
+          ],
+        ),
+
       ],
     );
   }
@@ -2536,6 +2942,68 @@ class _SettingsPageState extends State<SettingsPage> {
           message: '❌ 连接失败\n\n错误: $e\n\n请检查API配置和网络连接',
         );
       }
+    }
+  }
+
+  Future<void> _testVoiceConnection() async {
+    if (_voiceServiceUrlController.text.trim().isEmpty) {
+      _showTestResultDialog(
+        title: 'IndexTTS 连接测试',
+        success: false,
+        message: '请先填写服务地址',
+      );
+      return;
+    }
+
+    _showTestResultDialog(
+      title: 'IndexTTS 连接测试',
+      success: null,
+      message: '正在测试连接...\n\n服务地址: ${_voiceServiceUrlController.text}',
+    );
+
+    final startTime = DateTime.now();
+
+    try {
+      final serviceUrl = _voiceServiceUrlController.text.trim();
+      
+      // 测试 IndexTTS 健康检查端点
+      final response = await http.get(
+        Uri.parse('$serviceUrl/'),
+      ).timeout(const Duration(seconds: 10));
+
+      final elapsed = DateTime.now().difference(startTime);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        
+        if (response.statusCode == 200) {
+          _showTestResultDialog(
+            title: 'IndexTTS 连接测试',
+            success: true,
+            message: '✅ 连接成功！\n\nIndexTTS 服务运行正常\n服务地址: $serviceUrl\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+          );
+          _logger.success('IndexTTS 连接测试成功', module: '设置', extra: {
+            'serviceUrl': serviceUrl,
+            'elapsed': elapsed.inMilliseconds,
+          });
+        } else {
+          _showTestResultDialog(
+            title: 'IndexTTS 连接测试',
+            success: false,
+            message: '❌ 服务响应异常\n\n状态码: ${response.statusCode}\n\n请检查 IndexTTS 是否正常运行',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showTestResultDialog(
+          title: 'IndexTTS 连接测试',
+          success: false,
+          message: '❌ 连接失败\n\n错误: $e\n\n请检查：\n1. IndexTTS 服务是否已启动\n2. 服务地址是否正确\n3. 防火墙是否阻止连接',
+        );
+      }
+      _logger.error('IndexTTS 连接测试失败: $e', module: '设置');
     }
   }
 

@@ -180,9 +180,18 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         VerticalDivider(width: 1, color: AppTheme.dividerColor),
-                        // 3. 右侧：内容工作区
+                        // 3. 右侧：内容工作区（使用 IndexedStack 保持页面状态）
                         Expanded(
-                          child: _buildContentArea(),
+                          child: IndexedStack(
+                            index: _selectedIndex,
+                            children: const [
+                              CreationSpace(),  // 0: 创作空间
+                              DrawingSpace(),   // 1: 绘图空间
+                              VideoSpace(),     // 2: 视频空间
+                              AssetLibrary(),   // 3: 素材库
+                              SystemLog(),      // 4: 系统日志
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -192,51 +201,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
-    );
-  }
-
-  // 根据选中的菜单显示不同内容
-  Widget _buildContentArea() {
-    switch (_selectedIndex) {
-      case 0: // 创作空间
-        return const CreationSpace();
-      case 1: // 绘图空间
-        return const DrawingSpace();
-      case 2: // 视频空间
-        return const VideoSpace();
-      case 3: // 素材库
-        return const AssetLibrary();
-      case 4: // 系统日志
-        return const SystemLog();
-      default:
-        return _buildPlaceholder('未知空间');
-    }
-  }
-
-  // 占位界面
-  Widget _buildPlaceholder(String title) {
-    return Container(
-      color: AppTheme.scaffoldBackground,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.construction_outlined,
-              size: 80,
-              color: AppTheme.subTextColor.withOpacity(0.3),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              '$title 正在建设中...',
-              style: TextStyle(
-                color: AppTheme.subTextColor,
-                fontSize: 16,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:xinghe_new/main.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -9,6 +11,7 @@ import 'storyboard_prompt_manager.dart';
 import 'character_generation_page.dart';
 import 'scene_generation_page.dart';
 import 'item_generation_page.dart';
+import 'widgets/voice_generation_dialog.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/ffmpeg_service.dart';
@@ -52,12 +55,21 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   List<AssetReference> _scenes = [];
   List<AssetReference> _items = [];
 
+  AudioPlayer? _voiceAudioPlayer;
+  bool _voiceUseSystemPlayer = false;
+
   @override
   void initState() {
     super.initState();
     _loadProductionData();
     _initMockAssets();  // 初始化Mock资产用于演示
     _loadScriptColumnState();  // ✅ 加载剧本列显示状态
+  }
+
+  @override
+  void dispose() {
+    _voiceAudioPlayer?.dispose();
+    super.dispose();
   }
   
   /// 加载剧本列显示状态
@@ -708,6 +720,93 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                         ),
                       ),
                     ),
+                    // ✅ 配音按钮区域
+                    if (row.scriptSegment.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: const BoxDecoration(
+                          border: Border(top: BorderSide(color: Color(0xFF3A3A3C))),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (!row.hasVoice)
+                              // 未配音状态
+                              MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: GestureDetector(
+                                  onTap: () => _openVoiceGenerationDialog(index),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.mic, color: Colors.white, size: 16),
+                                        SizedBox(width: 6),
+                                        Text(
+                                          '配音',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              // 已配音状态
+                              Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.check_circle, color: Color(0xFF2AF598), size: 16),
+                                      const SizedBox(width: 6),
+                                      const Expanded(
+                                        child: Text(
+                                          '已配音',
+                                          style: TextStyle(
+                                            color: Color(0xFF2AF598),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildSmallButton(
+                                          icon: Icons.play_arrow,
+                                          label: '试听',
+                                          onTap: () => _playVoiceAudio(row),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildSmallButton(
+                                          icon: Icons.refresh,
+                                          label: '重配',
+                                          onTap: () => _openVoiceGenerationDialog(index),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -3422,6 +3521,118 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
     }
   }
 
+  /// 打开语音生成对话框
+  void _openVoiceGenerationDialog(int index) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => VoiceGenerationDialog(
+        storyboard: _storyboards[index],
+        storyboardIndex: index,
+        onComplete: (updatedStoryboard) {
+          setState(() {
+            _storyboards[index] = updatedStoryboard;
+          });
+          _saveProductionData();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ 分镜 ${index + 1} 配音已保存'),
+              backgroundColor: const Color(0xFF2AF598),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 播放配音（应用内播放；插件不可用时用系统播放器）
+  Future<void> _playVoiceAudio(StoryboardRow row) async {
+    if (row.generatedAudioPath == null) return;
+    final path = row.generatedAudioPath!;
+    
+    try {
+      final audioFile = File(path);
+      if (!await audioFile.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('配音文件不存在'), backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+      if (_voiceUseSystemPlayer) {
+        await Process.run('cmd', ['/c', 'start', '', path]);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('正在播放配音...'), backgroundColor: Color(0xFF2AF598), duration: Duration(seconds: 1)),
+          );
+        }
+        return;
+      }
+      try {
+        _voiceAudioPlayer ??= AudioPlayer();
+        await _voiceAudioPlayer!.stop();
+        await _voiceAudioPlayer!.play(DeviceFileSource(path));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('正在播放配音...'), backgroundColor: Color(0xFF2AF598), duration: Duration(seconds: 1)),
+          );
+        }
+      } on MissingPluginException catch (_) {
+        _voiceUseSystemPlayer = true;
+        await Process.run('cmd', ['/c', 'start', '', path]);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('正在播放配音...'), backgroundColor: Color(0xFF2AF598), duration: Duration(seconds: 1)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('播放失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// 小按钮辅助方法
+  Widget _buildSmallButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF3A3A3C),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: const Color(0xFFCCCCCC), size: 14),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Color(0xFFCCCCCC),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 合并选中的分镜
   Future<void> _mergeSelectedStoryboards() async {
     if (_selectedStoryboards.length < 2) {
@@ -3904,6 +4115,12 @@ class StoryboardRow {
   final int selectedImageIndex;         // 选中的图片索引
   final List<String> selectedImageAssets;
   final List<String> selectedVideoAssets;
+  
+  // ✅ 语音合成相关字段
+  final List<VoiceDialogue> voiceDialogues;  // 对话列表
+  final String? generatedAudioPath;          // 生成的配音路径
+  final double voiceStartTime;               // 配音起始时间（秒）
+  final bool hasVoice;                       // 是否已生成配音
 
   StoryboardRow({
     required this.id,
@@ -3918,6 +4135,10 @@ class StoryboardRow {
     this.selectedImageIndex = 0,
     this.selectedImageAssets = const [],
     this.selectedVideoAssets = const [],
+    this.voiceDialogues = const [],      // ✅ 默认空对话列表
+    this.generatedAudioPath,             // ✅ 默认无配音
+    this.voiceStartTime = 0.0,           // ✅ 默认从0秒开始
+    this.hasVoice = false,               // ✅ 默认未生成
   });
 
   // 兼容旧数据
@@ -3936,6 +4157,10 @@ class StoryboardRow {
     int? selectedImageIndex,
     List<String>? selectedImageAssets,
     List<String>? selectedVideoAssets,
+    List<VoiceDialogue>? voiceDialogues,
+    String? generatedAudioPath,
+    double? voiceStartTime,
+    bool? hasVoice,
   }) {
     return StoryboardRow(
       id: id,
@@ -3950,6 +4175,10 @@ class StoryboardRow {
       selectedImageIndex: selectedImageIndex ?? this.selectedImageIndex,
       selectedImageAssets: selectedImageAssets ?? this.selectedImageAssets,
       selectedVideoAssets: selectedVideoAssets ?? this.selectedVideoAssets,
+      voiceDialogues: voiceDialogues ?? this.voiceDialogues,
+      generatedAudioPath: generatedAudioPath ?? this.generatedAudioPath,
+      voiceStartTime: voiceStartTime ?? this.voiceStartTime,
+      hasVoice: hasVoice ?? this.hasVoice,
     );
   }
 
@@ -3966,6 +4195,10 @@ class StoryboardRow {
         'selectedImageIndex': selectedImageIndex,
         'selectedImageAssets': selectedImageAssets,
         'selectedVideoAssets': selectedVideoAssets,
+        'voiceDialogues': voiceDialogues.map((d) => d.toJson()).toList(),
+        'generatedAudioPath': generatedAudioPath,
+        'voiceStartTime': voiceStartTime,
+        'hasVoice': hasVoice,
       };
 
   factory StoryboardRow.fromJson(Map<String, dynamic> json) {
@@ -3984,6 +4217,12 @@ class StoryboardRow {
       selectedImageIndex: json['selectedImageIndex'] as int? ?? 0,
       selectedImageAssets: (json['selectedImageAssets'] as List<dynamic>?)?.cast<String>() ?? [],
       selectedVideoAssets: (json['selectedVideoAssets'] as List<dynamic>?)?.cast<String>() ?? [],
+      voiceDialogues: (json['voiceDialogues'] as List<dynamic>?)
+          ?.map((d) => VoiceDialogue.fromJson(d as Map<String, dynamic>))
+          .toList() ?? [],
+      generatedAudioPath: json['generatedAudioPath'] as String?,
+      voiceStartTime: (json['voiceStartTime'] as num?)?.toDouble() ?? 0.0,
+      hasVoice: json['hasVoice'] as bool? ?? false,
     );
   }
 }
@@ -4009,4 +4248,48 @@ enum AssetType {
   character,
   scene,
   item,
+}
+
+/// 语音对话数据模型
+class VoiceDialogue {
+  final String id;
+  final String character;     // 角色名称
+  final String emotion;       // 情感（开心、悲伤等）
+  final String dialogue;      // 台词内容
+
+  VoiceDialogue({
+    required this.id,
+    required this.character,
+    required this.emotion,
+    required this.dialogue,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'character': character,
+    'emotion': emotion,
+    'dialogue': dialogue,
+  };
+
+  factory VoiceDialogue.fromJson(Map<String, dynamic> json) {
+    return VoiceDialogue(
+      id: json['id'] as String,
+      character: json['character'] as String,
+      emotion: json['emotion'] as String,
+      dialogue: json['dialogue'] as String,
+    );
+  }
+
+  VoiceDialogue copyWith({
+    String? character,
+    String? emotion,
+    String? dialogue,
+  }) {
+    return VoiceDialogue(
+      id: id,
+      character: character ?? this.character,
+      emotion: emotion ?? this.emotion,
+      dialogue: dialogue ?? this.dialogue,
+    );
+  }
 }

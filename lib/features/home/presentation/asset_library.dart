@@ -7,6 +7,8 @@ import 'package:xinghe_new/services/upload_queue_manager.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
+import 'package:xinghe_new/features/home/domain/voice_asset.dart';
+import 'widgets/voice_asset_detail_dialog.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
@@ -19,12 +21,13 @@ class AssetLibrary extends StatefulWidget {
 }
 
 class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver, RouteAware {
-  int _selectedCategoryIndex = 0; // 0:角色 1:场景 2:物品
-  final List<String> _categories = ['角色素材', '场景素材', '物品素材'];
+  int _selectedCategoryIndex = 0; // 0:角色 1:场景 2:物品 3:语音
+  final List<String> _categories = ['角色素材', '场景素材', '物品素材', '语音库'];
   final List<IconData> _categoryIcons = [
     Icons.person_outline,
     Icons.landscape_outlined,
     Icons.inventory_2_outlined,
+    Icons.mic_outlined,
   ];
   
   // 服务实例
@@ -46,6 +49,9 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
     1: [AssetStyle(name: '都市风格', description: '现代都市生活')],
     2: [AssetStyle(name: '古风物品', description: '古风东方韵味')],
   };
+
+  // ✅ 语音库列表（第4个分类）
+  List<VoiceAsset> _voiceAssets = [];
 
   int _selectedStyleIndex = 0;
   bool _isAddingStyle = false;
@@ -336,6 +342,20 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
         });
         
         _logger.success('成功加载素材库数据', module: '素材库');
+      }
+      
+      // ✅ 加载语音库数据
+      final voicesJson = prefs.getString('voice_library_data');
+      if (voicesJson != null && voicesJson.isNotEmpty && mounted) {
+        final voicesList = (jsonDecode(voicesJson) as List)
+            .map((item) => VoiceAsset.fromJson(item as Map<String, dynamic>))
+            .toList();
+        
+        setState(() {
+          _voiceAssets = voicesList;
+        });
+        
+        _logger.success('成功加载 ${voicesList.length} 个语音素材', module: '素材库');
         
         debugPrint('✅ [素材库] 加载数据成功');
         // 打印所有"下载.jpg"素材的信息
@@ -375,7 +395,11 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
       
       await prefs.setString('asset_library_data', jsonEncode(data));
       
-      debugPrint('✅ [素材库] 保存数据成功');
+      // ✅ 保存语音库数据
+      final voicesData = _voiceAssets.map((v) => v.toJson()).toList();
+      await prefs.setString('voice_library_data', jsonEncode(voicesData));
+      
+      debugPrint('✅ [素材库] 保存数据成功（含 ${_voiceAssets.length} 个语音）');
       
       // 打印每个分类已上传的素材
       _stylesByCategory.forEach((categoryIndex, styles) {
@@ -446,6 +470,79 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
       _showMessage('添加素材失败: $e', isError: true);
     }
   }
+
+  // ============ 语音库操作方法 ============
+
+  /// 上传语音样本（新版：使用详细编辑弹窗）
+  Future<void> _addVoiceSample() async {
+    try {
+      // 选择音频文件
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['wav', 'mp3', 'm4a', 'aac', 'flac'],
+        allowMultiple: false,
+        dialogTitle: '选择角色声音样本',
+      );
+
+      if (result == null || result.files.isEmpty) return;
+      
+      final file = result.files.first;
+      if (file.path == null) return;
+
+      // ✅ 打开详细编辑弹窗
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => VoiceAssetDetailDialog(
+          initialAudioPath: file.path!,
+          onSave: (voiceAsset) {
+            setState(() {
+              _voiceAssets.add(voiceAsset);
+            });
+            _saveAssets();
+            
+            _logger.success('添加语音样本成功', module: '素材库', extra: {
+              'name': voiceAsset.name,
+              'gender': voiceAsset.gender,
+              'style': voiceAsset.style,
+            });
+            
+            _showMessage('✅ 成功添加语音样本: ${voiceAsset.name}', isError: false);
+          },
+        ),
+      );
+    } catch (e) {
+      _logger.error('添加语音样本失败: $e', module: '素材库');
+      _showMessage('添加失败: $e', isError: true);
+    }
+  }
+
+  /// 编辑语音样本
+  Future<void> _editVoiceSample(VoiceAsset voice) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => VoiceAssetDetailDialog(
+        existingVoice: voice,
+        onSave: (updatedVoice) {
+          setState(() {
+            final index = _voiceAssets.indexWhere((v) => v.id == voice.id);
+            if (index >= 0) {
+              _voiceAssets[index] = updatedVoice;
+            }
+          });
+          _saveAssets();
+          
+          _logger.success('更新语音样本', module: '素材库', extra: {
+            'name': updatedVoice.name,
+          });
+          
+          _showMessage('✅ 语音样本已更新', isError: false);
+        },
+      ),
+    );
+  }
+
 
   // 上传素材并创建角色（使用队列）
   Future<void> _uploadAsset(AssetItem asset) async {
@@ -746,6 +843,11 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
 
   // 左侧风格列表
   Widget _buildStyleList() {
+    // ✅ 语音库不需要显示风格列表
+    if (_selectedCategoryIndex == 3) {
+      return const SizedBox.shrink();
+    }
+    
     final styles = _stylesByCategory[_selectedCategoryIndex] ?? [];
     
     return Container(
@@ -940,6 +1042,11 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
 
   // 右侧素材网格展示
   Widget _buildAssetGrid() {
+    // ✅ 语音库特殊处理（不需要风格分类）
+    if (_selectedCategoryIndex == 3) {
+      return _buildVoiceLibraryGrid();
+    }
+    
     final styles = _stylesByCategory[_selectedCategoryIndex] ?? [];
     if (styles.isEmpty) {
       return Center(
@@ -1059,6 +1166,196 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 语音库网格显示（美化版）
+  Widget _buildVoiceLibraryGrid() {
+    return Container(
+      color: AppTheme.scaffoldBackground,
+      child: Column(
+        children: [
+          // 顶部操作栏
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Row(
+              children: [
+                Icon(Icons.mic, color: AppTheme.accentColor, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  '语音库 (${_voiceAssets.length})',
+                  style: TextStyle(
+                    color: AppTheme.textColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _addVoiceSample,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFF667EEA), Color(0xFF764BA2)]),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.add, color: Colors.white, size: 18),
+                          SizedBox(width: 6),
+                          Text('上传声音', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          Divider(height: 1, color: AppTheme.dividerColor),
+          
+          // ✅ 语音网格（类似角色素材）
+          Expanded(
+            child: _voiceAssets.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.mic_none, color: AppTheme.subTextColor.withOpacity(0.3), size: 64),
+                        const SizedBox(height: 16),
+                        Text('暂无语音样本', style: TextStyle(color: AppTheme.subTextColor)),
+                        const SizedBox(height: 8),
+                        Text(
+                          '点击右上角"上传声音"添加角色语音样本',
+                          style: TextStyle(color: AppTheme.subTextColor.withOpacity(0.7), fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  )
+                : GridView.builder(
+                    padding: const EdgeInsets.all(24),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 6,  // 6列，和角色素材一致
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: 0.75,
+                    ),
+                    itemCount: _voiceAssets.length,
+                    itemBuilder: (context, index) => _buildVoiceGridCard(_voiceAssets[index]),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 语音卡片（网格样式）
+  Widget _buildVoiceGridCard(VoiceAsset voice) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => _editVoiceSample(voice),  // 点击打开编辑
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceBackground,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF667EEA).withOpacity(0.3), width: 2),
+          ),
+          child: Column(
+            children: [
+              // 头像（圆形）
+              Expanded(
+                child: Container(
+                  margin: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+                    ),
+                    border: Border.all(color: const Color(0xFF667EEA), width: 3),
+                  ),
+                  child: ClipOval(
+                    child: voice.coverImagePath != null && File(voice.coverImagePath!).existsSync()
+                        ? Image.file(
+                            File(voice.coverImagePath!),
+                            fit: BoxFit.cover,
+                          )
+                        : const Icon(
+                            Icons.mic,
+                            color: Colors.white,
+                            size: 48,
+                          ),
+                  ),
+                ),
+              ),
+              
+              // 信息区域
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.scaffoldBackground,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(10),
+                    bottomRight: Radius.circular(10),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    // 名称
+                    Text(
+                      voice.name,
+                      style: TextStyle(
+                        color: AppTheme.textColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                    
+                    const SizedBox(height: 8),
+                    
+                    // 标签（风格、性别）
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        _buildTag(voice.style, const Color(0xFF667EEA)),
+                        _buildTag(voice.gender, voice.gender == '男生' ? const Color(0xFF4A9EFF) : const Color(0xFFFF69B4)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 标签组件
+  Widget _buildTag(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
