@@ -1755,9 +1755,43 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     try {
       final ffmpegService = FFmpegService();
       
-      // TODO: 实现多音频合并（先简化为使用第一个音频）
-      final firstAudioPath = row.generatedAudioPath;
-      final firstStartTime = dialogueTimings.values.isNotEmpty ? dialogueTimings.values.first : 0.0;
+      // ✅ 解析对话音频映射
+      Map<String, String> dialogueAudioMap = {};
+      if (row.dialogueAudioMapJson != null && row.dialogueAudioMapJson!.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(row.dialogueAudioMapJson!) as Map<String, dynamic>;
+          dialogueAudioMap = decoded.map((key, value) => MapEntry(key, value.toString()));
+        } catch (e) {
+          debugPrint('[合成] 解析音频映射失败: $e');
+        }
+      }
+      
+      // ✅ 收集所有音频轨道（包括起始时间）
+      final audioTracks = <Map<String, dynamic>>[];
+      
+      for (final dialogue in row.voiceDialogues) {
+        final audioPath = dialogueAudioMap[dialogue.id];
+        final startTime = dialogueTimings[dialogue.id] ?? 0.0;
+        
+        if (audioPath != null && audioPath.isNotEmpty) {
+          final audioFile = File(audioPath);
+          if (await audioFile.exists()) {
+            audioTracks.add({
+              'path': audioPath,
+              'startTime': startTime,
+            });
+            debugPrint('[合成] 添加音频: ${dialogue.character} - $audioPath (起始: ${startTime}s)');
+          } else {
+            debugPrint('[合成] 音频文件不存在: $audioPath');
+          }
+        }
+      }
+      
+      if (audioTracks.isEmpty) {
+        throw Exception('没有可用的音频文件');
+      }
+      
+      debugPrint('[合成] 使用 ${audioTracks.length} 个音频轨道');
       
       // 生成输出路径
       final videoDir = path.dirname(videoPath);
@@ -1765,11 +1799,10 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final outputPath = path.join(videoDir, '${videoBasename}_voiced_$timestamp.mp4');
       
-      // 使用 FFmpeg 合成
-      final mergedPath = await ffmpegService.mergeVideoAudioWithTiming(
+      // 使用 FFmpeg 合成多个音频
+      final mergedPath = await ffmpegService.mergeVideoWithMultipleAudios(
         videoPath: videoPath,
-        audioPath: firstAudioPath!,
-        audioStartTime: firstStartTime,
+        audioTracks: audioTracks,
         outputPath: outputPath,
         isPreview: false,
       );
@@ -1780,7 +1813,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           final newUrls = List<String>.from(row.videoUrls)..add(mergedPath);
           _storyboards[index] = row.copyWith(
             videoUrls: newUrls,
-            voiceStartTime: firstStartTime,
+            voiceStartTime: dialogueTimings.values.isNotEmpty ? dialogueTimings.values.first : 0.0,
           );
         });
         await _saveProductionData();
@@ -1799,6 +1832,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         }
       }
     } catch (e) {
+      debugPrint('[合成] 失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -3723,6 +3757,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       builder: (context) => VoiceGenerationDialog(
         storyboard: _storyboards[index],
         storyboardIndex: index,
+        workName: widget.workName,  // ✅ 添加作品名称
         onComplete: (updatedStoryboard) {
           setState(() {
             _storyboards[index] = updatedStoryboard;

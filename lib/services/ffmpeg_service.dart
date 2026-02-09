@@ -197,6 +197,189 @@ class FFmpegService {
     return success;
   }
 
+  /// 检测视频是否有音频轨道
+  /// 
+  /// [videoPath] 视频文件路径
+  /// 返回 true 表示有音频轨道，false 表示没有
+  Future<bool> hasAudioTrack(String videoPath) async {
+    try {
+      if (!await File(videoPath).exists()) {
+        return false;
+      }
+      
+      final ffmpegPath = await _getFFmpegPath();
+      
+      // 使用 ffmpeg 探测音频流
+      final args = [
+        '-i', videoPath,
+        '-f', 'null',
+        '-',
+      ];
+      
+      final result = await compute(_runFFmpegProcess, _FFmpegParams(
+        command: ffmpegPath,
+        args: args,
+      ));
+      
+      // 检查 stderr 中是否包含 "Audio:" 字样
+      final hasAudio = result.stderr.contains('Audio:');
+      debugPrint('[FFmpeg] 视频音频轨道检测: ${hasAudio ? "有" : "无"}');
+      return hasAudio;
+    } catch (e) {
+      debugPrint('[FFmpeg] 检测音频轨道失败: $e');
+      return false;
+    }
+  }
+
+  /// 合成视频和多个音频（支持每个音频的起始时间）
+  /// 
+  /// [videoPath] 输入视频路径
+  /// [audioTracks] 音频轨道列表，每个元素包含 {path: 音频路径, startTime: 起始时间}
+  /// [outputPath] 输出路径（可选，不提供则自动生成）
+  /// [isPreview] 是否为预览模式
+  /// 
+  /// 返回合成后的视频文件路径
+  Future<String?> mergeVideoWithMultipleAudios({
+    required String videoPath,
+    required List<Map<String, dynamic>> audioTracks,
+    String? outputPath,
+    bool isPreview = false,
+  }) async {
+    try {
+      debugPrint('[FFmpeg] 开始合成视频和多个音频');
+      debugPrint('[FFmpeg] - 视频: $videoPath');
+      debugPrint('[FFmpeg] - 音频轨道数: ${audioTracks.length}');
+      
+      // 验证输入文件
+      if (!await File(videoPath).exists()) {
+        throw Exception('视频文件不存在: $videoPath');
+      }
+      
+      if (audioTracks.isEmpty) {
+        throw Exception('没有音频轨道');
+      }
+      
+      // 处理中文路径问题：复制到临时目录
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      // 复制视频到临时目录
+      final tempVideoPath = path.join(tempDir.path, 'temp_video_$timestamp.mp4');
+      await File(videoPath).copy(tempVideoPath);
+      
+      // 复制所有音频到临时目录
+      final tempAudioPaths = <String>[];
+      for (int i = 0; i < audioTracks.length; i++) {
+        final audioPath = audioTracks[i]['path'] as String;
+        if (!await File(audioPath).exists()) {
+          throw Exception('音频文件不存在: $audioPath');
+        }
+        
+        final audioExt = path.extension(audioPath);
+        final tempAudioPath = path.join(tempDir.path, 'temp_audio_${timestamp}_$i$audioExt');
+        await File(audioPath).copy(tempAudioPath);
+        tempAudioPaths.add(tempAudioPath);
+      }
+      
+      // 生成输出路径
+      final finalOutputPath = outputPath ?? 
+          path.join(
+            tempDir.path,
+            '${isPreview ? "preview" : "merged"}_$timestamp.mp4',
+          );
+      
+      final ffmpegPath = await _getFFmpegPath();
+      
+      // 检测视频是否有音频轨道
+      final videoHasAudio = await hasAudioTrack(tempVideoPath);
+      
+      // 构建 FFmpeg 命令
+      List<String> args = ['-y', '-i', tempVideoPath];
+      
+      // 添加所有音频输入
+      for (final tempAudioPath in tempAudioPaths) {
+        args.addAll(['-i', tempAudioPath]);
+      }
+      
+      // 构建 filter_complex
+      StringBuffer filterComplex = StringBuffer();
+      
+      // 处理每个音频的延迟
+      for (int i = 0; i < audioTracks.length; i++) {
+        final startTime = (audioTracks[i]['startTime'] as double?) ?? 0.0;
+        if (startTime > 0.0) {
+          final delayMs = (startTime * 1000).toInt();
+          filterComplex.write('[${i + 1}:a]adelay=$delayMs|$delayMs[a$i];');
+        } else {
+          filterComplex.write('[${i + 1}:a]acopy[a$i];');
+        }
+      }
+      
+      // 混合所有音频
+      if (videoHasAudio) {
+        // 视频有音频，混合视频音频和所有配音
+        filterComplex.write('[0:a]');
+        for (int i = 0; i < audioTracks.length; i++) {
+          filterComplex.write('[a$i]');
+        }
+        filterComplex.write('amix=inputs=${audioTracks.length + 1}:duration=first:dropout_transition=2');
+      } else {
+        // 视频没有音频，只混合配音
+        for (int i = 0; i < audioTracks.length; i++) {
+          filterComplex.write('[a$i]');
+        }
+        filterComplex.write('amix=inputs=${audioTracks.length}:duration=first:dropout_transition=2');
+      }
+      
+      args.addAll([
+        '-filter_complex', filterComplex.toString(),
+        '-c:v', isPreview ? 'libx264' : 'copy',
+        '-c:a', 'aac',
+        '-b:a', isPreview ? '128k' : '192k',
+        '-preset', isPreview ? 'ultrafast' : 'fast',
+        // ✅ 移除 -shortest，保持视频完整长度
+        finalOutputPath,
+      ]);
+      
+      debugPrint('[FFmpeg] 执行命令: $ffmpegPath ${args.join(" ")}');
+      
+      final result = await compute(_runFFmpegProcess, _FFmpegParams(
+        command: ffmpegPath,
+        args: args,
+      ));
+      
+      // 清理临时文件
+      try {
+        await File(tempVideoPath).delete();
+        for (final tempAudioPath in tempAudioPaths) {
+          await File(tempAudioPath).delete();
+        }
+        debugPrint('[FFmpeg] 临时文件已清理');
+      } catch (e) {
+        debugPrint('[FFmpeg] 清理临时文件失败: $e');
+      }
+      
+      if (result.exitCode == 0) {
+        final outputFile = File(finalOutputPath);
+        if (await outputFile.exists()) {
+          final fileSize = await outputFile.length();
+          debugPrint('[FFmpeg] ✅ 合成成功: $finalOutputPath (${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB)');
+          return finalOutputPath;
+        } else {
+          throw Exception('FFmpeg 合成成功但输出文件不存在');
+        }
+      } else {
+        debugPrint('[FFmpeg] ❌ 合成失败');
+        debugPrint('[FFmpeg] Exit Code: ${result.exitCode}');
+        debugPrint('[FFmpeg] Stderr: ${result.stderr}');
+        throw Exception('FFmpeg 合成失败\nExit Code: ${result.exitCode}');
+      }
+    } catch (e) {
+      debugPrint('[FFmpeg] ❌ 合成异常: $e');
+      return null;
+    }
+  }
+
   /// 合成视频和音频（支持音频延迟）
   /// 
   /// [videoPath] 输入视频路径
@@ -228,27 +411,80 @@ class FFmpegService {
         throw Exception('音频文件不存在: $audioPath');
       }
       
-      // 生成输出路径
+      // ✅ 处理中文路径问题：复制到临时目录
+      final tempDir = await getTemporaryDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      // 复制视频到临时目录
+      final tempVideoPath = path.join(tempDir.path, 'temp_video_$timestamp.mp4');
+      await File(videoPath).copy(tempVideoPath);
+      debugPrint('[FFmpeg] 临时视频: $tempVideoPath');
+      
+      // 复制音频到临时目录
+      final audioExt = path.extension(audioPath);
+      final tempAudioPath = path.join(tempDir.path, 'temp_audio_$timestamp$audioExt');
+      await File(audioPath).copy(tempAudioPath);
+      debugPrint('[FFmpeg] 临时音频: $tempAudioPath');
+      
+      // 生成输出路径
       final finalOutputPath = outputPath ?? 
           path.join(
-            (await getTemporaryDirectory()).path,
+            tempDir.path,
             '${isPreview ? "preview" : "merged"}_$timestamp.mp4',
           );
       
       final ffmpegPath = await _getFFmpegPath();
       
-      // 构建 FFmpeg 命令
+      // ✅ 检测视频是否有音频轨道
+      final videoHasAudio = await hasAudioTrack(tempVideoPath);
+      debugPrint('[FFmpeg] 视频音频轨道: ${videoHasAudio ? "有" : "无"}');
+      
+      // 构建 FFmpeg 命令（使用临时文件路径）
       List<String> args;
       
-      if (audioStartTime > 0.0) {
-        // 音频需要延迟
+      if (!videoHasAudio) {
+        // ✅ 视频没有音频轨道，直接添加音频
+        if (audioStartTime > 0.0) {
+          // 音频需要延迟
+          final delayMs = (audioStartTime * 1000).toInt();
+          
+          args = [
+            '-y',
+            '-i', tempVideoPath,
+            '-i', tempAudioPath,
+            '-filter_complex',
+            '[1:a]adelay=$delayMs|$delayMs[delayed]',
+            '-map', '0:v',  // 映射视频流
+            '-map', '[delayed]',  // 映射延迟后的音频流
+            '-c:v', isPreview ? 'libx264' : 'copy',
+            '-c:a', 'aac',
+            '-b:a', isPreview ? '128k' : '192k',
+            '-preset', isPreview ? 'ultrafast' : 'fast',
+            // ✅ 移除 -shortest，保持视频完整长度
+            finalOutputPath,
+          ];
+        } else {
+          // 音频从0秒开始
+          args = [
+            '-y',
+            '-i', tempVideoPath,
+            '-i', tempAudioPath,
+            '-c:v', isPreview ? 'libx264' : 'copy',
+            '-c:a', 'aac',
+            '-b:a', isPreview ? '128k' : '192k',
+            '-preset', isPreview ? 'ultrafast' : 'fast',
+            // ✅ 移除 -shortest，保持视频完整长度
+            finalOutputPath,
+          ];
+        }
+      } else if (audioStartTime > 0.0) {
+        // ✅ 视频有音频轨道，且音频需要延迟
         final delayMs = (audioStartTime * 1000).toInt();
         
         args = [
           '-y',
-          '-i', videoPath,
-          '-i', audioPath,
+          '-i', tempVideoPath,
+          '-i', tempAudioPath,
           '-filter_complex',
           // adelay 滤镜：延迟音频（毫秒）
           '[1:a]adelay=$delayMs|$delayMs[delayed];'
@@ -258,22 +494,22 @@ class FFmpegService {
           '-c:a', 'aac',
           '-b:a', isPreview ? '128k' : '192k',     // 预览模式降低音频比特率
           '-preset', isPreview ? 'ultrafast' : 'fast',  // 预览模式使用最快预设
-          '-shortest',  // 以最短流为准
+          // ✅ 移除 -shortest，保持视频完整长度
           finalOutputPath,
         ];
       } else {
-        // 音频从0秒开始，不需要延迟
+        // ✅ 视频有音频轨道，音频从0秒开始，不需要延迟
         args = [
           '-y',
-          '-i', videoPath,
-          '-i', audioPath,
+          '-i', tempVideoPath,
+          '-i', tempAudioPath,
           '-filter_complex',
           '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2',
           '-c:v', isPreview ? 'libx264' : 'copy',
           '-c:a', 'aac',
           '-b:a', isPreview ? '128k' : '192k',
           '-preset', isPreview ? 'ultrafast' : 'fast',
-          '-shortest',
+          // ✅ 移除 -shortest，保持视频完整长度
           finalOutputPath,
         ];
       }
@@ -284,6 +520,15 @@ class FFmpegService {
         command: ffmpegPath,
         args: args,
       ));
+      
+      // 清理临时文件
+      try {
+        await File(tempVideoPath).delete();
+        await File(tempAudioPath).delete();
+        debugPrint('[FFmpeg] 临时文件已清理');
+      } catch (e) {
+        debugPrint('[FFmpeg] 清理临时文件失败: $e');
+      }
       
       if (result.exitCode == 0) {
         final outputFile = File(finalOutputPath);

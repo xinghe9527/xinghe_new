@@ -7,21 +7,25 @@ import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/services/api/api_repository.dart';
 import 'package:xinghe_new/services/api/providers/indextts_service.dart';
 import 'package:xinghe_new/features/home/domain/voice_asset.dart';
+import 'package:xinghe_new/main.dart';  // ✅ 导入 workSavePathNotifier
 import '../production_space_page.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:path/path.dart' as path;  // ✅ 导入 path 包
 
 /// 语音生成向导对话框
 /// 三步流程：1.AI识别对话 → 2.确认对话 → 3.生成配音
 class VoiceGenerationDialog extends StatefulWidget {
   final StoryboardRow storyboard;
   final int storyboardIndex;
+  final String workName;  // ✅ 添加作品名称
   final Function(StoryboardRow) onComplete;
 
   const VoiceGenerationDialog({
     super.key,
     required this.storyboard,
     required this.storyboardIndex,
+    required this.workName,  // ✅ 添加作品名称
     required this.onComplete,
   });
 
@@ -1600,17 +1604,40 @@ ${widget.storyboard.scriptSegment}
       });
 
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final outputDir = _audioSavePath.isNotEmpty 
-          ? _audioSavePath 
-          : Directory.systemTemp.path;
-      final outputPath = '$outputDir/voice_${widget.storyboard.id}_dialogue_${dialogue.id}_$timestamp.wav';
+      
+      // ✅ 优先使用作品保存路径，如果没设置则使用音频保存路径
+      String savePath;
+      final workPath = workSavePathNotifier.value;
+      final audioSavePath = _audioSavePath;  // ✅ 重命名避免冲突
+      
+      if (workPath != '未设置' && workPath.isNotEmpty) {
+        // 使用作品路径 + 作品名称
+        savePath = path.join(workPath, widget.workName);
+        debugPrint('📁 使用作品保存路径: $savePath');
+      } else if (audioSavePath.isNotEmpty) {
+        // 使用音频保存路径
+        savePath = audioSavePath;
+        debugPrint('📁 使用音频保存路径: $savePath');
+      } else {
+        // 使用临时目录
+        savePath = Directory.systemTemp.path;
+        debugPrint('📁 使用临时目录: $savePath');
+      }
+      
+      // 确保目录存在
+      final saveDir = Directory(savePath);
+      if (!await saveDir.exists()) {
+        await saveDir.create(recursive: true);
+      }
+      
+      final outputPath = '$savePath/voice_${widget.storyboard.id}_${_currentDialogueIndex}_dialogue_${dialogue.id}_$timestamp.wav';
 
       // ✅ 根据选择的情感控制方式生成
-      String? audioPath;
+      String? generatedAudioPath;  // ✅ 重命名避免冲突
       
       switch (_dialogEmotionMode) {
         case '与语音参考相同':
-          audioPath = await ttsService.synthesize(
+          generatedAudioPath = await ttsService.synthesize(
             text: dialogue.dialogue,
             voicePromptPath: _selectedVoice!.audioPath,
             outputPath: outputPath,
@@ -1621,7 +1648,7 @@ ${widget.storyboard.scriptSegment}
         case '使用情感参考音频':
           final emotionAudio = _dialogEmotionAudioPath ?? _selectedVoice!.emotionAudioPath;
           if (emotionAudio != null && File(emotionAudio).existsSync()) {
-            audioPath = await ttsService.synthesize(
+            generatedAudioPath = await ttsService.synthesize(
               text: dialogue.dialogue,
               voicePromptPath: _selectedVoice!.audioPath,
               emotionPromptPath: emotionAudio,
@@ -1635,7 +1662,7 @@ ${widget.storyboard.scriptSegment}
           break;
           
         case '使用情感向量':
-          audioPath = await ttsService.synthesizeWithEmotionVector(
+          generatedAudioPath = await ttsService.synthesizeWithEmotionVector(
             text: dialogue.dialogue,
             voicePromptPath: _selectedVoice!.audioPath,
             emotionVector: _dialogEmotionVector,
@@ -1649,7 +1676,7 @@ ${widget.storyboard.scriptSegment}
           final emotionText = _dialogEmotionText.isNotEmpty 
               ? _dialogEmotionText 
               : dialogue.emotion;
-          audioPath = await ttsService.synthesizeWithEmotionText(
+          generatedAudioPath = await ttsService.synthesizeWithEmotionText(
             text: dialogue.dialogue,
             voicePromptPath: _selectedVoice!.audioPath,
             emotionText: emotionText,
@@ -1661,17 +1688,17 @@ ${widget.storyboard.scriptSegment}
           break;
       }
 
-      if (audioPath != null && audioPath.isNotEmpty) {
-        final path = audioPath;  // 保存到本地变量
+      if (generatedAudioPath != null && generatedAudioPath.isNotEmpty) {
+        final savedPath = generatedAudioPath;  // 保存到本地变量
         setState(() {
-          _dialogueAudioMap[dialogue.id] = path;
+          _dialogueAudioMap[dialogue.id] = savedPath;
           _isGenerating = false;
         });
 
         _logger.success('对话配音完成', module: '语音生成', extra: {
           'index': _currentDialogueIndex + 1,
-          'path': audioPath,
-          'size': '${(await File(audioPath).length() / 1024).toStringAsFixed(2)} KB',
+          'path': generatedAudioPath,
+          'size': '${(await File(generatedAudioPath).length() / 1024).toStringAsFixed(2)} KB',
         });
       } else {
         throw Exception('IndexTTS 返回空结果');
