@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/services/api/api_repository.dart';
 import 'package:xinghe_new/services/api/providers/indextts_service.dart';
-import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/features/home/domain/voice_asset.dart';
-import 'package:path/path.dart' as path;
 import '../production_space_page.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -34,7 +33,6 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
   int _currentStep = 0;
   final LogManager _logger = LogManager();
   final ApiRepository _apiRepository = ApiRepository();
-  final FFmpegService _ffmpegService = FFmpegService();
   
   // 步骤1：识别的对话
   List<VoiceDialogue> _dialogues = [];
@@ -42,22 +40,33 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
   
   // 步骤2：配音生成
   bool _isGenerating = false;
-  bool _isMerging = false;  // 是否正在合成
-  String? _generatedAudioPath;
-  double _voiceStartTime = 0.0;
-  double _videoDuration = 5.0;  // 默认视频时长
-  bool _isLoadingDuration = false;
   
   // 配置
   bool _voiceEnabled = false;
   String _voiceServiceUrl = 'http://127.0.0.1:7860';
   String _audioSavePath = '';
   String _indexttsPath = 'D:\\Index-TTS2_XH';
-  double _defaultEmotionAlpha = 0.6;
-  
+
   // 语音库
   List<VoiceAsset> _availableVoices = [];
-  VoiceAsset? _selectedVoice;  // 选中的角色声音
+  
+  // ✅ 步骤3：当前正在配音的对话索引（逐个配音）
+  int _currentDialogueIndex = 0;
+  VoiceAsset? _selectedVoice;  // 当前对话选中的角色声音
+  /// 当前对话选择的合成方式
+  String _dialogEmotionMode = '与语音参考相同';
+  
+  // ✅ 配音生成参数（当前对话的）
+  String? _dialogEmotionAudioPath;  // 情感参考音频路径
+  List<double> _dialogEmotionVector = [0, 0, 0, 0, 0, 0, 0, 0];  // 8维情感向量
+  String _dialogEmotionText = '';  // 情感描述文本
+  double _dialogEmotionAlpha = 0.6;  // 情感权重
+  bool _dialogUseRandomSampling = false;  // 随机采样
+  
+  // ✅ 每个对话生成的音频路径（key: 对话ID, value: 音频路径）
+  Map<String, String> _dialogueAudioMap = {};
+  
+  final List<String> _emotionLabels = ['快乐', '愤怒', '悲伤', '害怕', '厌恶', '忧郁', '惊讶', '平静'];
 
   AudioPlayer? _audioPlayer;
   bool _useSystemPlayer = false;
@@ -65,10 +74,44 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
   @override
   void initState() {
     super.initState();
-    _loadVoiceConfig();
-    _loadVoiceLibrary();
-    _initDialogues();
-    _estimateVideoDuration();
+    
+    // ✅ 增加异常捕获，防止初始化崩溃
+    try {
+      print('[语音生成] ========== 开始初始化 ==========');
+      
+      _loadVoiceConfig();
+      print('[语音生成] ✓ _loadVoiceConfig');
+      
+      _loadVoiceLibrary();
+      print('[语音生成] ✓ _loadVoiceLibrary');
+      
+      // ✅ 恢复状态
+      if (widget.storyboard.voiceDialogues.isNotEmpty) {
+        _dialogues = List.from(widget.storyboard.voiceDialogues);
+        print('[语音生成] ✓ 恢复对话: ${_dialogues.length} 条');
+      }
+      
+      // 恢复当前对话索引
+      _currentDialogueIndex = widget.storyboard.currentDialogueIndex.clamp(0, _dialogues.length);
+      print('[语音生成] ✓ 恢复对话索引: $_currentDialogueIndex');
+      
+      // 恢复音频映射
+      if (widget.storyboard.dialogueAudioMapJson != null && widget.storyboard.dialogueAudioMapJson!.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(widget.storyboard.dialogueAudioMapJson!) as Map<String, dynamic>;
+          _dialogueAudioMap = decoded.map((key, value) => MapEntry(key, value.toString()));
+          print('[语音生成] ✓ 恢复音频映射: ${_dialogueAudioMap.length} 条');
+        } catch (e) {
+          print('[语音生成] ⚠️ 恢复音频映射失败: $e');
+        }
+      }
+      
+      print('[语音生成] ========== 初始化完成 ==========');
+    } catch (e, stack) {
+      _logger.error('配音向导初始化失败: $e', module: '语音生成');
+      print('[语音生成] ❌ initState 异常: $e');
+      print('[语音生成] 堆栈: $stack');
+    }
   }
 
   @override
@@ -108,7 +151,6 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
         _voiceServiceUrl = prefs.getString('voice_service_url') ?? 'http://127.0.0.1:7860';
         _audioSavePath = prefs.getString('audio_save_path') ?? '';
         _indexttsPath = prefs.getString('indextts_path') ?? 'D:\\Index-TTS2_XH';
-        _defaultEmotionAlpha = prefs.getDouble('default_emotion_alpha') ?? 0.6;
       });
     } catch (e) {
       _logger.error('加载语音配置失败: $e', module: '语音生成');
@@ -138,57 +180,17 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
       _logger.error('加载语音库失败: $e', module: '语音生成');
     }
   }
-
-  /// 初始化对话列表
-  void _initDialogues() {
-    if (widget.storyboard.voiceDialogues.isNotEmpty) {
-      _dialogues = List.from(widget.storyboard.voiceDialogues);
-    }
+  
+  /// ✅ 恢复配音向导之前保存的状态（已简化，只恢复必要字段）
+  void _restoreWizardState() {
+    // 此方法已在 initState 中直接内联，不再需要
+  }
+  
+  /// ✅ 保存当前状态到分镜（废弃，不再使用）
+  void _saveWizardState() {
+    // 不再使用自动保存，只在"完成并保存"时保存
   }
 
-  /// 获取视频时长
-  Future<void> _estimateVideoDuration() async {
-    if (widget.storyboard.videoUrls.isEmpty) {
-      setState(() {
-        _videoDuration = 5.0;  // 默认5秒
-      });
-      return;
-    }
-    
-    setState(() => _isLoadingDuration = true);
-    
-    try {
-      final videoUrl = widget.storyboard.videoUrls.first;
-      
-      // 检查是否是本地文件
-      if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://')) {
-        // 在线视频，使用默认时长
-        setState(() {
-          _videoDuration = 5.0;
-          _isLoadingDuration = false;
-        });
-        return;
-      }
-      
-      // 本地视频文件，获取实际时长
-      final duration = await _ffmpegService.getVideoDuration(videoUrl);
-      
-      setState(() {
-        _videoDuration = duration ?? 5.0;
-        _isLoadingDuration = false;
-      });
-      
-      _logger.info('获取视频时长', module: '语音生成', extra: {
-        'duration': _videoDuration,
-      });
-    } catch (e) {
-      _logger.error('获取视频时长失败: $e', module: '语音生成');
-      setState(() {
-        _videoDuration = 5.0;
-        _isLoadingDuration = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -696,9 +698,11 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
   Widget _buildStep3_GenerateVoice() {
     return Container(
       padding: const EdgeInsets.all(40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
           const Text(
             '🎵 配音生成',
             style: TextStyle(
@@ -709,8 +713,8 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
           ),
           const SizedBox(height: 20),
           
-          // 对话信息显示
-          if (_dialogues.isNotEmpty)
+          // ✅ 当前正在配音的对话信息
+          if (_dialogues.isNotEmpty && _currentDialogueIndex < _dialogues.length)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -723,24 +727,29 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.person, color: Color(0xFF667EEA), size: 16),
-                      const SizedBox(width: 8),
-                      Text(
-                        '角色: ${_dialogues.first.character}',
-                        style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF667EEA).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '对话 ${_currentDialogueIndex + 1}/${_dialogues.length}',
+                          style: const TextStyle(color: Color(0xFF667EEA), fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
                       ),
-                      const SizedBox(width: 24),
-                      const Icon(Icons.sentiment_satisfied, color: Color(0xFF667EEA), size: 16),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
+                      const Icon(Icons.person, color: Color(0xFF667EEA), size: 16),
+                      const SizedBox(width: 6),
                       Text(
-                        '情感: ${_dialogues.first.emotion}',
+                        '角色: ${_dialogues[_currentDialogueIndex].character}',
                         style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '台词: ${_dialogues.first.dialogue}',
+                    '台词: ${_dialogues[_currentDialogueIndex].dialogue}',
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                   ),
                 ],
@@ -749,7 +758,7 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
           
           const SizedBox(height: 24),
           
-          // ✅ 选择角色声音
+          // ✅ 选择当前对话的角色声音
           const Text(
             '🎤 选择角色声音',
             style: TextStyle(
@@ -823,65 +832,129 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
                         );
                       }).toList(),
                       onChanged: (voice) {
-                        setState(() => _selectedVoice = voice);
+                        setState(() {
+                          _selectedVoice = voice;
+                          if (voice != null) {
+                            // ✅ 默认使用自动模式，不从语音资产加载
+                            _dialogEmotionMode = '与语音参考相同';
+                            _dialogEmotionAudioPath = null;
+                            _dialogEmotionVector = [0, 0, 0, 0, 0, 0, 0, 0];
+                            _dialogEmotionText = '';
+                            _dialogEmotionAlpha = 0.6;
+                            _dialogUseRandomSampling = false;
+                          }
+                        });
                       },
                     ),
                   ),
                 ),
                 
-                // ✅ 显示选中声音的情感控制配置
+                // ✅ 合成方式选择
                 if (_selectedVoice != null) ...[
                   const SizedBox(height: 12),
+                  const Text(
+                    '合成方式',
+                    style: TextStyle(color: Color(0xFF888888), fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF667EEA).withOpacity(0.1),
+                      color: const Color(0xFF252629),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF667EEA).withOpacity(0.3)),
+                      border: Border.all(color: const Color(0xFF3A3A3C)),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.info_outline, color: Color(0xFF667EEA), size: 16),
-                            const SizedBox(width: 8),
-                            const Text(
-                              '将使用以下情感控制配置：',
-                              style: TextStyle(color: Color(0xFF667EEA), fontSize: 12, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '• 模式: ${_selectedVoice!.emotionControlMode}',
-                          style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11),
-                        ),
-                        if (_selectedVoice!.emotionControlMode != '与语音参考相同')
-                          Text(
-                            '• 情感权重: ${_selectedVoice!.emotionAlpha.toStringAsFixed(2)}',
-                            style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 11),
-                          ),
-                        if (_selectedVoice!.useRandomSampling)
-                          const Text(
-                            '• 随机情感采样: 已启用',
-                            style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 11),
-                          ),
-                      ],
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _dialogEmotionMode,
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF252629),
+                        icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF888888)),
+                        items: const [
+                          DropdownMenuItem(value: '与语音参考相同', child: Text('自动（与语音参考相同）', style: TextStyle(color: Colors.white, fontSize: 13))),
+                          DropdownMenuItem(value: '使用情感参考音频', child: Text('使用情感参考音频', style: TextStyle(color: Colors.white, fontSize: 13))),
+                          DropdownMenuItem(value: '使用情感向量', child: Text('使用情感向量控制', style: TextStyle(color: Colors.white, fontSize: 13))),
+                          DropdownMenuItem(value: '使用文本描述', child: Text('使用情感描述文本', style: TextStyle(color: Colors.white, fontSize: 13))),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) setState(() => _dialogEmotionMode = v);
+                        },
+                      ),
                     ),
                   ),
+                  
+                  // ✅ 根据合成方式显示对应的控制界面
+                  const SizedBox(height: 16),
+                  _buildEmotionControlContent(),
+                  
+                  // ✅ 随机采样开关
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Switch(
+                        value: _dialogUseRandomSampling,
+                        activeColor: const Color(0xFF667EEA),
+                        onChanged: (value) => setState(() => _dialogUseRandomSampling = value),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '随机情感采样',
+                        style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  
+                  // ✅ 情感权重（除了"与语音参考相同"模式）
+                  if (_dialogEmotionMode != '与语音参考相同') ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('情感权重', style: TextStyle(color: Color(0xFF888888), fontSize: 13)),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Slider(
+                            value: _dialogEmotionAlpha,
+                            min: 0.0,
+                            max: 1.0,
+                            divisions: 20,
+                            activeColor: const Color(0xFF667EEA),
+                            inactiveColor: const Color(0xFF3A3A3C),
+                            onChanged: (value) => setState(() => _dialogEmotionAlpha = value),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          width: 60,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3A3A3C),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            _dialogEmotionAlpha.toStringAsFixed(2),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ],
             ),
           
           const SizedBox(height: 24),
           
-          // 生成按钮
-          if (_generatedAudioPath == null)
+          // 生成按钮（只生成当前对话）
+          if (_currentDialogueIndex < _dialogues.length && _dialogueAudioMap[_dialogues[_currentDialogueIndex].id] == null)
             MouseRegion(
               cursor: SystemMouseCursors.click,
               child: GestureDetector(
-                onTap: _isGenerating ? null : _generateVoice,
+                onTap: _isGenerating ? null : _generateCurrentDialogueVoice,
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 16),
@@ -907,7 +980,7 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
                         const Icon(Icons.mic, color: Colors.white, size: 20),
                       const SizedBox(width: 12),
                       Text(
-                        _isGenerating ? '生成中...' : '🎤 生成配音',
+                        _isGenerating ? '生成中...' : '🎤 生成当前对话配音',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 15,
@@ -919,251 +992,204 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
                 ),
               ),
             )
-          else
+          else if (_currentDialogueIndex < _dialogues.length)
             Column(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.check_circle, color: Color(0xFF2AF598), size: 20),
-                    const SizedBox(width: 8),
-                    const Text(
-                      '✅ 配音生成完成',
-                      style: TextStyle(
-                        color: Color(0xFF2AF598),
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: () {
-                        // 试听配音
-                        _playGeneratedAudio();
-                      },
-                      icon: const Icon(Icons.play_arrow, color: Color(0xFF667EEA)),
-                      label: const Text('试听配音', style: TextStyle(color: Color(0xFF667EEA))),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                
-                // 时间轴对齐
-                const Text(
-                  '⏱️ 音视频时间轴对齐',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
+                // ✅ 当前对话配音生成完成
                 Container(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF252629),
+                    color: const Color(0xFF2AF598).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF3A3A3C)),
+                    border: Border.all(color: const Color(0xFF2AF598)),
                   ),
-                  child: Column(
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          const Text('📹 视频时长:', style: TextStyle(color: Color(0xFF888888), fontSize: 13)),
-                          const SizedBox(width: 8),
-                          if (_isLoadingDuration)
-                            const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(Color(0xFF667EEA)),
-                              ),
-                            )
-                          else
-                            Text('${_videoDuration.toStringAsFixed(1)} 秒', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      Row(
-                        children: [
-                          const Text('配音起始时间:', style: TextStyle(color: Color(0xFF888888), fontSize: 13)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Slider(
-                              value: _voiceStartTime,
-                              min: 0.0,
-                              max: _videoDuration,
-                              divisions: (_videoDuration * 10).toInt(),
-                              activeColor: const Color(0xFF667EEA),
-                              inactiveColor: const Color(0xFF3A3A3C),
-                              onChanged: (value) {
-                                setState(() => _voiceStartTime = value);
-                              },
-                            ),
-                          ),
-                          Container(
-                            width: 80,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF3A3A3C),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '${_voiceStartTime.toStringAsFixed(1)} 秒',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      // 时间轴可视化
-                      _buildTimeline(),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // 预览按钮
-                MouseRegion(
-                  cursor: _isMerging ? SystemMouseCursors.wait : SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: _isMerging ? null : _previewMergedVideo,
-                    child: Opacity(
-                      opacity: _isMerging ? 0.6 : 1.0,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFF667EEA), width: 2),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                      const Icon(Icons.check_circle, color: Color(0xFF2AF598), size: 24),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (_isMerging)
-                              const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(Color(0xFF667EEA)),
-                                ),
-                              )
-                            else
-                              const Icon(Icons.play_circle_outline, color: Color(0xFF667EEA), size: 20),
-                            const SizedBox(width: 8),
-                            Text(
-                              _isMerging ? '合成中...' : '▶️ 预览合成效果',
-                              style: const TextStyle(
-                                color: Color(0xFF667EEA),
-                                fontSize: 14,
+                            const Text(
+                              '✅ 当前对话配音完成',
+                              style: TextStyle(
+                                color: Color(0xFF2AF598),
+                                fontSize: 16,
                                 fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '已完成 ${_dialogueAudioMap.length}/${_dialogues.length} 条对话',
+                              style: const TextStyle(
+                                color: Color(0xFFCCCCCC),
+                                fontSize: 12,
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      // 试听按钮
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: () => _playDialogueAudio(_dialogues[_currentDialogueIndex].id),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF667EEA),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.play_arrow, color: Colors.white, size: 18),
+                                SizedBox(width: 6),
+                                Text(
+                                  '试听',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // 重新生成按钮
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: () => _regenerateCurrentDialogue(),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3A3A3C),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFF888888)),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.refresh, color: Color(0xFF888888), size: 18),
+                                SizedBox(width: 6),
+                                Text(
+                                  '重配',
+                                  style: TextStyle(
+                                    color: Color(0xFF888888),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // ✅ 导航按钮
+                Row(
+                  children: [
+                    // 上一条
+                    if (_currentDialogueIndex > 0)
+                      Expanded(
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: () => setState(() => _currentDialogueIndex--),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF3A3A3C),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.arrow_back, color: Colors.white, size: 18),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    '上一条',
+                                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_currentDialogueIndex > 0 && _currentDialogueIndex < _dialogues.length - 1)
+                      const SizedBox(width: 12),
+                    // 下一条
+                    if (_currentDialogueIndex < _dialogues.length - 1)
+                      Expanded(
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: () => setState(() => _currentDialogueIndex++),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    '下一条',
+                                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                  ),
+                                  SizedBox(width: 6),
+                                  Icon(Icons.arrow_forward, color: Colors.white, size: 18),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // ✅ 进度提示
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF667EEA).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF667EEA).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Color(0xFF667EEA), size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _dialogueAudioMap.length == _dialogues.length
+                              ? '✅ 所有对话已配音完成，点击底部"完成并保存"'
+                              : '💡 配完所有对话后，点击底部"完成并保存"',
+                          style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
         ],
+        ),
       ),
-    );
-  }
-
-  /// 时间轴可视化
-  Widget _buildTimeline() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('时间轴预览:', style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 60,
-          child: Stack(
-            children: [
-              // 视频轨道
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('视频', style: TextStyle(color: Color(0xFF666666), fontSize: 10)),
-                    const SizedBox(height: 4),
-                    Container(
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF4A9EFF).withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // 音频轨道
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 30,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('音频', style: TextStyle(color: Color(0xFF666666), fontSize: 10)),
-                    const SizedBox(height: 4),
-                    Stack(
-                      children: [
-                        // 背景轨道
-                        Container(
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF3A3A3C),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                        // 音频片段
-                        if (_voiceStartTime < _videoDuration)
-                          Positioned(
-                            left: (_voiceStartTime / _videoDuration) * MediaQuery.of(context).size.width * 0.6,
-                            child: Container(
-                              width: (((_videoDuration - _voiceStartTime) / _videoDuration) * MediaQuery.of(context).size.width * 0.6).clamp(20, double.infinity),
-                              height: 8,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
-                                ),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        // 时间刻度
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(
-            (_videoDuration + 1).toInt(),
-            (i) => Text(
-              '${i}s',
-              style: const TextStyle(color: Color(0xFF666666), fontSize: 10),
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -1205,7 +1231,7 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
             )
           else
             ElevatedButton.icon(
-              onPressed: _generatedAudioPath != null ? _saveAndComplete : null,
+              onPressed: _canGoNext() ? _saveAllDialoguesAudio : null,
               icon: const Icon(Icons.check, color: Colors.white),
               label: const Text('完成并保存', style: TextStyle(color: Colors.white)),
               style: ElevatedButton.styleFrom(
@@ -1224,6 +1250,9 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
         return _dialogues.isNotEmpty;  // 至少有一条对话才能进入下一步
       case 1:
         return _dialogues.isNotEmpty && _availableVoices.isNotEmpty;  // 有对话且有可用声音
+      case 2:
+        // 步骤3：所有对话都配完音才能完成
+        return _dialogueAudioMap.length == _dialogues.length;
       default:
         return false;
     }
@@ -1338,10 +1367,9 @@ ${widget.storyboard.scriptSegment}
     }
   }
 
-  /// 手动添加对话
+  /// 手动添加对话（不展示情感项，后期配音时再选合成方式）
   void _manualAddDialogue() {
     final characterController = TextEditingController();
-    final emotionController = TextEditingController(text: '平静');
     final dialogueController = TextEditingController();
 
     showDialog(
@@ -1361,23 +1389,6 @@ ${widget.storyboard.scriptSegment}
                   labelText: '角色名称',
                   labelStyle: TextStyle(color: Color(0xFF888888)),
                   hintText: '例如: 小明',
-                  hintStyle: TextStyle(color: Color(0xFF666666)),
-                  enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF3A3A3C)),
-                  ),
-                  focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF667EEA)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: emotionController,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: '情感',
-                  labelStyle: TextStyle(color: Color(0xFF888888)),
-                  hintText: '例如: 开心、悲伤、惊讶',
                   hintStyle: TextStyle(color: Color(0xFF666666)),
                   enabledBorder: UnderlineInputBorder(
                     borderSide: BorderSide(color: Color(0xFF3A3A3C)),
@@ -1419,7 +1430,7 @@ ${widget.storyboard.scriptSegment}
                 final newDialogue = VoiceDialogue(
                   id: DateTime.now().millisecondsSinceEpoch.toString(),
                   character: characterController.text.trim(),
-                  emotion: emotionController.text.trim(),
+                  emotion: '平静',
                   dialogue: dialogueController.text.trim(),
                 );
                 
@@ -1443,11 +1454,10 @@ ${widget.storyboard.scriptSegment}
     );
   }
 
-  /// 编辑对话
+  /// 编辑对话（不展示情感项，配音时在向导内选合成方式）
   void _editDialogue(int index) {
     final dialogue = _dialogues[index];
     final characterController = TextEditingController(text: dialogue.character);
-    final emotionController = TextEditingController(text: dialogue.emotion);
     final dialogueController = TextEditingController(text: dialogue.dialogue);
 
     showDialog(
@@ -1465,21 +1475,6 @@ ${widget.storyboard.scriptSegment}
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
                   labelText: '角色名称',
-                  labelStyle: TextStyle(color: Color(0xFF888888)),
-                  enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF3A3A3C)),
-                  ),
-                  focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF667EEA)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: emotionController,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: '情感',
                   labelStyle: TextStyle(color: Color(0xFF888888)),
                   enabledBorder: UnderlineInputBorder(
                     borderSide: BorderSide(color: Color(0xFF3A3A3C)),
@@ -1518,7 +1513,6 @@ ${widget.storyboard.scriptSegment}
               setState(() {
                 _dialogues[index] = dialogue.copyWith(
                   character: characterController.text.trim(),
-                  emotion: emotionController.text.trim(),
                   dialogue: dialogueController.text.trim(),
                 );
               });
@@ -1552,13 +1546,8 @@ ${widget.storyboard.scriptSegment}
     }
   }
 
-  /// 生成配音
-  Future<void> _generateVoice() async {
-    if (_dialogues.isEmpty) {
-      _showErrorDialog('没有对话', '请先添加至少一条对话');
-      return;
-    }
-
+  /// 生成当前对话的配音（不合并，单独保存）
+  Future<void> _generateCurrentDialogueVoice() async {
     if (!_voiceEnabled) {
       _showErrorDialog('功能未启用', '请在【设置 > API设置 > 语音合成】中启用语音合成功能');
       return;
@@ -1576,7 +1565,7 @@ ${widget.storyboard.scriptSegment}
       return;
     }
 
-    // ✅ 先测试服务连接
+    // 测试服务连接
     final ttsService = IndexTTSService(
       baseUrl: _voiceServiceUrl,
       indexttsPath: _indexttsPath,
@@ -1592,8 +1581,7 @@ ${widget.storyboard.scriptSegment}
         '1. IndexTTS 已安装\n'
         '2. 已运行命令: uv run webui.py\n'
         '3. 服务正常启动在 http://127.0.0.1:7860\n'
-        '4. 防火墙未阻止连接\n\n'
-        '💡 提示：可以在浏览器访问该地址测试服务是否正常',
+        '4. 防火墙未阻止连接',
       );
       return;
     }
@@ -1601,51 +1589,45 @@ ${widget.storyboard.scriptSegment}
     setState(() => _isGenerating = true);
 
     try {
-      // 合并所有对话的台词
-      final fullText = _dialogues.map((d) => d.dialogue).join(' ');
+      final dialogue = _dialogues[_currentDialogueIndex];
       
-      _logger.info('开始生成配音', module: '语音生成', extra: {
-        'text': fullText,
-        'dialogueCount': _dialogues.length,
-        'character': _selectedVoice!.name,
-        'emotion': _dialogues.first.emotion,
+      _logger.info('生成对话配音', module: '语音生成', extra: {
+        'index': _currentDialogueIndex + 1,
+        'total': _dialogues.length,
+        'character': dialogue.character,
+        'voice': _selectedVoice!.name,
+        'text': dialogue.dialogue,
       });
 
-      // 创建 IndexTTS 服务
-      final ttsService = IndexTTSService(
-        baseUrl: _voiceServiceUrl,
-        indexttsPath: _indexttsPath,
-      );
-      
-      // 生成输出路径
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final outputDir = _audioSavePath.isNotEmpty 
           ? _audioSavePath 
           : Directory.systemTemp.path;
-      final outputPath = '$outputDir/voice_${widget.storyboard.id}_$timestamp.wav';
+      final outputPath = '$outputDir/voice_${widget.storyboard.id}_dialogue_${dialogue.id}_$timestamp.wav';
 
-      // ✅ 根据语音资产的情感控制配置调用 IndexTTS
+      // ✅ 根据选择的情感控制方式生成
       String? audioPath;
       
-      switch (_selectedVoice!.emotionControlMode) {
+      switch (_dialogEmotionMode) {
         case '与语音参考相同':
           audioPath = await ttsService.synthesize(
-            text: fullText,
+            text: dialogue.dialogue,
             voicePromptPath: _selectedVoice!.audioPath,
             outputPath: outputPath,
-            useRandom: _selectedVoice!.useRandomSampling,
+            useRandom: _dialogUseRandomSampling,
           );
           break;
           
         case '使用情感参考音频':
-          if (_selectedVoice!.emotionAudioPath != null) {
+          final emotionAudio = _dialogEmotionAudioPath ?? _selectedVoice!.emotionAudioPath;
+          if (emotionAudio != null && File(emotionAudio).existsSync()) {
             audioPath = await ttsService.synthesize(
-              text: fullText,
+              text: dialogue.dialogue,
               voicePromptPath: _selectedVoice!.audioPath,
-              emotionPromptPath: _selectedVoice!.emotionAudioPath,
-              emotionAlpha: _selectedVoice!.emotionAlpha,
+              emotionPromptPath: emotionAudio,
+              emotionAlpha: _dialogEmotionAlpha,
               outputPath: outputPath,
-              useRandom: _selectedVoice!.useRandomSampling,
+              useRandom: _dialogUseRandomSampling,
             );
           } else {
             throw Exception('情感参考音频未设置');
@@ -1654,281 +1636,293 @@ ${widget.storyboard.scriptSegment}
           
         case '使用情感向量':
           audioPath = await ttsService.synthesizeWithEmotionVector(
-            text: fullText,
+            text: dialogue.dialogue,
             voicePromptPath: _selectedVoice!.audioPath,
-            emotionVector: _selectedVoice!.emotionVector,
+            emotionVector: _dialogEmotionVector,
             outputPath: outputPath,
-            useRandom: _selectedVoice!.useRandomSampling,
+            useRandom: _dialogUseRandomSampling,
           );
           break;
           
         case '使用文本描述':
         default:
-          // 使用对话的情感 + 语音资产的文本情感（如果有）
-          final emotionDescription = _selectedVoice!.emotionText.isNotEmpty 
-              ? _selectedVoice!.emotionText 
-              : _dialogues.first.emotion;
-          
+          final emotionText = _dialogEmotionText.isNotEmpty 
+              ? _dialogEmotionText 
+              : dialogue.emotion;
           audioPath = await ttsService.synthesizeWithEmotionText(
-            text: fullText,
+            text: dialogue.dialogue,
             voicePromptPath: _selectedVoice!.audioPath,
-            emotionText: emotionDescription,
+            emotionText: emotionText,
             useEmotionText: true,
-            emotionAlpha: _selectedVoice!.emotionAlpha,
+            emotionAlpha: _dialogEmotionAlpha,
             outputPath: outputPath,
-            useRandom: _selectedVoice!.useRandomSampling,
+            useRandom: _dialogUseRandomSampling,
           );
           break;
       }
 
-      if (audioPath != null) {
+      if (audioPath != null && audioPath.isNotEmpty) {
+        final path = audioPath;  // 保存到本地变量
         setState(() {
-          _generatedAudioPath = audioPath;
+          _dialogueAudioMap[dialogue.id] = path;
           _isGenerating = false;
         });
 
-        _logger.success('配音生成完成', module: '语音生成', extra: {
+        _logger.success('对话配音完成', module: '语音生成', extra: {
+          'index': _currentDialogueIndex + 1,
           'path': audioPath,
           'size': '${(await File(audioPath).length() / 1024).toStringAsFixed(2)} KB',
         });
       } else {
         throw Exception('IndexTTS 返回空结果');
       }
-    } catch (e) {
+    } catch (e, stack) {
       _logger.error('生成配音失败: $e', module: '语音生成');
+      print('[语音生成] 错误: $e');
+      print('[语音生成] 堆栈: $stack');
       setState(() => _isGenerating = false);
       _showErrorDialog('生成失败', '错误: $e\n\n请检查：\n1. IndexTTS 服务是否正常运行\n2. 服务地址是否正确\n3. 声音样本文件是否有效');
     }
   }
 
-  /// 播放生成的配音（应用内播放）
-  Future<void> _playGeneratedAudio() async {
-    if (_generatedAudioPath == null) return;
-    await _playInApp(_generatedAudioPath!);
+  /// 播放指定对话的配音
+  Future<void> _playDialogueAudio(String dialogueId) async {
+    final audioPath = _dialogueAudioMap[dialogueId];
+    if (audioPath == null) return;
+    await _playInApp(audioPath);
+  }
+  
+  /// 重新生成当前对话的配音
+  void _regenerateCurrentDialogue() {
+    final dialogue = _dialogues[_currentDialogueIndex];
+    setState(() {
+      _dialogueAudioMap.remove(dialogue.id);
+    });
   }
 
-  /// 预览合成效果
-  Future<void> _previewMergedVideo() async {
-    if (_generatedAudioPath == null) {
-      _showErrorDialog('未生成配音', '请先生成配音');
-      return;
-    }
-
-    if (widget.storyboard.videoUrls.isEmpty) {
-      _showErrorDialog('没有视频', '此分镜还没有生成视频');
-      return;
-    }
-
-    final videoUrl = widget.storyboard.videoUrls.first;
-    
-    // 检查是否是本地文件
-    if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://')) {
-      _showErrorDialog('不支持在线视频', '预览功能仅支持本地视频文件\n\n请先下载视频到本地');
-      return;
-    }
-
-    setState(() => _isMerging = true);
-
-    try {
-      _logger.info('开始预览合成', module: '语音生成', extra: {
-        'videoPath': videoUrl,
-        'audioPath': _generatedAudioPath,
-        'startTime': _voiceStartTime,
-      });
-
-      // 使用 FFmpeg 快速生成预览
-      final previewPath = await _ffmpegService.mergeVideoAudioWithTiming(
-        videoPath: videoUrl,
-        audioPath: _generatedAudioPath!,
-        audioStartTime: _voiceStartTime,
-        isPreview: true,  // 预览模式（快速，低质量）
-      );
-
-      setState(() => _isMerging = false);
-
-      if (previewPath != null) {
-        _logger.success('预览生成完成', module: '语音生成', extra: {
-          'path': previewPath,
-        });
-
-        // 自动播放预览
-        await Process.run('cmd', ['/c', 'start', '', previewPath]);
-        
-        _showSuccessDialog(
-          '预览已生成',
-          '预览视频已在默认播放器中打开\n\n'
-          '✓ 视频时长: ${_videoDuration.toStringAsFixed(1)}秒\n'
-          '✓ 配音起始: ${_voiceStartTime.toStringAsFixed(1)}秒\n\n'
-          '如果效果满意，点击"完成并保存"将生成高质量版本',
-        );
-      } else {
-        throw Exception('FFmpeg 返回空结果');
-      }
-    } catch (e) {
-      _logger.error('预览合成失败: $e', module: '语音生成');
-      setState(() => _isMerging = false);
-      _showErrorDialog('预览失败', '错误: $e\n\n请确保 FFmpeg 已正确安装');
-    }
-  }
-
-  /// 保存并完成
-  Future<void> _saveAndComplete() async {
-    if (_generatedAudioPath == null) return;
-
-    // 如果有视频，询问是否合成
-    if (widget.storyboard.videoUrls.isNotEmpty) {
-      final videoUrl = widget.storyboard.videoUrls.first;
-      
-      // 检查是否是本地视频
-      if (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://')) {
-        final shouldMerge = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF1E1E20),
-            title: const Text('合成音视频', style: TextStyle(color: Colors.white)),
-            content: const Text(
-              '是否要将配音合成到视频中？\n\n'
-              '✓ 是：生成包含配音的新视频（推荐）\n'
-              '✓ 否：仅保存配音文件',
-              style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 14),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('仅保存配音', style: TextStyle(color: Color(0xFF888888))),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF667EEA)),
-                child: const Text('合成到视频', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-        );
-
-        if (shouldMerge == true) {
-          await _mergeAndSave(videoUrl);
-          return;
-        }
-      }
-    }
-
-    // 仅保存配音
-    _saveConfigOnly();
-  }
-
-  /// 仅保存配音配置（不合成视频）
-  void _saveConfigOnly() {
+  /// 保存所有对话的配音（不合并，每个对话单独保存）
+  void _saveAllDialoguesAudio() {
+    // ✅ 保存音频映射和当前对话索引
     final updatedStoryboard = widget.storyboard.copyWith(
       voiceDialogues: _dialogues,
-      generatedAudioPath: _generatedAudioPath,
-      voiceStartTime: _voiceStartTime,
+      generatedAudioPath: _dialogueAudioMap.values.isNotEmpty ? _dialogueAudioMap.values.first : null,
+      voiceStartTime: 0.0,
       hasVoice: true,
+      voiceWizardStep: 2,  // 保持在步骤3
+      currentDialogueIndex: _dialogueAudioMap.length == _dialogues.length ? 0 : _currentDialogueIndex,  // 如果全部完成重置为0
+      dialogueAudioMapJson: jsonEncode(_dialogueAudioMap),
     );
 
     widget.onComplete(updatedStoryboard);
     Navigator.pop(context);
 
-    _logger.success('配音保存完成', module: '语音生成', extra: {
+    _logger.success('所有对话配音保存完成', module: '语音生成', extra: {
       'storyboardIndex': widget.storyboardIndex,
       'dialogueCount': _dialogues.length,
+      'audioFiles': _dialogueAudioMap.length,
     });
   }
 
-  /// 合成并保存
-  Future<void> _mergeAndSave(String videoPath) async {
-    setState(() => _isMerging = true);
+  /// 根据选择的合成方式显示不同的控制内容
+  Widget _buildEmotionControlContent() {
+    switch (_dialogEmotionMode) {
+      case '与语音参考相同':
+        return const SizedBox.shrink();
 
-    try {
-      _logger.info('开始合成音视频（高质量）', module: '语音生成', extra: {
-        'videoPath': videoPath,
-        'audioPath': _generatedAudioPath,
-        'startTime': _voiceStartTime,
-      });
-
-      // 生成输出路径（与原视频同目录）
-      final videoDir = path.dirname(videoPath);
-      final videoBasename = path.basenameWithoutExtension(videoPath);
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final outputPath = path.join(videoDir, '${videoBasename}_voiced_$timestamp.mp4');
-
-      // 使用 FFmpeg 合成高质量版本
-      final mergedPath = await _ffmpegService.mergeVideoAudioWithTiming(
-        videoPath: videoPath,
-        audioPath: _generatedAudioPath!,
-        audioStartTime: _voiceStartTime,
-        outputPath: outputPath,
-        isPreview: false,  // 高质量模式
-      );
-
-      setState(() => _isMerging = false);
-
-      if (mergedPath != null) {
-        _logger.success('音视频合成完成', module: '语音生成', extra: {
-          'outputPath': mergedPath,
-        });
-
-        // 更新分镜，添加新的视频URL
-        final updatedVideoUrls = List<String>.from(widget.storyboard.videoUrls);
-        updatedVideoUrls.add(mergedPath);  // 添加新视频到列表
-
-        final updatedStoryboard = widget.storyboard.copyWith(
-          voiceDialogues: _dialogues,
-          generatedAudioPath: _generatedAudioPath,
-          voiceStartTime: _voiceStartTime,
-          hasVoice: true,
-          videoUrls: updatedVideoUrls,  // 更新视频列表
-        );
-
-        widget.onComplete(updatedStoryboard);
-        Navigator.pop(context);
-
-        // 显示成功消息并询问是否播放
-        final shouldPlay = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF1E1E20),
-            title: Row(
-              children: const [
-                Icon(Icons.check_circle, color: Color(0xFF2AF598), size: 24),
-                SizedBox(width: 12),
-                Text('合成完成', style: TextStyle(color: Colors.white)),
-              ],
-            ),
-            content: Text(
-              '✅ 音视频合成成功！\n\n'
-              '新视频已保存到:\n$mergedPath\n\n'
-              '是否立即播放查看效果？',
-              style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 14),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('稍后查看', style: TextStyle(color: Color(0xFF888888))),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2AF598)),
-                child: const Text('立即播放', style: TextStyle(color: Colors.white)),
+      case '使用情感参考音频':
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF252629),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF3A3A3C)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('情感参考音频', style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E1E20),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF3A3A3C)),
+                      ),
+                      child: Text(
+                        _dialogEmotionAudioPath != null 
+                            ? _dialogEmotionAudioPath!.split(RegExp(r'[/\\]')).last 
+                            : (_selectedVoice?.emotionAudioPath != null
+                                ? _selectedVoice!.emotionAudioPath!.split(RegExp(r'[/\\]')).last
+                                : '选择情感参考音频文件（可选）'),
+                        style: TextStyle(
+                          color: _dialogEmotionAudioPath != null || _selectedVoice?.emotionAudioPath != null
+                              ? const Color(0xFFCCCCCC) 
+                              : const Color(0xFF666666),
+                          fontSize: 12,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: _pickDialogEmotionAudio,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF667EEA).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF667EEA)),
+                        ),
+                        child: const Text(
+                          '浏览',
+                          style: TextStyle(
+                            color: Color(0xFF667EEA),
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         );
-
-        if (shouldPlay == true) {
-          await Process.run('cmd', ['/c', 'start', '', mergedPath]);
-        }
-      } else {
-        throw Exception('FFmpeg 返回空结果');
-      }
-    } catch (e) {
-      _logger.error('合成失败: $e', module: '语音生成');
-      setState(() => _isMerging = false);
-      _showErrorDialog('合成失败', '错误: $e\n\n请确保 FFmpeg 已正确安装');
+        
+      case '使用情感向量':
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF252629),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF3A3A3C)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('情感向量（8维）', style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
+              const SizedBox(height: 8),
+              ...List.generate(8, (index) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 60,
+                        child: Text(
+                          _emotionLabels[index],
+                          style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: _dialogEmotionVector[index],
+                          min: 0.0,
+                          max: 1.0,
+                          divisions: 20,
+                          activeColor: const Color(0xFF667EEA),
+                          inactiveColor: const Color(0xFF3A3A3C),
+                          onChanged: (value) {
+                            setState(() {
+                              _dialogEmotionVector[index] = value;
+                            });
+                          },
+                        ),
+                      ),
+                      Container(
+                        width: 50,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF3A3A3C),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          _dialogEmotionVector[index].toStringAsFixed(2),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+        
+      case '使用文本描述':
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF252629),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF3A3A3C)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('情感描述文本', style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: TextEditingController(text: _dialogEmotionText.isEmpty 
+                    ? (_selectedVoice?.emotionText.isNotEmpty == true ? _selectedVoice!.emotionText : '')
+                    : _dialogEmotionText),
+                onChanged: (value) => _dialogEmotionText = value,
+                maxLines: 2,
+                style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: '描述情感，如：悬疑叙述，语速稍快',
+                  hintStyle: const TextStyle(color: Color(0xFF666666)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E20),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+            ],
+          ),
+        );
+        
+      default:
+        return const SizedBox.shrink();
     }
   }
 
-  /// 显示错误对话框
+  /// 选择情感参考音频（对话框内）
+  Future<void> _pickDialogEmotionAudio() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['wav', 'mp3', 'm4a', 'aac', 'flac'],
+        dialogTitle: '选择情感参考音频',
+      );
+
+      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+        setState(() {
+          _dialogEmotionAudioPath = result.files.first.path;
+        });
+      }
+    } catch (e) {
+      _logger.error('选择情感音频失败: $e', module: '语音生成');
+    }
+  }
+
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -1955,30 +1949,4 @@ ${widget.storyboard.scriptSegment}
     );
   }
 
-  /// 显示成功对话框
-  void _showSuccessDialog(String title, String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E20),
-        title: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Color(0xFF2AF598), size: 24),
-            const SizedBox(width: 12),
-            Text(title, style: const TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('知道了', style: TextStyle(color: Color(0xFF667EEA))),
-          ),
-        ],
-      ),
-    );
-  }
 }

@@ -352,6 +352,32 @@ class FFmpegService {
       return null;
     }
   }
+  
+  /// 获取音频时长（秒）
+  Future<double?> getAudioDuration(String audioPath) async {
+    try {
+      final ffmpegPath = await _getFFmpegPath();
+      
+      final result = await Process.run(
+        ffmpegPath,
+        ['-i', audioPath],
+      );
+      
+      final stderr = result.stderr.toString();
+      final durationMatch = RegExp(r'Duration: (\d+):(\d+):(\d+\.\d+)').firstMatch(stderr);
+      
+      if (durationMatch != null) {
+        final hours = int.parse(durationMatch.group(1)!);
+        final minutes = int.parse(durationMatch.group(2)!);
+        final seconds = double.parse(durationMatch.group(3)!);
+        
+        return hours * 3600 + minutes * 60 + seconds;
+      }
+    } catch (e) {
+      debugPrint('[FFmpeg] 获取音频时长失败: $e');
+    }
+    return null;
+  }
 }
 
 /// FFmpeg 进程参数

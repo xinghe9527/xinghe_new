@@ -12,6 +12,7 @@ import 'character_generation_page.dart';
 import 'scene_generation_page.dart';
 import 'item_generation_page.dart';
 import 'widgets/voice_generation_dialog.dart';
+import 'widgets/video_audio_editor_dialog.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/ffmpeg_service.dart';
@@ -763,46 +764,36 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                                 ),
                               )
                             else
-                              // 已配音状态
-                              Column(
-                                children: [
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.check_circle, color: Color(0xFF2AF598), size: 16),
-                                      const SizedBox(width: 6),
-                                      const Expanded(
-                                        child: Text(
+                              // 已配音状态（点击可进入修改，橙色渐变）
+                              MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: GestureDetector(
+                                  onTap: () => _openVoiceGenerationDialog(index),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [Color(0xFFFF9A56), Color(0xFFFF6B6B)],
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.check_circle, color: Colors.white, size: 16),
+                                        SizedBox(width: 6),
+                                        Text(
                                           '已配音',
                                           style: TextStyle(
-                                            color: Color(0xFF2AF598),
-                                            fontSize: 12,
+                                            color: Colors.white,
+                                            fontSize: 13,
                                             fontWeight: FontWeight.bold,
                                           ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: _buildSmallButton(
-                                          icon: Icons.play_arrow,
-                                          label: '试听',
-                                          onTap: () => _playVoiceAudio(row),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: _buildSmallButton(
-                                          icon: Icons.refresh,
-                                          label: '重配',
-                                          onTap: () => _openVoiceGenerationDialog(index),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                ),
                               ),
                           ],
                         ),
@@ -1486,14 +1477,17 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     );
   }
 
-  /// 列4：视频生成区（四宫格）
+  /// 列4：视频生成区（四宫格+合成按钮）
   Widget _buildVideoGenerationColumn(StoryboardRow row, int index) {
     return Container(
       padding: const EdgeInsets.all(8),
-      child: Stack(
+      child: Column(
         children: [
           // 四宫格布局
-          GridView.builder(
+          Expanded(
+            child: Stack(
+              children: [
+                GridView.builder(
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
@@ -1505,17 +1499,38 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             itemBuilder: (context, gridIndex) {
               final hasVideo = gridIndex < row.videoUrls.length;
               final videoUrl = hasVideo ? row.videoUrls[gridIndex] : null;
+              final isSelectedVideo = row.selectedVideoIndex == gridIndex;
               
               return GestureDetector(
-                onTap: hasVideo ? () => _playVideo(videoUrl!) : null,
-                onSecondaryTapDown: hasVideo ? (details) => _showVideoContextMenu(
-                  context, details, videoUrl!, index, gridIndex,
-                ) : null,
+                // ✅ 左键选择视频（用于语音合成）
+                onTap: () {
+                  setState(() {
+                    _storyboards[index] = row.copyWith(selectedVideoIndex: gridIndex);
+                  });
+                  _saveProductionData();
+                  
+                  final message = hasVideo 
+                      ? '已选择视频${gridIndex + 1}（用于语音合成）' 
+                      : '已选择空格子${gridIndex + 1}（用于语音合成）';
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(message),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                // ✅ 右键显示菜单（播放视频、定位文件、删除视频）
+                onSecondaryTapDown: hasVideo ? (details) {
+                  _showVideoContextMenuDirect(context, videoUrl!, index, gridIndex, details);
+                } : null,
                 child: Container(
                   decoration: BoxDecoration(
                     color: const Color(0xFF1A1A1C),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: const Color(0xFF3A3A3C)),
+                    border: Border.all(
+                      color: isSelectedVideo ? const Color(0xFF667EEA) : const Color(0xFF3A3A3C),
+                      width: isSelectedVideo ? 2 : 1,
+                    ),
                   ),
                   child: hasVideo
                       ? Stack(
@@ -1553,30 +1568,69 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                 ),
               );
             },
-          ),
-          // 右上角生成按钮
-          Positioned(
-            top: 4,
-            right: 4,
-            child: IconButton(
-              onPressed: row.selectedImageIndex < row.imageUrls.length 
-                  ? () => _generateVideo(index) 
-                  : null,
-              icon: const Icon(Icons.auto_awesome, size: 14),
-              color: const Color(0xFF888888),
-              tooltip: '生成视频',
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.black.withOpacity( 0.7),
-                padding: const EdgeInsets.all(6),
               ),
+              // 右上角生成按钮
+              Positioned(
+                top: 4,
+                right: 4,
+                child: IconButton(
+                  onPressed: row.selectedImageIndex < row.imageUrls.length 
+                      ? () => _generateVideo(index) 
+                      : null,
+                  icon: const Icon(Icons.auto_awesome, size: 14),
+                  color: const Color(0xFF888888),
+                  tooltip: '生成视频',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black.withOpacity( 0.7),
+                    padding: const EdgeInsets.all(6),
+                  ),
+                ),
+              ),
+              ],
             ),
           ),
+          
+          // ✅ 合成按钮（只在有配音和视频时显示，样式参考配音按钮）
+          if (row.voiceDialogues.isNotEmpty && row.videoUrls.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => _showVideoAudioMergeDialog(row, index),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.merge_type, color: Colors.white, size: 16),
+                      SizedBox(width: 6),
+                      Text(
+                        '合成语音',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  void _showVideoContextMenu(BuildContext context, TapDownDetails details, String videoUrl, int storyboardIndex, int gridIndex) {
+  /// ✅ 右键显示视频操作菜单（参考图片右键菜单样式）
+  void _showVideoContextMenuDirect(BuildContext context, String videoUrl, int storyboardIndex, int gridIndex, TapDownDetails details) {
     showMenu(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -1585,7 +1639,22 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         details.globalPosition.dx,
         details.globalPosition.dy,
       ),
+      color: const Color(0xFF2A2A2C),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFF3A3A3C)),
+      ),
       items: const [
+        PopupMenuItem(
+          value: 'play',
+          child: Row(
+            children: [
+              Icon(Icons.play_arrow, size: 16, color: Color(0xFF888888)),
+              SizedBox(width: 8),
+              Text('播放视频', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
         PopupMenuItem(
           value: 'folder',
           child: Row(
@@ -1600,20 +1669,145 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           value: 'delete',
           child: Row(
             children: [
-              Icon(Icons.delete, size: 16, color: Color(0xFF888888)),
+              Icon(Icons.delete_outline, size: 16, color: Colors.red),
               SizedBox(width: 8),
-              Text('删除视频', style: TextStyle(color: Color(0xFF888888))),
+              Text('删除视频', style: TextStyle(color: Colors.red)),
             ],
           ),
         ),
       ],
     ).then((value) {
-      if (value == 'folder') {
+      if (value == 'play') {
+        _playVideo(videoUrl);
+      } else if (value == 'folder') {
         _locateVideoFile(videoUrl);
       } else if (value == 'delete') {
         _deleteVideo(storyboardIndex, gridIndex);
       }
     });
+  }
+  
+  /// ✅ 显示语音视频合成对话框
+  void _showVideoAudioMergeDialog(StoryboardRow row, int index) {
+    if (row.voiceDialogues.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该分镜还没有配音，请先生成配音')),
+      );
+      return;
+    }
+    
+    if (row.videoUrls.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该分镜还没有视频，请先生成视频')),
+      );
+      return;
+    }
+    
+    // 获取选中的视频
+    final selectedVideoIndex = row.selectedVideoIndex;
+    if (selectedVideoIndex >= row.videoUrls.length) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('选中的格子没有视频，请选择有视频的格子')),
+      );
+      return;
+    }
+    
+    final selectedVideoUrl = row.videoUrls[selectedVideoIndex];
+    
+    // ✅ 解析对话音频映射
+    Map<String, String> dialogueAudioMap = {};
+    if (row.dialogueAudioMapJson != null && row.dialogueAudioMapJson!.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(row.dialogueAudioMapJson!) as Map<String, dynamic>;
+        dialogueAudioMap = decoded.map((key, value) => MapEntry(key, value.toString()));
+      } catch (e) {
+        print('[视频合成] 解析音频映射失败: $e');
+      }
+    }
+    
+    // 检查是否有音频文件
+    if (dialogueAudioMap.isEmpty && (row.generatedAudioPath == null || !File(row.generatedAudioPath!).existsSync())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('配音文件不存在，请重新生成配音')),
+      );
+      return;
+    }
+    
+    // 显示完整版编辑器对话框
+    showDialog(
+      context: context,
+      builder: (context) => VideoAudioEditorDialog(
+        videoPath: selectedVideoUrl,
+        dialogues: row.voiceDialogues,
+        dialogueAudioMap: dialogueAudioMap,
+        videoIndex: selectedVideoIndex + 1,
+        storyboardIndex: index + 1,
+        onMerge: (dialogueTimings) async {
+          // 执行合成（多条音频）
+          await _mergeVideoWithMultipleAudios(row, index, selectedVideoUrl, dialogueTimings);
+        },
+      ),
+    );
+  }
+  
+  /// ✅ 合成视频和多条音频
+  Future<void> _mergeVideoWithMultipleAudios(StoryboardRow row, int index, String videoPath, Map<String, double> dialogueTimings) async {
+    try {
+      final ffmpegService = FFmpegService();
+      
+      // TODO: 实现多音频合并（先简化为使用第一个音频）
+      final firstAudioPath = row.generatedAudioPath;
+      final firstStartTime = dialogueTimings.values.isNotEmpty ? dialogueTimings.values.first : 0.0;
+      
+      // 生成输出路径
+      final videoDir = path.dirname(videoPath);
+      final videoBasename = path.basenameWithoutExtension(videoPath);
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final outputPath = path.join(videoDir, '${videoBasename}_voiced_$timestamp.mp4');
+      
+      // 使用 FFmpeg 合成
+      final mergedPath = await ffmpegService.mergeVideoAudioWithTiming(
+        videoPath: videoPath,
+        audioPath: firstAudioPath!,
+        audioStartTime: firstStartTime,
+        outputPath: outputPath,
+        isPreview: false,
+      );
+      
+      if (mergedPath != null) {
+        // 更新分镜，添加新视频
+        setState(() {
+          final newUrls = List<String>.from(row.videoUrls)..add(mergedPath);
+          _storyboards[index] = row.copyWith(
+            videoUrls: newUrls,
+            voiceStartTime: firstStartTime,
+          );
+        });
+        await _saveProductionData();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ 合成完成！新视频已添加 (${row.videoUrls.length + 1}/4)'),
+              backgroundColor: Colors.green,
+              action: SnackBarAction(
+                label: '播放',
+                onPressed: () => _playVideo(mergedPath),
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 合成失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   /// 构建视频缩略图（显示首帧）
@@ -3546,7 +3740,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
     );
   }
 
-  /// 播放配音（应用内播放；插件不可用时用系统播放器）
+  /// 播放配音（废弃，已改为点击"已配音"进入向导试听）
   Future<void> _playVoiceAudio(StoryboardRow row) async {
     if (row.generatedAudioPath == null) return;
     final path = row.generatedAudioPath!;
@@ -4121,6 +4315,12 @@ class StoryboardRow {
   final String? generatedAudioPath;          // 生成的配音路径
   final double voiceStartTime;               // 配音起始时间（秒）
   final bool hasVoice;                       // 是否已生成配音
+  
+  // ✅ 配音向导状态（用于恢复）
+  final int voiceWizardStep;                 // 向导当前步骤 (0-2)
+  final int currentDialogueIndex;            // 当前正在配音的对话索引
+  final String? dialogueAudioMapJson;        // 对话音频映射（JSON格式：{dialogueId: audioPath}）
+  final int selectedVideoIndex;              // 选中的视频索引（用于语音合成）
 
   StoryboardRow({
     required this.id,
@@ -4139,6 +4339,10 @@ class StoryboardRow {
     this.generatedAudioPath,             // ✅ 默认无配音
     this.voiceStartTime = 0.0,           // ✅ 默认从0秒开始
     this.hasVoice = false,               // ✅ 默认未生成
+    this.voiceWizardStep = 0,            // ✅ 默认第一步
+    this.currentDialogueIndex = 0,       // ✅ 默认第一个对话
+    this.dialogueAudioMapJson,           // ✅ 默认无音频
+    this.selectedVideoIndex = 0,         // ✅ 默认选择第一个视频
   });
 
   // 兼容旧数据
@@ -4161,6 +4365,10 @@ class StoryboardRow {
     String? generatedAudioPath,
     double? voiceStartTime,
     bool? hasVoice,
+    int? voiceWizardStep,
+    int? currentDialogueIndex,
+    String? dialogueAudioMapJson,
+    int? selectedVideoIndex,
   }) {
     return StoryboardRow(
       id: id,
@@ -4179,6 +4387,10 @@ class StoryboardRow {
       generatedAudioPath: generatedAudioPath ?? this.generatedAudioPath,
       voiceStartTime: voiceStartTime ?? this.voiceStartTime,
       hasVoice: hasVoice ?? this.hasVoice,
+      voiceWizardStep: voiceWizardStep ?? this.voiceWizardStep,
+      currentDialogueIndex: currentDialogueIndex ?? this.currentDialogueIndex,
+      dialogueAudioMapJson: dialogueAudioMapJson ?? this.dialogueAudioMapJson,
+      selectedVideoIndex: selectedVideoIndex ?? this.selectedVideoIndex,
     );
   }
 
@@ -4199,6 +4411,10 @@ class StoryboardRow {
         'generatedAudioPath': generatedAudioPath,
         'voiceStartTime': voiceStartTime,
         'hasVoice': hasVoice,
+        'voiceWizardStep': voiceWizardStep,
+        'currentDialogueIndex': currentDialogueIndex,
+        'dialogueAudioMapJson': dialogueAudioMapJson,
+        'selectedVideoIndex': selectedVideoIndex,
       };
 
   factory StoryboardRow.fromJson(Map<String, dynamic> json) {
@@ -4223,6 +4439,10 @@ class StoryboardRow {
       generatedAudioPath: json['generatedAudioPath'] as String?,
       voiceStartTime: (json['voiceStartTime'] as num?)?.toDouble() ?? 0.0,
       hasVoice: json['hasVoice'] as bool? ?? false,
+      voiceWizardStep: json['voiceWizardStep'] as int? ?? 0,
+      currentDialogueIndex: json['currentDialogueIndex'] as int? ?? 0,
+      dialogueAudioMapJson: json['dialogueAudioMapJson'] as String?,
+      selectedVideoIndex: json['selectedVideoIndex'] as int? ?? 0,
     );
   }
 }
@@ -4293,3 +4513,4 @@ class VoiceDialogue {
     );
   }
 }
+

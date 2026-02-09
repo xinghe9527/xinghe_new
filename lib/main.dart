@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:media_kit/media_kit.dart';
 import 'features/home/presentation/home_screen.dart';
 import 'core/logger/log_manager.dart';
 
@@ -17,6 +18,9 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // ✅ 初始化 media_kit（视频播放器）
+  MediaKit.ensureInitialized();
   
   // ✅ 已移除 Supabase 初始化，改用阿里云 OSS
   debugPrint('✅ 应用初始化开始');
