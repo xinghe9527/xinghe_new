@@ -22,7 +22,9 @@ void main() async {
   // ✅ 初始化 media_kit（视频播放器）
   MediaKit.ensureInitialized();
   
-  // ✅ 已移除 Supabase 初始化，改用阿里云 OSS
+  // ✅ OSS 配置将在版本检查时自动初始化（从 version.json 获取）
+  debugPrint('✅ OSS 配置将从远程 version.json 动态加载');
+  
   debugPrint('✅ 应用初始化开始');
   
   await windowManager.ensureInitialized();

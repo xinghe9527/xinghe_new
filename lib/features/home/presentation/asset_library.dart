@@ -40,7 +40,6 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
   String _uploadStatus = '';  // 显示在界面上的状态
   
   // ✅ 数据更新保护
-  DateTime? _lastSaveTime;
   bool _isUpdating = false;
 
   // 每个分类的风格列表
@@ -239,10 +238,16 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
     debugPrint('[素材库] 收到上传状态更新: ${task.id}, 状态: ${task.status}');
     
     // 更新状态显示
-    if (task.status == UploadTaskStatus.processing) {
+    if (task.status == UploadTaskStatus.converting) {
       if (mounted) {
         setState(() {
-          _uploadStatus = '正在处理: ${task.assetName}';
+          _uploadStatus = '正在转码: ${task.assetName}';
+        });
+      }
+    } else if (task.status == UploadTaskStatus.uploading) {
+      if (mounted) {
+        setState(() {
+          _uploadStatus = '正在上传: ${task.assetName}';
         });
       }
     } else if (task.status == UploadTaskStatus.completed && task.characterInfo != null) {

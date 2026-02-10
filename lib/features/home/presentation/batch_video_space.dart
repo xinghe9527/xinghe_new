@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';  // ✅ 导入窗口管理器
 import 'package:xinghe_new/main.dart';
-import 'package:xinghe_new/core/widgets/window_border.dart';  // ✅ 导入窗口边框
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
@@ -11,6 +10,8 @@ import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/features/home/domain/video_task.dart';
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/video_grid_item.dart';  // ✅ 导入原位播放组件
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
@@ -895,8 +896,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       builder: (context, _, __) {
         return Scaffold(
           backgroundColor: AppTheme.scaffoldBackground,
-          body: WindowBorder(
-            child: Column(
+          body: Column(
             children: [
               // ✅ 标题栏
               _buildTitleBar(),
@@ -907,7 +907,6 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                     : _buildTable(),
               ),
             ],
-            ),
           ),
         );
       },
@@ -1380,113 +1379,163 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     // ✅ 单个真实视频
     if (realVideos.length == 1) {
       final videoPath = realVideos.first;
+      final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+      final thumbnailFile = File(thumbnailPath);
       
       if (!hasLoading) {
-        // 只有一个视频且没有生成中的，直接显示
-        return MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: () => _playVideo(videoPath),
-            onSecondaryTapDown: (details) => _showSingleVideoContextMenu(context, details, videoPath, task),
-            child: _buildVideoThumbnail(videoPath, clickable: false),
-          ),
+        // 只有一个视频且没有生成中的，显示缩略图（点击弹出对话框）
+        return FutureBuilder<bool>(
+          key: ValueKey('${thumbnailPath}_single'),
+          future: thumbnailFile.exists(),
+          builder: (context, thumbnailSnapshot) {
+            final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
+            
+            return DraggableMediaItem(
+              filePath: videoPath,
+              dragPreviewText: path.basename(videoPath),
+              coverUrl: coverUrl,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () => _showVideosDialog(task.id),  // ✅ 点击弹出对话框
+                  onSecondaryTapDown: (details) => _showSingleVideoContextMenu(context, details, videoPath, task),
+                  child: _buildVideoThumbnail(videoPath, clickable: false),
+                ),
+              ),
+            );
+          },
         );
       } else {
-        // 有一个视频 + 有生成中的，显示视频 + 生成中标记
+        // 有一个视频 + 有生成中的，显示缩略图 + 生成中标记，点击弹出对话框
         final loadingVideos = allVideos.where((v) => v.startsWith('loading_')).toList();
         
-        return MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: () => _showVideosDialog(task.id),  // ✅ 点击弹出对话框
-            child: Stack(
-              children: [
-                _buildVideoThumbnail(videoPath, clickable: false),
-                // 生成中标记
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.orange,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 4,
-                        ),
-                      ],
+        return FutureBuilder<bool>(
+          key: ValueKey('${thumbnailPath}_loading'),
+          future: thumbnailFile.exists(),
+          builder: (context, thumbnailSnapshot) {
+            final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
+            
+            return DraggableMediaItem(
+              filePath: videoPath,
+              dragPreviewText: path.basename(videoPath),
+              coverUrl: coverUrl,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Stack(
+                  children: [
+                    // ✅ 缩略图（点击弹出对话框）
+                    GestureDetector(
+                      onTap: () => _showVideosDialog(task.id),
+                      onSecondaryTapDown: (details) => _showSingleVideoContextMenu(context, details, videoPath, task),
+                      child: _buildVideoThumbnail(videoPath, clickable: false),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 10,
-                          height: 10,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    // 生成中标记（点击弹出对话框）
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: GestureDetector(
+                        onTap: () => _showVideosDialog(task.id),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 10,
+                                height: 10,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${loadingVideos.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${loadingVideos.length}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       }
     }
     
     // ✅ 有真实视频（可能还有生成中的）- 点击弹出对话框查看所有视频（包括生成中的）
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => _showVideosDialog(task.id),  // ✅ 传递 task ID
-        child: Stack(
-          children: [
-            // ✅ 背景显示第一个视频的缩略图
-            _buildVideoThumbnail(realVideos.first),
-            // 数量标记（显示已完成/总数）
-            Positioned(
-              top: 4,
-              right: 4,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: hasLoading ? Colors.orange : AppTheme.accentColor,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 4,
+    final firstVideoPath = realVideos.first;
+    final thumbnailPath = firstVideoPath.replaceAll('.mp4', '.jpg');
+    final thumbnailFile = File(thumbnailPath);
+    
+    return FutureBuilder<bool>(
+      key: ValueKey('${thumbnailPath}_multiple'),
+      future: thumbnailFile.exists(),
+      builder: (context, thumbnailSnapshot) {
+        final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
+        
+        return DraggableMediaItem(
+          filePath: firstVideoPath,
+          dragPreviewText: path.basename(firstVideoPath),
+          coverUrl: coverUrl,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => _showVideosDialog(task.id),  // ✅ 传递 task ID
+              child: Stack(
+                children: [
+                  // ✅ 背景显示第一个视频的缩略图
+                  _buildVideoThumbnail(realVideos.first),
+                  // 数量标记（显示已完成/总数）
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: hasLoading ? Colors.orange : AppTheme.accentColor,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        hasLoading ? '${realVideos.length}/${allVideos.length}' : '${realVideos.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  ],
-                ),
-                child: Text(
-                  hasLoading ? '${realVideos.length}/${allVideos.length}' : '${realVideos.length}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
                   ),
-                ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -2396,62 +2445,60 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
                   final thumbnailFile = File(thumbnailPath);
                   
-                  return MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () => _playVideo(videoPath),
-                      onSecondaryTapDown: (details) => _showVideoContextMenu(
-                        context, 
-                        details, 
-                        videoPath, 
-                        currentTask,
-                        setDialogState,
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          color: AppTheme.inputBackground,
+                  // ✅ 检查缩略图是否存在
+                  return FutureBuilder<bool>(
+                    key: ValueKey('${thumbnailPath}_exists'),
+                    future: thumbnailFile.exists(),
+                    builder: (context, thumbnailSnapshot) {
+                      final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
+                      
+                      // ✅ 构建缩略图 Widget
+                      final thumbnailWidget = ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: FutureBuilder<bool>(
+                          key: ValueKey(thumbnailPath),
+                          future: thumbnailFile.exists(),
+                          builder: (context, snapshot) {
+                            if (snapshot.data == true) {
+                              return Image.file(
+                                thumbnailFile,
+                                fit: BoxFit.cover,
+                              );
+                            }
+                            return Container(
+                              color: AppTheme.inputBackground,
+                              child: const Center(
+                                child: Icon(Icons.videocam, 
+                                  color: Colors.white54, size: 32),
+                              ),
+                            );
+                          },
                         ),
+                      );
+                      
+                      // ✅ 使用 VideoGridItem 支持原位播放
+                      final videoGridItem = VideoGridItem(
+                        videoUrl: videoPath,
+                        thumbnailWidget: thumbnailWidget,
+                      );
+                      
+                      // ✅ 使用 DraggableMediaItem 包装支持拖动
+                      return DraggableMediaItem(
+                        filePath: videoPath,
+                        dragPreviewText: path.basename(videoPath),
+                        coverUrl: coverUrl,
                         child: Stack(
-                          fit: StackFit.expand,
                           children: [
-                            // ✅ 显示首帧图片
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: FutureBuilder<bool>(
-                                key: ValueKey(thumbnailPath),  // ✅ 添加 key
-                                future: thumbnailFile.exists(),
-                                builder: (context, snapshot) {
-                                  if (snapshot.data == true) {
-                                    return Image.file(
-                                      thumbnailFile,
-                                      fit: BoxFit.cover,
-                                    );
-                                  }
-                                  return Container(
-                                    color: AppTheme.inputBackground,
-                                    child: const Center(
-                                      child: Icon(Icons.videocam, 
-                                        color: Colors.white54, size: 32),
-                                    ),
-                                  );
-                                },
+                            // ✅ 右键菜单
+                            GestureDetector(
+                              onSecondaryTapDown: (details) => _showVideoContextMenu(
+                                context, 
+                                details, 
+                                videoPath, 
+                                currentTask,
+                                setDialogState,
                               ),
-                            ),
-                            // 播放按钮
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.5),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.play_arrow,
-                                  color: Colors.white,
-                                  size: 28,
-                                ),
-                              ),
+                              child: videoGridItem,
                             ),
                             // 视频编号
                             Positioned(
@@ -2478,8 +2525,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                             ),
                           ],
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   );
                 },
               ),
@@ -2521,7 +2568,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             children: [
               Icon(Icons.play_circle_outline, size: 18, color: AppTheme.textColor),
               const SizedBox(width: 12),
-              Text('播放视频', style: TextStyle(color: AppTheme.textColor)),
+              Text('使用播放器播放', style: TextStyle(color: AppTheme.textColor)),
             ],
           ),
         ),
@@ -2613,7 +2660,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             children: [
               Icon(Icons.play_circle_outline, size: 18, color: AppTheme.textColor),
               const SizedBox(width: 12),
-              Text('播放视频', style: TextStyle(color: AppTheme.textColor)),
+              Text('使用播放器播放', style: TextStyle(color: AppTheme.textColor)),
             ],
           ),
         ),

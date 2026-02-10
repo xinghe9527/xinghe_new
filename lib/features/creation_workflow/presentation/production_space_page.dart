@@ -7,12 +7,16 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'storyboard_prompt_manager.dart';
 import 'character_generation_page.dart';
 import 'scene_generation_page.dart';
 import 'item_generation_page.dart';
 import 'widgets/voice_generation_dialog.dart';
 import 'widgets/video_audio_editor_dialog.dart';
+import 'widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
+import 'widgets/video_grid_item.dart';  // ✅ 导入视频格子组件
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/ffmpeg_service.dart';
@@ -763,7 +767,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                                   ),
                                 ),
                               )
-                            else
+                            else ...[
                               // 已配音状态（点击可进入修改，橙色渐变）
                               MouseRegion(
                                 cursor: SystemMouseCursors.click,
@@ -795,6 +799,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                                   ),
                                 ),
                               ),
+                            ],
                           ],
                         ),
                       ),
@@ -1499,73 +1504,13 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             itemBuilder: (context, gridIndex) {
               final hasVideo = gridIndex < row.videoUrls.length;
               final videoUrl = hasVideo ? row.videoUrls[gridIndex] : null;
-              final isSelectedVideo = row.selectedVideoIndex == gridIndex;
               
               return GestureDetector(
-                // ✅ 左键选择视频（用于语音合成）
-                onTap: () {
-                  setState(() {
-                    _storyboards[index] = row.copyWith(selectedVideoIndex: gridIndex);
-                  });
-                  _saveProductionData();
-                  
-                  final message = hasVideo 
-                      ? '已选择视频${gridIndex + 1}（用于语音合成）' 
-                      : '已选择空格子${gridIndex + 1}（用于语音合成）';
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(message),
-                      duration: const Duration(seconds: 1),
-                    ),
-                  );
-                },
-                // ✅ 右键显示菜单（播放视频、定位文件、删除视频）
+                // ✅ 右键显示菜单（使用播放器播放、定位文件、删除视频）
                 onSecondaryTapDown: hasVideo ? (details) {
                   _showVideoContextMenuDirect(context, videoUrl!, index, gridIndex, details);
                 } : null,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A1C),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: isSelectedVideo ? const Color(0xFF667EEA) : const Color(0xFF3A3A3C),
-                      width: isSelectedVideo ? 2 : 1,
-                    ),
-                  ),
-                  child: hasVideo
-                      ? Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            // 视频缩略图（首帧）
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: _buildVideoThumbnail(videoUrl!),
-                            ),
-                            // 播放按钮
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.5),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.play_arrow,
-                                  color: Colors.white,
-                                  size: 24,
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Center(
-                          child: Icon(
-                            Icons.videocam_outlined,
-                            size: 24,
-                            color: Colors.white.withOpacity( 0.1),
-                          ),
-                        ),
-                ),
+                child: _buildVideoGridItem(hasVideo, videoUrl),
               );
             },
               ),
@@ -1589,41 +1534,6 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               ],
             ),
           ),
-          
-          // ✅ 合成按钮（只在有配音和视频时显示，样式参考配音按钮）
-          if (row.voiceDialogues.isNotEmpty && row.videoUrls.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () => _showVideoAudioMergeDialog(row, index),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.merge_type, color: Colors.white, size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        '合成语音',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -1651,7 +1561,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             children: [
               Icon(Icons.play_arrow, size: 16, color: Color(0xFF888888)),
               SizedBox(width: 8),
-              Text('播放视频', style: TextStyle(color: Color(0xFF888888))),
+              Text('使用播放器播放', style: TextStyle(color: Color(0xFF888888))),
             ],
           ),
         ),
@@ -1678,7 +1588,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       ],
     ).then((value) {
       if (value == 'play') {
-        _playVideo(videoUrl);
+        _playVideoExternal(videoUrl);  // ✅ 使用外部播放器
       } else if (value == 'folder') {
         _locateVideoFile(videoUrl);
       } else if (value == 'delete') {
@@ -1686,7 +1596,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       }
     });
   }
-  
+
   /// ✅ 显示语音视频合成对话框
   void _showVideoAudioMergeDialog(StoryboardRow row, int index) {
     if (row.voiceDialogues.isEmpty) {
@@ -1703,16 +1613,8 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       return;
     }
     
-    // 获取选中的视频
-    final selectedVideoIndex = row.selectedVideoIndex;
-    if (selectedVideoIndex >= row.videoUrls.length) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('选中的格子没有视频，请选择有视频的格子')),
-      );
-      return;
-    }
-    
-    final selectedVideoUrl = row.videoUrls[selectedVideoIndex];
+    // 使用第一个视频
+    final selectedVideoUrl = row.videoUrls.first;
     
     // ✅ 解析对话音频映射
     Map<String, String> dialogueAudioMap = {};
@@ -1740,7 +1642,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         videoPath: selectedVideoUrl,
         dialogues: row.voiceDialogues,
         dialogueAudioMap: dialogueAudioMap,
-        videoIndex: selectedVideoIndex + 1,
+        videoIndex: 1,
         storyboardIndex: index + 1,
         onMerge: (dialogueTimings) async {
           // 执行合成（多条音频）
@@ -1825,7 +1727,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               backgroundColor: Colors.green,
               action: SnackBarAction(
                 label: '播放',
-                onPressed: () => _playVideo(mergedPath),
+                onPressed: () => _playVideoExternal(mergedPath),
               ),
             ),
           );
@@ -1842,6 +1744,101 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         );
       }
     }
+  }
+
+  /// 构建视频网格项（支持拖动和原位播放）
+  Widget _buildVideoGridItem(bool hasVideo, String? videoUrl) {
+    if (!hasVideo || videoUrl == null) {
+      // 空格子
+      return Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1C),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: const Color(0xFF3A3A3C),
+            width: 1,
+          ),
+        ),
+        child: Center(
+          child: Icon(
+            Icons.videocam_outlined,
+            size: 24,
+            color: Colors.white.withOpacity(0.1),
+          ),
+        ),
+      );
+    }
+
+    final isLocalFile = !videoUrl.startsWith('http');
+    
+    if (!isLocalFile) {
+      // 网络视频，显示缩略图
+      return Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1C),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: const Color(0xFF3A3A3C),
+            width: 1,
+          ),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: _buildVideoThumbnail(videoUrl),
+            ),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 本地视频，使用 VideoGridItem 支持原位播放
+    final thumbnailPath = videoUrl.replaceAll('.mp4', '.jpg');
+    final thumbnailFile = File(thumbnailPath);
+    
+    return FutureBuilder<bool>(
+      key: ValueKey('${thumbnailPath}_grid'),
+      future: thumbnailFile.exists(),
+      builder: (context, snapshot) {
+        final coverUrl = snapshot.data == true ? thumbnailPath : null;
+        
+        // 构建缩略图 Widget
+        final thumbnailWidget = ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: _buildVideoThumbnail(videoUrl),
+        );
+        
+        // 使用 VideoGridItem 支持原位播放
+        final videoGridItem = VideoGridItem(
+          videoUrl: videoUrl,
+          thumbnailWidget: thumbnailWidget,
+        );
+        
+        // 用 DraggableMediaItem 包装支持拖动
+        return DraggableMediaItem(
+          filePath: videoUrl,
+          dragPreviewText: path.basename(videoUrl),
+          coverUrl: coverUrl,
+          child: videoGridItem,
+        );
+      },
+    );
   }
 
   /// 构建视频缩略图（显示首帧）
@@ -1921,7 +1918,78 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
     }
   }
 
-  Future<void> _playVideo(String videoUrl) async {
+  /// 原位播放视频（使用内置播放器，播放一次）
+  Future<void> _playVideoInline(String videoUrl, BuildContext context) async {
+    try {
+      final isLocalFile = !videoUrl.startsWith('http');
+      
+      if (!isLocalFile) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('网络视频暂不支持内置播放')),
+        );
+        return;
+      }
+      
+      final file = File(videoUrl);
+      if (!await file.exists()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('视频文件不存在')),
+        );
+        return;
+      }
+      
+      // 创建播放器
+      final player = Player();
+      final controller = VideoController(player);
+      
+      // 打开视频
+      await player.open(Media(videoUrl));
+      
+      // 显示播放对话框
+      if (!context.mounted) return;
+      
+      late BuildContext dialogContext;  // ✅ 声明变量
+      
+      showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) {
+          dialogContext = ctx;  // ✅ 保存 context
+          return Dialog(
+            backgroundColor: Colors.black,
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Video(
+                controller: controller,
+                controls: NoVideoControls,  // 无控制条
+              ),
+            ),
+          );
+        },
+      ).then((_) {
+        // 对话框关闭时释放播放器
+        player.dispose();
+      });
+      
+      // 监听播放完成，自动关闭对话框
+      player.stream.completed.listen((completed) {
+        if (completed && dialogContext.mounted) {
+          Navigator.of(dialogContext).pop();
+        }
+      });
+      
+    } catch (e) {
+      debugPrint('❌ 播放视频失败: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('播放失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// 使用外部播放器播放视频
+  Future<void> _playVideoExternal(String videoUrl) async {
     try {
       // 检查是否是本地文件
       final isLocalFile = !videoUrl.startsWith('http');
@@ -4355,7 +4423,6 @@ class StoryboardRow {
   final int voiceWizardStep;                 // 向导当前步骤 (0-2)
   final int currentDialogueIndex;            // 当前正在配音的对话索引
   final String? dialogueAudioMapJson;        // 对话音频映射（JSON格式：{dialogueId: audioPath}）
-  final int selectedVideoIndex;              // 选中的视频索引（用于语音合成）
 
   StoryboardRow({
     required this.id,
@@ -4377,7 +4444,6 @@ class StoryboardRow {
     this.voiceWizardStep = 0,            // ✅ 默认第一步
     this.currentDialogueIndex = 0,       // ✅ 默认第一个对话
     this.dialogueAudioMapJson,           // ✅ 默认无音频
-    this.selectedVideoIndex = 0,         // ✅ 默认选择第一个视频
   });
 
   // 兼容旧数据
@@ -4403,7 +4469,6 @@ class StoryboardRow {
     int? voiceWizardStep,
     int? currentDialogueIndex,
     String? dialogueAudioMapJson,
-    int? selectedVideoIndex,
   }) {
     return StoryboardRow(
       id: id,
@@ -4425,7 +4490,6 @@ class StoryboardRow {
       voiceWizardStep: voiceWizardStep ?? this.voiceWizardStep,
       currentDialogueIndex: currentDialogueIndex ?? this.currentDialogueIndex,
       dialogueAudioMapJson: dialogueAudioMapJson ?? this.dialogueAudioMapJson,
-      selectedVideoIndex: selectedVideoIndex ?? this.selectedVideoIndex,
     );
   }
 
@@ -4449,7 +4513,6 @@ class StoryboardRow {
         'voiceWizardStep': voiceWizardStep,
         'currentDialogueIndex': currentDialogueIndex,
         'dialogueAudioMapJson': dialogueAudioMapJson,
-        'selectedVideoIndex': selectedVideoIndex,
       };
 
   factory StoryboardRow.fromJson(Map<String, dynamic> json) {
@@ -4477,7 +4540,6 @@ class StoryboardRow {
       voiceWizardStep: json['voiceWizardStep'] as int? ?? 0,
       currentDialogueIndex: json['currentDialogueIndex'] as int? ?? 0,
       dialogueAudioMapJson: json['dialogueAudioMapJson'] as String?,
-      selectedVideoIndex: json['selectedVideoIndex'] as int? ?? 0,
     );
   }
 }

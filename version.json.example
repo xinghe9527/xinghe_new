@@ -1,0 +1,7 @@
+{
+  "version": "1.0.2",
+  "download_url": "https://pan.quark.cn/s/xxxxx",
+  "update_log": "1. 修复了配音功能的bug\n2. 优化了视频播放性能\n3. 新增了拖动功能",
+  "file_size": 12.5,
+  "force_update": false
+}

@@ -9,6 +9,7 @@ import 'package:xinghe_new/services/api/providers/indextts_service.dart';
 import 'package:xinghe_new/features/home/domain/voice_asset.dart';
 import 'package:xinghe_new/main.dart';  // ✅ 导入 workSavePathNotifier
 import '../production_space_page.dart';
+import 'draggable_media_item.dart';  // ✅ 导入拖动组件
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as path;  // ✅ 导入 path 包
@@ -195,82 +196,138 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
     // 不再使用自动保存，只在"完成并保存"时保存
   }
 
+  // ✅ 对话框位置状态
+  Offset _dialogPosition = Offset.zero;
+  bool _isDialogPositioned = false;
 
   @override
   Widget build(BuildContext context) {
+    // ✅ 初始化对话框位置（居中）
+    if (!_isDialogPositioned) {
+      final screenSize = MediaQuery.of(context).size;
+      _dialogPosition = Offset(
+        (screenSize.width - 900) / 2,
+        (screenSize.height - 700) / 2,
+      );
+      _isDialogPositioned = true;
+    }
+
     return Dialog(
       backgroundColor: Colors.transparent,
-      child: Container(
-        width: 900,
-        height: 700,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E1E20),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF3A3A3C), width: 2),
-        ),
-        child: Column(
-          children: [
-            _buildHeader(),
-            _buildStepIndicator(),
-            Expanded(child: _buildCurrentStep()),
-            _buildFooter(),
-          ],
-        ),
+      insetPadding: EdgeInsets.zero,  // ✅ 移除默认边距
+      child: Stack(
+        children: [
+          Positioned(
+            left: _dialogPosition.dx,
+            top: _dialogPosition.dy,
+            child: Container(
+              width: 900,
+              height: 700,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E20),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF3A3A3C), width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.5),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  _buildHeader(),
+                  _buildStepIndicator(),
+                  Expanded(child: _buildCurrentStep()),
+                  _buildFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  /// 顶部标题栏
+  /// 顶部标题栏（可拖动）
   Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: const BoxDecoration(
-        color: Color(0xFF252629),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(14),
-          topRight: Radius.circular(14),
+    return GestureDetector(
+      onPanUpdate: (details) {
+        setState(() {
+          _dialogPosition += details.delta;
+          
+          // ✅ 限制对话框不超出屏幕边界
+          final screenSize = MediaQuery.of(context).size;
+          _dialogPosition = Offset(
+            _dialogPosition.dx.clamp(0.0, screenSize.width - 900),
+            _dialogPosition.dy.clamp(0.0, screenSize.height - 700),
+          );
+        });
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.move,  // ✅ 显示移动光标
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            color: Color(0xFF252629),
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(14),
+              topRight: Radius.circular(14),
+            ),
+            border: Border(bottom: BorderSide(color: Color(0xFF3A3A3C))),
+          ),
+          child: Row(
+            children: [
+              // ✅ 拖动图标提示
+              const Icon(Icons.drag_indicator, color: Color(0xFF666666), size: 20),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF667EEA).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.mic, color: Color(0xFF667EEA), size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '分镜 ${widget.storyboardIndex + 1} - 配音生成向导',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _getStepDescription(),
+                      style: const TextStyle(
+                        color: Color(0xFF888888),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // ✅ 关闭按钮（阻止拖动事件传播）
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    child: const Icon(Icons.close, color: Color(0xFF888888)),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        border: Border(bottom: BorderSide(color: Color(0xFF3A3A3C))),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF667EEA).withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.mic, color: Color(0xFF667EEA), size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '分镜 ${widget.storyboardIndex + 1} - 配音生成向导',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _getStepDescription(),
-                  style: const TextStyle(
-                    color: Color(0xFF888888),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close, color: Color(0xFF888888)),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
       ),
     );
   }
@@ -1098,6 +1155,10 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
                 ),
                 const SizedBox(height: 16),
                 
+                // ✅ 音频文件列表（可拖动）
+                _buildVoiceAudioList(),
+                const SizedBox(height: 16),
+                
                 // ✅ 导航按钮
                 Row(
                   children: [
@@ -1722,9 +1783,199 @@ ${widget.storyboard.scriptSegment}
   /// 重新生成当前对话的配音
   void _regenerateCurrentDialogue() {
     final dialogue = _dialogues[_currentDialogueIndex];
+    
+    // ✅ 删除旧的音频文件
+    final oldAudioPath = _dialogueAudioMap[dialogue.id];
+    if (oldAudioPath != null) {
+      try {
+        final oldFile = File(oldAudioPath);
+        if (oldFile.existsSync()) {
+          oldFile.deleteSync();
+          debugPrint('🗑️ 删除旧音频文件: $oldAudioPath');
+        }
+      } catch (e) {
+        debugPrint('⚠️ 删除旧音频文件失败: $e');
+      }
+    }
+    
     setState(() {
       _dialogueAudioMap.remove(dialogue.id);
     });
+  }
+
+  /// ✅ 构建配音音频文件列表（可拖动）
+  Widget _buildVoiceAudioList() {
+    if (_dialogueAudioMap.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // 获取所有音频文件路径（按对话顺序）
+    final audioItems = <MapEntry<int, String>>[];
+    for (int i = 0; i < _dialogues.length; i++) {
+      final dialogue = _dialogues[i];
+      final audioPath = _dialogueAudioMap[dialogue.id];
+      if (audioPath != null && File(audioPath).existsSync()) {
+        audioItems.add(MapEntry(i, audioPath));
+      }
+    }
+
+    if (audioItems.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '音频文件',
+          style: TextStyle(
+            color: Color(0xFF888888),
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...audioItems.map((entry) {
+          final index = entry.key;
+          final audioPath = entry.value;
+          final fileName = path.basename(audioPath);
+          
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: DraggableMediaItem(
+              filePath: audioPath,
+              dragPreviewText: fileName,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onSecondaryTapDown: (details) => _showAudioContextMenu(context, details, audioPath),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF252629),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF3A3A3C)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.audiotrack, color: Color(0xFF2AF598), size: 18),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '对话 ${index + 1}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _dialogues[index].dialogue.length > 30
+                                    ? '${_dialogues[index].dialogue.substring(0, 30)}...'
+                                    : _dialogues[index].dialogue,
+                                style: const TextStyle(
+                                  color: Color(0xFF888888),
+                                  fontSize: 11,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // 播放按钮
+                        IconButton(
+                          icon: const Icon(Icons.play_arrow, color: Color(0xFF667EEA), size: 20),
+                          onPressed: () => _playInApp(audioPath),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          tooltip: '试听',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ],
+    );
+  }
+
+  /// ✅ 显示音频文件右键菜单
+  void _showAudioContextMenu(BuildContext context, TapDownDetails details, String audioPath) {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        details.globalPosition,
+        details.globalPosition,
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    showMenu(
+      context: context,
+      position: position,
+      color: const Color(0xFF252629),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFF3A3A3C)),
+      ),
+      items: [
+        PopupMenuItem(
+          child: Row(
+            children: const [
+              Icon(Icons.play_arrow, color: Color(0xFF2AF598), size: 18),
+              SizedBox(width: 12),
+              Text('试听', style: TextStyle(color: Colors.white, fontSize: 13)),
+            ],
+          ),
+          onTap: () => _playInApp(audioPath),
+        ),
+        PopupMenuItem(
+          child: Row(
+            children: const [
+              Icon(Icons.folder_open, color: Color(0xFF667EEA), size: 18),
+              SizedBox(width: 12),
+              Text('定位文件', style: TextStyle(color: Colors.white, fontSize: 13)),
+            ],
+          ),
+          onTap: () => _locateAudioFile(audioPath),
+        ),
+      ],
+    );
+  }
+
+  /// ✅ 定位音频文件（在文件资源管理器中显示）
+  Future<void> _locateAudioFile(String audioPath) async {
+    try {
+      if (!File(audioPath).existsSync()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('音频文件不存在'), backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+
+      // 使用 explorer /select 命令定位文件
+      await Process.run('explorer', ['/select,', audioPath]);
+      
+      debugPrint('📂 定位文件: $audioPath');
+    } catch (e) {
+      debugPrint('❌ 定位文件失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('定位失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   /// 保存所有对话的配音（不合并，每个对话单独保存）

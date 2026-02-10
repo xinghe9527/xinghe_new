@@ -2,15 +2,20 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'update_info.dart';
-import 'update_downloader.dart';
 
 /// 显示更新对话框
 Future<void> showUpdateDialog(BuildContext context, UpdateInfo updateInfo) async {
   return showDialog(
     context: context,
-    barrierDismissible: !updateInfo.forceUpdate && !updateInfo.isBlocked,
-    builder: (context) => WillPopScope(
-      onWillPop: () async => !updateInfo.forceUpdate && !updateInfo.isBlocked,
+    barrierDismissible: !updateInfo.forceUpdate && !updateInfo.isBlocked,  // ✅ 强制更新时不可关闭
+    builder: (context) => PopScope(
+      canPop: !updateInfo.forceUpdate && !updateInfo.isBlocked,  // ✅ 强制更新时不可返回
+      onPopInvokedWithResult: (didPop, result) {
+        // ✅ 如果是强制更新且用户尝试关闭，退出应用
+        if (!didPop && (updateInfo.forceUpdate || updateInfo.isBlocked)) {
+          exit(0);
+        }
+      },
       child: _UpdateDialog(updateInfo: updateInfo),
     ),
   );
@@ -26,15 +31,7 @@ class _UpdateDialog extends StatefulWidget {
 }
 
 class _UpdateDialogState extends State<_UpdateDialog> {
-  final UpdateDownloader _downloader = UpdateDownloader();
-  bool _isDownloading = false;
-  bool _downloadComplete = false;
-
-  @override
-  void dispose() {
-    _downloader.dispose();
-    super.dispose();
-  }
+  bool _isLaunching = false;
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +47,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
           ),
           const SizedBox(width: 12),
           Text(
-            widget.updateInfo.isBlocked ? '版本过低，必须更新' : '发现新版本',
+            widget.updateInfo.isBlocked ? '必须更新' : '发现新版本',
             style: const TextStyle(color: Colors.white, fontSize: 20),
           ),
         ],
@@ -90,46 +87,12 @@ class _UpdateDialogState extends State<_UpdateDialog> {
               const SizedBox(height: 16),
             ],
 
-            // 下载进度
-            if (_isDownloading) ...[
-              ValueListenableBuilder<String>(
-                valueListenable: _downloader.statusNotifier,
-                builder: (context, status, _) {
-                  return Text(
-                    status,
-                    style: const TextStyle(color: Color(0xFF888888), fontSize: 13),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              ValueListenableBuilder<double>(
-                valueListenable: _downloader.progressNotifier,
-                builder: (context, progress, _) {
-                  return Column(
-                    children: [
-                      LinearProgressIndicator(
-                        value: progress,
-                        backgroundColor: const Color(0xFF3A3A3C),
-                        valueColor: const AlwaysStoppedAnimation(Color(0xFF00E5FF)),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${(progress * 100).toStringAsFixed(1)}%',
-                        style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
-
             // 警告提示
             if (widget.updateInfo.isBlocked) ...[
-              const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.orange),
                 ),
@@ -139,7 +102,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '当前版本过低，必须更新后才能使用软件',
+                        '必须更新后才能继续使用软件',
                         style: TextStyle(color: Colors.orange, fontSize: 13),
                       ),
                     ),
@@ -151,8 +114,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         ),
       ),
       actions: [
-        // 取消按钮（仅可选更新时显示）
-        if (!widget.updateInfo.forceUpdate && !widget.updateInfo.isBlocked && !_isDownloading)
+        // ✅ 取消按钮（仅非强制更新时显示）
+        if (!widget.updateInfo.forceUpdate && !widget.updateInfo.isBlocked)
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text(
@@ -161,17 +124,16 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             ),
           ),
 
-        // 更新按钮
-        if (!_downloadComplete)
-          ElevatedButton(
-            onPressed: _isDownloading ? null : _startUpdate,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00E5FF),
-              foregroundColor: Colors.black,
-              disabledBackgroundColor: const Color(0xFF3A3A3C),
-            ),
-            child: Text(_isDownloading ? '下载中...' : '立即更新'),
+        // ✅ 立即更新按钮（跳转到夸克网盘）
+        ElevatedButton(
+          onPressed: _isLaunching ? null : _openDownloadUrl,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00E5FF),
+            foregroundColor: Colors.black,
+            disabledBackgroundColor: const Color(0xFF3A3A3C),
           ),
+          child: Text(_isLaunching ? '正在打开...' : '立即更新'),
+        ),
       ],
     );
   }
@@ -213,58 +175,62 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     );
   }
 
-  Future<void> _startUpdate() async {
-    setState(() => _isDownloading = true);
+  /// ✅ 打开下载链接（夸克网盘）
+  Future<void> _openDownloadUrl() async {
+    setState(() => _isLaunching = true);
 
     try {
-      // 1. 下载安装程序
-      final exePath = await _downloader.download(widget.updateInfo.downloadUrl);
-      if (exePath == null) {
-        _showError('下载失败，请稍后重试');
+      final url = widget.updateInfo.downloadUrl;
+      debugPrint('🔗 打开下载链接: $url');
+
+      final uri = Uri.parse(url);
+      
+      // ✅ 使用 url_launcher 打开外部链接
+      final canLaunch = await canLaunchUrl(uri);
+      
+      if (!canLaunch) {
+        _showError('无法打开下载链接');
         return;
       }
 
-      // 2. 运行安装程序
-      await _runInstaller(exePath);
-
-      setState(() => _downloadComplete = true);
-    } catch (e) {
-      _showError('更新失败: $e');
-    } finally {
-      setState(() => _isDownloading = false);
-    }
-  }
-
-  /// 运行安装程序
-  Future<void> _runInstaller(String installerPath) async {
-    try {
-      debugPrint('📦 安装程序路径: $installerPath');
-
-      // 运行安装程序
-      await Process.start(
-        installerPath,
-        [],
-        mode: ProcessStartMode.detached,
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,  // ✅ 使用外部浏览器打开
       );
 
-      debugPrint('✅ 安装程序已启动');
-
-      // 提示用户
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('安装程序已启动，请按照向导完成更新'),
-            duration: Duration(seconds: 3),
-          ),
-        );
+      if (!launched) {
+        _showError('打开下载链接失败');
+        return;
       }
 
-      // 延迟1秒后关闭当前应用，让用户看到提示
-      await Future.delayed(const Duration(seconds: 1));
-      exit(0);
+      debugPrint('✅ 已打开下载链接');
+
+      // ✅ 如果是强制更新，打开链接后退出应用
+      if (widget.updateInfo.forceUpdate || widget.updateInfo.isBlocked) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('请在浏览器中下载更新，应用即将退出'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        
+        await Future.delayed(const Duration(seconds: 2));
+        exit(0);
+      } else {
+        // 非强制更新，关闭对话框
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
     } catch (e) {
-      debugPrint('❌ 启动安装程序失败: $e');
-      _showError('启动安装程序失败: $e');
+      debugPrint('❌ 打开下载链接失败: $e');
+      _showError('打开下载链接失败: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLaunching = false);
+      }
     }
   }
 
@@ -277,7 +243,5 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         backgroundColor: Colors.red,
       ),
     );
-
-    setState(() => _isDownloading = false);
   }
 }

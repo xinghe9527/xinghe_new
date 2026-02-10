@@ -11,6 +11,8 @@ import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/features/home/domain/video_task.dart';
 import 'package:xinghe_new/features/home/presentation/batch_video_space.dart';  // ✅ 导入批量空间
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/video_grid_item.dart';  // ✅ 导入原位播放组件
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
@@ -1465,6 +1467,71 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     // 真实视频
     final isLocalFile = !videoPath.startsWith('http');
     
+    // ✅ 构建缩略图 Widget
+    final thumbnailWidget = ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: _buildVideoThumbnail(videoPath),
+    );
+    
+    // ✅ 如果是本地文件，用 VideoGridItem 支持原位播放
+    if (isLocalFile) {
+      // 获取缩略图路径
+      final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+      final thumbnailFile = File(thumbnailPath);
+      
+      return FutureBuilder<bool>(
+        future: thumbnailFile.exists(),
+        builder: (context, snapshot) {
+          final coverUrl = snapshot.data == true ? thumbnailPath : null;
+          
+          // 使用 VideoGridItem 支持原位播放
+          final videoGridItem = VideoGridItem(
+            videoUrl: videoPath,
+            thumbnailWidget: thumbnailWidget,
+          );
+          
+          // 用 DraggableMediaItem 包装支持拖动
+          return DraggableMediaItem(
+            filePath: videoPath,
+            dragPreviewText: path.basename(videoPath),
+            coverUrl: coverUrl,
+            child: Stack(
+              children: [
+                // ✅ 右键菜单
+                GestureDetector(
+                  onSecondaryTapDown: (details) => _showVideoContextMenu(context, details, videoPath, isLocalFile),
+                  child: videoGridItem,
+                ),
+                // 删除按钮
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        debugPrint('[删除] 点击删除按钮');
+                        _deleteVideo(videoPath);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.7),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.close, color: Colors.white, size: 16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    }
+    
+    // 网络视频不支持原位播放，保持原有行为
     return Stack(
       children: [
         GestureDetector(
@@ -1482,9 +1549,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // 视频缩略图（优先显示首帧）
-                    _buildVideoThumbnail(videoPath),
-                    // 播放按钮
+                    thumbnailWidget,
                     Center(
                       child: Container(
                         padding: const EdgeInsets.all(12),
@@ -1650,7 +1715,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             children: [
               Icon(Icons.play_circle_outline, size: 18),
               SizedBox(width: 8),
-              Text('播放视频'),
+              Text('使用播放器播放'),
             ],
           ),
         ),

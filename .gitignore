@@ -38,6 +38,16 @@ migrate_working_dir/
 *.env
 !.env.example
 
+# OSS configuration (contains sensitive keys)
+version.json
+!version.json.example
+
+# OSS related documentation (may contain sensitive info)
+*OSS*.md
+*CRITICAL*.md
+*DEPLOYMENT*.md
+*QUICK_FIX*.md
+
 # Symbolication related
 app.*.symbols
 

@@ -4,17 +4,12 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'update_info.dart';
 import 'update_dialog.dart';
+import 'package:xinghe_new/services/oss_config.dart';  // ✅ 导入 OSS 配置
 
-/// 版本检测器（使用阿里云函数计算）
+/// 版本检测器（使用阿里云 OSS 直连）
 class UpdateChecker {
-  // ✅ 阿里云函数计算公网地址
-  static const String _versionUrl = 'https://xinghe-angchuan-agxvbiyacd.cn-chengdu.fcapp.run';
-  
-  // ✅ 安全暗号 (Token)
-  static const String _token = 'xinghe5201314';
-  
-  // ✅ 固定的下载地址
-  static const String _downloadUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/app_release/xingheAI_v1.0.1.exe';
+  // ✅ OSS 直连地址（公共读，无需签名）
+  static const String _versionUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/version.json';
 
   /// 检查更新
   /// 
@@ -27,43 +22,67 @@ class UpdateChecker {
 
       debugPrint('📱 当前版本: $currentVersion');
 
-      // 2. 从阿里云函数计算获取版本信息
+      // 2. 从 OSS 获取版本信息（无需 token）
       debugPrint('🔍 检查更新: $_versionUrl');
       final response = await http.get(
         Uri.parse(_versionUrl),
-        headers: {
-          'x-xinghe-token': _token,  // ✅ 添加安全暗号
-        },
+        // ✅ OSS 公共读，移除所有 Header
       ).timeout(
         const Duration(seconds: 10),
-        onTimeout: () => throw Exception('请求超时'),
+        onTimeout: () {
+          debugPrint('⏱️ 请求超时（10秒）');
+          throw Exception('网络请求超时，请检查网络连接');
+        },
       );
 
       if (response.statusCode != 200) {
         debugPrint('⚠️ 获取版本信息失败: HTTP ${response.statusCode}');
-        return null;
+        throw Exception('服务器返回错误: ${response.statusCode}');
       }
 
-      // 3. 解析版本信息（后端返回格式: {"status":"running", "version":"1.0.0"}）
+      // 3. 解析版本信息
       final versionData = jsonDecode(response.body) as Map<String, dynamic>;
       
       debugPrint('📦 后端返回数据: $versionData');
       
-      // 从后端返回中提取版本号
-      final latestVersion = versionData['version'] as String? ?? '1.0.0';
-      final minVersion = versionData['min_version'] as String?;
-      final forceUpdate = versionData['force_update'] as bool? ?? false;
-      final updateLog = versionData['update_log'] as String?;
-      // ✅ 支持 double 类型的 file_size（例如 11.63）
-      final fileSize = (versionData['file_size'] as num?)?.toDouble();
+      // ✅ 初始化 OSS 配置（从 version.json 获取）
+      try {
+        final ossStorage = versionData['oss_storage'] as Map<String, dynamic>?;
+        if (ossStorage != null) {
+          debugPrint('🔑 检测到 OSS 配置，开始初始化...');
+          await OssConfig.initializeFromRemote(ossStorage);
+          debugPrint('✅ OSS 配置初始化成功');
+        } else {
+          debugPrint('⚠️ version.json 中未找到 oss_storage 配置');
+        }
+      } catch (e) {
+        debugPrint('❌ OSS 配置初始化失败: $e');
+        // 不影响版本检查流程
+      }
       
-      // 使用固定的下载地址
-      final updateUrl = _downloadUrl;
-
+      // ✅ 解析所有字段（与后端对齐）
+      final latestVersion = versionData['version'] as String?;
+      final downloadUrl = versionData['download_url'] as String?;
+      final updateLog = versionData['update_log'] as String?;
+      final fileSize = (versionData['file_size'] as num?)?.toDouble();
+      final forceUpdate = versionData['force_update'] as bool? ?? false;
+      
+      if (latestVersion == null || latestVersion.isEmpty) {
+        debugPrint('❌ 后端未返回 version');
+        return null;
+      }
+      
+      if (downloadUrl == null || downloadUrl.isEmpty) {
+        debugPrint('❌ 后端未返回 download_url');
+        return null;
+      }
+      
+      // ✅ 打印关键信息
       debugPrint('🆕 最新版本: $latestVersion');
-      debugPrint('📥 下载地址: $updateUrl');
+      debugPrint('📥 下载地址: $downloadUrl');
+      debugPrint('🔒 强制更新: $forceUpdate');
 
-      // 3. 对比版本
+      // 4. 对比版本
       final needUpdate = UpdateInfo.compareVersion(currentVersion, latestVersion) < 0;
 
       if (!needUpdate) {
@@ -71,24 +90,15 @@ class UpdateChecker {
         return null;
       }
 
-      // 4. 检查是否版本过低（被阻止使用）
-      bool isBlocked = false;
-      if (minVersion != null) {
-        isBlocked = UpdateInfo.compareVersion(currentVersion, minVersion) < 0;
-        if (isBlocked) {
-          debugPrint('🚫 版本过低，必须更新');
-        }
-      }
-
       return UpdateInfo(
         currentVersion: currentVersion,
         latestVersion: latestVersion,
-        minVersion: minVersion,
+        minVersion: null,  // ✅ 废弃 minVersion，使用 forceUpdate
         forceUpdate: forceUpdate,
-        downloadUrl: updateUrl,
+        downloadUrl: downloadUrl,
         updateLog: updateLog,
         fileSize: fileSize,
-        isBlocked: isBlocked,
+        isBlocked: forceUpdate,  // ✅ 强制更新时视为阻止使用
       );
     } catch (e, stackTrace) {
       debugPrint('❌ 检查更新失败: $e');
@@ -100,19 +110,52 @@ class UpdateChecker {
   /// 在应用启动时检查更新
   /// 
   /// 如果有更新，会自动显示更新对话框
+  /// 如果网络错误，会显示错误提示但不阻止应用启动
   static Future<void> checkOnStartup(BuildContext context) async {
     // 延迟一下，等待应用完全启动
     await Future.delayed(const Duration(seconds: 2));
 
     if (!context.mounted) return;
 
-    final checker = UpdateChecker();
-    final updateInfo = await checker.checkUpdate();
+    try {
+      final checker = UpdateChecker();
+      final updateInfo = await checker.checkUpdate();
 
-    if (updateInfo == null) return;
-    if (!context.mounted) return;
+      if (updateInfo == null) {
+        // 无需更新或检查失败，不影响应用启动
+        return;
+      }
+      
+      if (!context.mounted) return;
 
-    // 显示更新对话框
-    await showUpdateDialog(context, updateInfo);
+      // 显示更新对话框
+      await showUpdateDialog(context, updateInfo);
+    } catch (e) {
+      // ✅ 网络错误处理：显示提示但不阻止应用启动
+      debugPrint('❌ 启动时检查更新失败: $e');
+      
+      if (!context.mounted) return;
+      
+      // 显示友好的错误提示
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.wifi_off, color: Colors.white, size: 20),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '检查更新失败，请检查网络连接',
+                  style: TextStyle(fontSize: 14),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFFFF9800),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 }

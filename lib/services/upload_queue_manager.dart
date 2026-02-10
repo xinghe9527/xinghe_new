@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:xinghe_new/services/ffmpeg_service.dart';
-import 'package:xinghe_new/services/aliyun_oss_upload_service.dart';  // ✅ 改为阿里云上传服务
+import 'package:xinghe_new/services/ffmpeg_service.dart';  // ✅ 使用现有的 FFmpegService
+import 'package:xinghe_new/services/direct_oss_upload_service.dart';  // ✅ 直连 OSS 上传服务
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
@@ -29,8 +29,8 @@ class UploadTask {
 
 enum UploadTaskStatus {
   pending,          // 等待中
-  processing,       // 处理中（FFmpeg）
-  ffmpegCompleted,  // FFmpeg 完成，开始上传
+  converting,       // 本地转码中
+  convertCompleted, // 转码完成
   uploading,        // 上传中
   completed,        // 已完成
   failed,           // 失败
@@ -39,9 +39,11 @@ enum UploadTaskStatus {
 /// 上传队列管理器（单例）
 /// 
 /// 功能：
-/// - 并发处理上传任务，但 FFmpeg 保持串行（避免资源竞争）
+/// - 并发处理上传任务，但本地视频转码保持串行（避免资源竞争）
 /// - 后台运行（切换界面不中断）
 /// - 任务状态通知
+/// - 本地转码：使用 ffmpeg_kit_flutter 将图片转为 3秒 H.264 视频
+/// - 直连 OSS：直接上传到阿里云 OSS（user_videos/ 目录）
 class UploadQueueManager {
   static final UploadQueueManager _instance = UploadQueueManager._internal();
   factory UploadQueueManager() => _instance;
@@ -50,10 +52,10 @@ class UploadQueueManager {
   final List<UploadTask> _queue = [];
   final List<UploadTask> _completedTasks = [];  // 保存已完成的任务
   bool _isProcessing = false;
-  bool _ffmpegLocked = false;  // ✅ FFmpeg 串行锁
+  bool _convertLocked = false;  // ✅ 视频转码串行锁
   
-  final FFmpegService _ffmpegService = FFmpegService();
-  final AliyunOssUploadService _uploadService = AliyunOssUploadService();  // ✅ 使用阿里云上传服务
+  final FFmpegService _ffmpegService = FFmpegService();  // ✅ 使用现有的 FFmpegService
+  final DirectOssUploadService _uploadService = DirectOssUploadService();  // ✅ 直连 OSS 上传服务
   final LogManager _logger = LogManager();
   
   // 任务状态更新回调
@@ -73,37 +75,52 @@ class UploadQueueManager {
     _processTask(task);
   }
 
-  /// ✅ 处理单个任务（并发执行，但 FFmpeg 保持串行）
+  /// ✅ 处理单个任务（并发执行，但视频转码保持串行）
   Future<void> _processTask(UploadTask task) async {
+    File? videoFile;
+    
     try {
       _logger.info('开始处理上传任务', module: '上传队列', extra: {
         'taskId': task.id,
         'name': task.assetName,
       });
 
-      // Step 1: 图片转视频（串行等待）
-      await _waitForFFmpegLock();  // ✅ 等待 FFmpeg 锁
-      _ffmpegLocked = true;  // ✅ 获取锁
+      // Step 1: 本地图片转视频（串行等待）
+      await _waitForConvertLock();  // ✅ 等待转码锁
+      _convertLocked = true;  // ✅ 获取锁
       
-      task.status = UploadTaskStatus.processing;
+      task.status = UploadTaskStatus.converting;
       _notifyStatusChange(task);
       
-      _logger.info('Step 1/4: 图片转视频', module: '上传队列');
-      final videoFile = await _ffmpegService.convertImageToVideo(task.imageFile);
+      _logger.info('Step 1/4: 本地图片转视频（3秒 H.264）', module: '上传队列');
+      debugPrint('[队列管理器] 开始本地转码: ${task.imageFile.path}');
       
-      _ffmpegLocked = false;  // ✅ 释放锁，下一个任务可以开始 FFmpeg
+      videoFile = await _ffmpegService.convertImageToVideo(task.imageFile);
       
-      // ✅ FFmpeg 完成，发送通知（此时可以继续生成下一个）
-      task.status = UploadTaskStatus.ffmpegCompleted;
+      _convertLocked = false;  // ✅ 释放锁，下一个任务可以开始转码
+      
+      // ✅ 转码完成，发送通知（此时可以继续生成下一个）
+      task.status = UploadTaskStatus.convertCompleted;
       _notifyStatusChange(task);
       
-      // Step 2: 上传到阿里云 OSS（并发，不需要等待）
+      debugPrint('[队列管理器] ✅ 本地转码完成: ${videoFile.path}');
+      
+      // Step 2: 直连 OSS 上传（并发，不需要等待）
       task.status = UploadTaskStatus.uploading;
       _notifyStatusChange(task);
-      _logger.info('Step 2/4: 上传到阿里云 OSS', module: '上传队列');
-      final videoUrl = await _uploadService.uploadVideo(videoFile);
+      _logger.info('Step 2/4: 直连 OSS 上传（user_videos/）', module: '上传队列');
+      
+      // 生成目标路径：user_videos/时间戳.mp4
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final targetPath = 'user_videos/$timestamp.mp4';
+      
+      debugPrint('[队列管理器] 上传到 OSS: $targetPath');
+      
+      final videoUrl = await _uploadService.uploadVideo(videoFile, targetPath: targetPath);
       task.videoUrl = videoUrl;
+      
       _logger.success('视频上传成功，URL: $videoUrl', module: '上传队列');
+      debugPrint('[队列管理器] ✅ OSS 上传成功: $videoUrl');
       
       // Step 3: 调用 Sora API 创建角色
       _logger.info('Step 3/4: 创建 Sora 角色', module: '上传队列');
@@ -140,11 +157,21 @@ class UploadQueueManager {
         'error': e.toString(),
       });
       
+      debugPrint('[队列管理器] ❌ 任务失败: $e');
       debugPrint('Stack Trace: $stackTrace');
       
-      // ✅ 如果失败，确保释放 FFmpeg 锁
-      if (_ffmpegLocked) {
-        _ffmpegLocked = false;
+      // ✅ 如果失败，确保释放转码锁
+      if (_convertLocked) {
+        _convertLocked = false;
+      }
+      
+      // ✅ 清理临时文件
+      if (videoFile != null) {
+        try {
+          await videoFile.delete();
+        } catch (cleanupError) {
+          debugPrint('[队列管理器] ⚠️ 清理临时文件失败: $cleanupError');
+        }
       }
     }
     
@@ -164,9 +191,9 @@ class UploadQueueManager {
     _queue.remove(task);
   }
   
-  /// ✅ 等待 FFmpeg 锁释放
-  Future<void> _waitForFFmpegLock() async {
-    while (_ffmpegLocked) {
+  /// ✅ 等待转码锁释放
+  Future<void> _waitForConvertLock() async {
+    while (_convertLocked) {
       await Future.delayed(const Duration(milliseconds: 100));
     }
   }
@@ -221,7 +248,8 @@ class UploadQueueManager {
       'total': _queue.length,
       'processing': _isProcessing,
       'pending': _queue.where((t) => t.status == UploadTaskStatus.pending).length,
-      'processing_count': _queue.where((t) => t.status == UploadTaskStatus.processing).length,
+      'converting': _queue.where((t) => t.status == UploadTaskStatus.converting).length,
+      'uploading': _queue.where((t) => t.status == UploadTaskStatus.uploading).length,
     };
   }
 

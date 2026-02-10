@@ -15,11 +15,16 @@ class UpdateDownloader {
   /// 返回: 下载的文件路径，失败返回 null
   Future<String?> download(String url) async {
     try {
+      // ✅ 打印完整的下载 URL（检查签名）
+      debugPrint('📥 开始下载更新包');
+      debugPrint('🔗 下载 URL（完整）: $url');
+      debugPrint('🔑 URL 长度: ${url.length} 字符');
+      debugPrint('✅ 包含签名: ${url.contains('Signature=')}');
+      
       // 1. 获取临时目录
       final tempDir = await getTemporaryDirectory();
       final savePath = '${tempDir.path}\\xinghe_update.exe';  // ✅ 改为 .exe
 
-      debugPrint('📥 开始下载更新包');
       debugPrint('📂 保存路径: $savePath');
 
       statusNotifier.value = '正在下载...';
