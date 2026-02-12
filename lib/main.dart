@@ -1,12 +1,17 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:media_kit/media_kit.dart';
 import 'features/home/presentation/home_screen.dart';
+import 'features/auth/presentation/auth_provider.dart';
 import 'core/logger/log_manager.dart';
 
 // 全局主题状态管理器
 final ValueNotifier<int> themeNotifier = ValueNotifier<int>(0); // 0: 深邃黑, 1: 纯净白, 2: 梦幻粉
+
+// 全局认证状态管理器
+final AuthProvider authProvider = AuthProvider();
 
 // 全局保存路径管理器
 final ValueNotifier<String> imageSavePathNotifier = ValueNotifier<String>('未设置');
@@ -18,6 +23,9 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 🚀 核心修复：全局忽略 SSL 证书错误，允许 VPN/代理 环境调试
+  HttpOverrides.global = MyHttpOverrides();
   
   // ✅ 初始化 media_kit（视频播放器）
   MediaKit.ensureInitialized();
@@ -36,13 +44,13 @@ void main() async {
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
-    title: '星橙AI动漫制作',
+    title: 'R·O·S 动漫制作',
     alwaysOnTop: false,
   );
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.setAsFrameless();
-    await windowManager.setTitle('星橙AI动漫制作');
+    await windowManager.setTitle('R·O·S 动漫制作');
     await windowManager.setSize(const Size(1280, 720));
     await windowManager.setMinimumSize(const Size(1280, 720));  // ✅ 最小尺寸1280x720
     await windowManager.setResizable(true);  // ✅ 启用调整大小
@@ -58,6 +66,9 @@ void main() async {
   
   // 加载保存路径配置
   await _loadSavePaths();
+  
+  // 初始化认证状态（自动登录）
+  await authProvider.initialize();
   
   logManager.success('应用启动成功', module: '系统');
 
@@ -101,7 +112,7 @@ class XingheApp extends StatelessWidget {
       builder: (context, themeIndex, _) {
         final themeData = _getThemeData(themeIndex);
         return MaterialApp(
-          title: '星橙AI动漫制作',
+          title: 'R·O·S 动漫制作',
           debugShowCheckedModeBanner: false,
           theme: themeData,
           home: const HomeScreen(),
@@ -214,5 +225,14 @@ class AppTheme {
       case 2: return Colors.white.withOpacity(0.3);
       default: return const Color(0xFF3E3F42);
     }
+  }
+}
+
+// 全局 HTTP 覆盖类：忽略 SSL 证书错误（用于 VPN/代理环境）
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
   }
 }

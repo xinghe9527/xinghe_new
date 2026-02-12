@@ -838,7 +838,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               width: double.infinity,
               child: Center(
                 child: Text(
-                  '星橙AI动漫制作',
+                  'R·O·S 动漫制作',
                   style: TextStyle(
                     color: AppTheme.subTextColor,
                     fontSize: 12,

@@ -29,7 +29,7 @@ class CustomTitleBar extends StatelessWidget implements PreferredSizeWidget {
             color: AppTheme.scaffoldBackground,
             child: Center(
               child: Text(
-                '星橙AI动漫制作',
+                'R·O·S 动漫制作',
                 style: TextStyle(
                   color: AppTheme.subTextColor,
                   fontSize: 12,

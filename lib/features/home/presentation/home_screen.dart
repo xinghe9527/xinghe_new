@@ -6,9 +6,10 @@ import 'video_space.dart';
 import 'asset_library.dart';
 import 'system_log.dart';
 import 'widgets/creation_space.dart';
-import 'package:xinghe_new/core/widgets/window_border.dart';  // ✅ 导入窗口边框
-import 'package:xinghe_new/main.dart'; // 引入全局 themeNotifier 和 AppTheme
-import 'package:xinghe_new/core/update/update_checker.dart'; // 自动更新（使用 UpdateChecker）
+import 'package:xinghe_new/core/widgets/window_border.dart';
+import 'package:xinghe_new/main.dart';
+import 'package:xinghe_new/core/update/update_checker.dart';
+import 'package:xinghe_new/features/auth/presentation/widgets/user_header_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -58,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       height: 32,
                       child: Center(
                         child: Text(
-                          '星橙AI动漫制作',
+                          'R·O·S 动漫制作',
                           style: TextStyle(
                             color: AppTheme.subTextColor,
                             fontSize: 12,
@@ -116,55 +117,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: AppTheme.scaffoldBackground,
                           child: Column(
                             children: [
-                              // 登录入口
-                              MouseRegion(
-                                cursor: SystemMouseCursors.click,
-                                child: GestureDetector(
-                                  onTap: () {},
-                                  child: Container(
-                                    margin: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                                    color: Colors.transparent,
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 36,
-                                          height: 36,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: const Color(0xFF2C2C2C),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: AppTheme.accentColor.withOpacity(0.2),
-                                                blurRadius: 8,
-                                              ),
-                                            ],
-                                          ),
-                                          child: ClipOval(
-                                            child: Image.asset(
-                                              'assets/logo.png',
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (context, error, stackTrace) {
-                                                return Icon(Icons.stars, color: AppTheme.accentColor, size: 22);
-                                              },
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text('点击登录', style: TextStyle(color: AppTheme.textColor, fontSize: 13, fontWeight: FontWeight.bold)),
-                                              Text('同步创意', style: TextStyle(color: AppTheme.subTextColor, fontSize: 10)),
-                                            ],
-                                          ),
-                                        ),
-                                        Icon(Icons.chevron_right, color: AppTheme.subTextColor, size: 14),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
+                              // 用户登录头像区域
+                              UserHeaderWidget(authProvider: authProvider),
                               // 菜单列表
                               ...List.generate(_menuItems.length, (index) {
                                 return _SideMenuItem(
