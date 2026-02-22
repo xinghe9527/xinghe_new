@@ -17,6 +17,7 @@ final AuthProvider authProvider = AuthProvider();
 final ValueNotifier<String> imageSavePathNotifier = ValueNotifier<String>('未设置');
 final ValueNotifier<String> videoSavePathNotifier = ValueNotifier<String>('未设置');
 final ValueNotifier<String> workSavePathNotifier = ValueNotifier<String>('未设置');  // ✅ 作品保存路径
+final ValueNotifier<String> canvasSavePathNotifier = ValueNotifier<String>('未设置');  // ✅ 画布空间保存路径
 
 // 全局路由观察器（用于监听页面切换）
 final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
@@ -96,6 +97,13 @@ Future<void> _loadSavePaths() async {
     if (workPath != null && workPath.isNotEmpty) {
       workSavePathNotifier.value = workPath;
       debugPrint('✅ 加载作品保存路径: $workPath');
+    }
+    
+    // ✅ 加载画布空间保存路径
+    final canvasPath = prefs.getString('canvas_save_path');
+    if (canvasPath != null && canvasPath.isNotEmpty) {
+      canvasSavePathNotifier.value = canvasPath;
+      debugPrint('✅ 加载画布空间保存路径: $canvasPath');
     }
   } catch (e) {
     debugPrint('⚠️ 加载保存路径失败: $e');

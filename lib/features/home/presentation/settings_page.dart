@@ -25,6 +25,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isPickingImagePath = false;
   bool _isPickingVideoPath = false;
   bool _isPickingWorkPath = false;  // ✅ 作品路径选择状态
+  bool _isPickingCanvasPath = false;  // ✅ 画布空间路径选择状态
   bool _isPickingComfyUIWorkflowPath = false;  // ✅ ComfyUI 工作流路径选择状态
   bool _isLoadingWorkflows = false;  // ✅ 正在读取工作流状态
   
@@ -264,6 +265,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final imagePath = prefs.getString('image_save_path');
       final videoPath = prefs.getString('video_save_path');
       final workPath = prefs.getString('work_save_path');
+      final canvasPath = prefs.getString('canvas_save_path');
 
       if (imagePath != null && imagePath.isNotEmpty) {
         imageSavePathNotifier.value = imagePath;
@@ -278,6 +280,11 @@ class _SettingsPageState extends State<SettingsPage> {
       if (workPath != null && workPath.isNotEmpty) {
         workSavePathNotifier.value = workPath;
         _logger.info('加载作品保存路径: $workPath', module: '设置');
+      }
+
+      if (canvasPath != null && canvasPath.isNotEmpty) {
+        canvasSavePathNotifier.value = canvasPath;
+        _logger.info('加载画布空间保存路径: $canvasPath', module: '设置');
       }
     } catch (e) {
       _logger.error('加载保存路径配置失败: $e', module: '设置');
@@ -804,6 +811,41 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 选择画布空间保存路径
+  Future<void> _pickCanvasDirectory() async {
+    if (_isPickingCanvasPath) return;
+    
+    setState(() => _isPickingCanvasPath = true);
+    
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择画布空间保存文件夹',
+        lockParentWindow: true,
+      );
+      
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        canvasSavePathNotifier.value = selectedDirectory;
+        
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('canvas_save_path', selectedDirectory);
+        
+        _logger.success('设置画布空间保存路径', module: '设置', extra: {'path': selectedDirectory});
+        if (mounted) {
+          _showMessage('画布空间保存路径已更新');
+        }
+      }
+    } catch (e) {
+      _logger.error('选择画布空间路径失败: $e', module: '设置');
+      if (mounted) {
+        _showMessage('选择文件夹时出错', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingCanvasPath = false);
+      }
+    }
+  }
+
   /// 选择音频保存路径
   Future<void> _pickAudioDirectory() async {
     if (_isPickingAudioPath) return;
@@ -1220,6 +1262,16 @@ class _SettingsPageState extends State<SettingsPage> {
             notifier: workSavePathNotifier,
             onPick: _pickWorkDirectory,
             isLoading: _isPickingWorkPath,
+          ),
+
+          const SizedBox(height: 32),
+
+          _buildPathSelector(
+            title: '画布空间保存路径',
+            subtitle: '画布空间生成的图片和视频将保存在此路径',
+            notifier: canvasSavePathNotifier,
+            onPick: _pickCanvasDirectory,
+            isLoading: _isPickingCanvasPath,
           ),
 
           const SizedBox(height: 60),

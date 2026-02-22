@@ -10,6 +10,7 @@ import 'package:xinghe_new/core/widgets/window_border.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/core/update/update_checker.dart';
 import 'package:xinghe_new/features/auth/presentation/widgets/user_header_widget.dart';
+import 'package:xinghe_new/pages/ai_canvas/ai_canvas_page.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,12 +23,13 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0; // 默认选中创作空间
   bool _showSettings = false; // 控制是否显示设置页面
 
-  final List<String> _menuItems = ['创作空间', '绘图空间', '视频空间', '素材库', '系统日志'];
+  final List<String> _menuItems = ['创作空间', '绘图空间', '视频空间', '画布空间', '素材库', '系统日志'];
 
   final List<IconData> _menuIcons = [
     Icons.auto_awesome,
     Icons.brush,
     Icons.movie_creation,
+    Icons.grid_view_rounded, // 画布空间图标
     Icons.folder_open,
     Icons.terminal,
   ];
@@ -121,11 +123,32 @@ class _HomeScreenState extends State<HomeScreen> {
                               UserHeaderWidget(authProvider: authProvider),
                               // 菜单列表
                               ...List.generate(_menuItems.length, (index) {
+                                // 计算是否选中：画布空间永不选中，其他项需要调整索引比较
+                                bool isSelected = false;
+                                if (index != 3) {
+                                  int adjustedIndex = index > 3 ? index - 1 : index;
+                                  isSelected = _selectedIndex == adjustedIndex;
+                                }
+                                
                                 return _SideMenuItem(
                                   icon: _menuIcons[index],
                                   label: _menuItems[index],
-                                  isSelected: _selectedIndex == index,
-                                  onTap: () => setState(() => _selectedIndex = index),
+                                  isSelected: isSelected,
+                                  onTap: () {
+                                    // 画布空间特殊处理：全屏对话框
+                                    if (index == 3) {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (context) => const AiCanvasPage(),
+                                          fullscreenDialog: true,
+                                        ),
+                                      );
+                                    } else {
+                                      // 调整索引：画布空间之后的索引需要减1
+                                      int adjustedIndex = index > 3 ? index - 1 : index;
+                                      setState(() => _selectedIndex = adjustedIndex);
+                                    }
+                                  },
                                 );
                               }),
                               const Spacer(),
@@ -142,8 +165,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               CreationSpace(),  // 0: 创作空间
                               DrawingSpace(),   // 1: 绘图空间
                               VideoSpace(),     // 2: 视频空间
-                              AssetLibrary(),   // 3: 素材库
-                              SystemLog(),      // 4: 系统日志
+                              AssetLibrary(),   // 3: 素材库（菜单索引4）
+                              SystemLog(),      // 4: 系统日志（菜单索引5）
                             ],
                           ),
                         ),
@@ -242,7 +265,7 @@ class _WindowControlButtonState extends State<_WindowControlButton> {
           width: 46,
           height: 32,
           color: _isHovered
-              ? (widget.isClose ? Colors.red : AppTheme.textColor.withOpacity(0.1))
+              ? (widget.isClose ? Colors.red : AppTheme.textColor.withValues(alpha: 0.1))
               : Colors.transparent,
           child: Icon(
             widget.icon,

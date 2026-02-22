@@ -73,30 +73,48 @@ class ComfyUIService extends ApiServiceBase {
       debugPrint('   参考图片: ${referenceImages?.length ?? 0} 张');
       debugPrint('   比例参数: ratio=$ratio, quality=$quality');
       debugPrint('   额外参数: $parameters');
+      debugPrint('   传入的 model 参数: $model');
       
-      // 1. 加载选中的工作流
-      final prefs = await SharedPreferences.getInstance();
-      final selectedWorkflowId = prefs.getString('comfyui_selected_image_workflow');
+      // 1. 加载工作流
+      Map<String, dynamic> workflow;
       
-      if (selectedWorkflowId == null) {
-        throw Exception('未选择 ComfyUI 工作流\n请在设置中选择一个工作流');
+      // ✅ 优先使用 parameters 中传递的工作流（画布空间独立选择）
+      if (parameters != null && parameters['workflow'] != null) {
+        debugPrint('   ✅ 使用传入的工作流（画布空间独立）');
+        workflow = {
+          'id': parameters['workflow_id'] ?? model ?? 'custom',
+          'name': parameters['workflow_name'] ?? model ?? 'Custom Workflow',
+          'workflow': parameters['workflow'],
+        };
+        debugPrint('   工作流名称: ${workflow['name']}');
+        debugPrint('   工作流ID: ${workflow['id']}');
+      } else {
+        // 使用全局配置的工作流（设置页面选择）
+        debugPrint('   ⚠️ 未传入工作流，使用全局配置');
+        
+        final prefs = await SharedPreferences.getInstance();
+        final selectedWorkflowId = prefs.getString('comfyui_selected_image_workflow');
+        
+        if (selectedWorkflowId == null) {
+          throw Exception('未选择 ComfyUI 工作流\n请在设置中选择一个工作流');
+        }
+        
+        final workflowsJson = prefs.getString('comfyui_workflows');
+        if (workflowsJson == null) {
+          throw Exception('未找到工作流数据\n请在设置中重新读取工作流');
+        }
+        
+        final workflows = List<Map<String, dynamic>>.from(
+          (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+        );
+        
+        workflow = workflows.firstWhere(
+          (w) => w['id'] == selectedWorkflowId,
+          orElse: () => throw Exception('工作流未找到: $selectedWorkflowId'),
+        );
+        
+        debugPrint('   使用全局工作流: ${workflow['name'] ?? selectedWorkflowId}');
       }
-      
-      final workflowsJson = prefs.getString('comfyui_workflows');
-      if (workflowsJson == null) {
-        throw Exception('未找到工作流数据\n请在设置中重新读取工作流');
-      }
-      
-      final workflows = List<Map<String, dynamic>>.from(
-        (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
-      );
-      
-      final workflow = workflows.firstWhere(
-        (w) => w['id'] == selectedWorkflowId,
-        orElse: () => throw Exception('工作流未找到: $selectedWorkflowId'),
-      );
-      
-      debugPrint('   使用工作流: ${workflow['name'] ?? selectedWorkflowId}');
       
       // 2. 深度克隆工作流（避免修改原始数据，保留所有连接）
       final workflowData = jsonDecode(jsonEncode(workflow['workflow'])) as Map<String, dynamic>;
@@ -686,30 +704,48 @@ class ComfyUIService extends ApiServiceBase {
       debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       debugPrint('   Prompt: ${prompt.substring(0, prompt.length > 100 ? 100 : prompt.length)}...');
       debugPrint('   参考图片: ${referenceImages?.length ?? 0} 张');
+      debugPrint('   传入的 model 参数: $model');
       
-      // 1. 加载选中的工作流
-      final prefs = await SharedPreferences.getInstance();
-      final selectedWorkflowId = prefs.getString('comfyui_selected_video_workflow');
+      // 1. 加载工作流
+      Map<String, dynamic> workflow;
       
-      if (selectedWorkflowId == null) {
-        throw Exception('未选择 ComfyUI 视频工作流\n请在设置中选择一个工作流');
+      // ✅ 优先使用 parameters 中传递的工作流（画布空间独立选择）
+      if (parameters != null && parameters['workflow'] != null) {
+        debugPrint('   ✅ 使用传入的工作流（画布空间独立）');
+        workflow = {
+          'id': parameters['workflow_id'] ?? model ?? 'custom',
+          'name': parameters['workflow_name'] ?? model ?? 'Custom Workflow',
+          'workflow': parameters['workflow'],
+        };
+        debugPrint('   工作流名称: ${workflow['name']}');
+        debugPrint('   工作流ID: ${workflow['id']}');
+      } else {
+        // 使用全局配置的工作流（设置页面选择）
+        debugPrint('   ⚠️ 未传入工作流，使用全局配置');
+        
+        final prefs = await SharedPreferences.getInstance();
+        final selectedWorkflowId = prefs.getString('comfyui_selected_video_workflow');
+        
+        if (selectedWorkflowId == null) {
+          throw Exception('未选择 ComfyUI 视频工作流\n请在设置中选择一个工作流');
+        }
+        
+        final workflowsJson = prefs.getString('comfyui_workflows');
+        if (workflowsJson == null) {
+          throw Exception('未找到工作流数据\n请在设置中重新读取工作流');
+        }
+        
+        final workflows = List<Map<String, dynamic>>.from(
+          (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+        );
+        
+        workflow = workflows.firstWhere(
+          (w) => w['id'] == selectedWorkflowId,
+          orElse: () => throw Exception('工作流未找到: $selectedWorkflowId'),
+        );
+        
+        debugPrint('   使用全局工作流: ${workflow['name'] ?? selectedWorkflowId}');
       }
-      
-      final workflowsJson = prefs.getString('comfyui_workflows');
-      if (workflowsJson == null) {
-        throw Exception('未找到工作流数据\n请在设置中重新读取工作流');
-      }
-      
-      final workflows = List<Map<String, dynamic>>.from(
-        (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
-      );
-      
-      final workflow = workflows.firstWhere(
-        (w) => w['id'] == selectedWorkflowId,
-        orElse: () => throw Exception('工作流未找到: $selectedWorkflowId'),
-      );
-      
-      debugPrint('   使用工作流: ${workflow['name'] ?? selectedWorkflowId}');
       
       // 2. 克隆工作流
       final workflowData = Map<String, dynamic>.from(workflow['workflow'] as Map);
@@ -731,13 +767,36 @@ class ComfyUIService extends ApiServiceBase {
       // 5. 随机 seed
       _randomizeSeedInWorkflow(workflowData);
       
-      // 6. 处理参考图片
+      // 6. 处理参考图片和首尾帧
       if (referenceImages != null && referenceImages.isNotEmpty) {
         // 有参考图片：上传并设置
         await _uploadAndSetReferenceImages(workflowData, referenceImages);
       } else {
-        // ✅ 没有参考图片：清空所有 LoadImage 节点（避免使用工作流原始图片）
-        _clearAllLoadImageNodes(workflowData);
+        // ✅ 检查是否有首帧/尾帧图片（视频生成）
+        final firstFrame = parameters?['first_frame'] as String?;
+        final lastFrame = parameters?['last_frame'] as String?;
+        
+        if (firstFrame != null || lastFrame != null) {
+          debugPrint('\n📸 处理首尾帧图片');
+          debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          
+          final frameImages = <String>[];
+          if (firstFrame != null) {
+            frameImages.add(firstFrame);
+            debugPrint('   首帧: $firstFrame');
+          }
+          if (lastFrame != null) {
+            frameImages.add(lastFrame);
+            debugPrint('   尾帧: $lastFrame');
+          }
+          
+          // 上传首尾帧图片
+          await _uploadAndSetReferenceImages(workflowData, frameImages);
+          debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        } else {
+          // 没有参考图片：清空所有 LoadImage 节点（避免使用工作流原始图片）
+          _clearAllLoadImageNodes(workflowData);
+        }
       }
       
       debugPrint('   工作流节点数: ${workflowData.length}');
@@ -834,6 +893,30 @@ class ComfyUIService extends ApiServiceBase {
             final outputs = history['outputs'] as Map<String, dynamic>?;
             
             if (outputs != null) {
+              // ✅ 调试：打印完整输出结构（每次都打印，帮助诊断）
+              debugPrint('   🔍 [调试] 检测到 outputs，包含 ${outputs.length} 个节点');
+              for (final entry in outputs.entries) {
+                debugPrint('   🔍 节点 ${entry.key}:');
+                if (entry.value is Map) {
+                  final output = entry.value as Map;
+                  debugPrint('       字段: ${output.keys.join(", ")}');
+                  
+                  // 打印每个字段的详细信息
+                  for (final key in output.keys) {
+                    final value = output[key];
+                    if (value is List) {
+                      debugPrint('       - $key: List (${value.length}项)');
+                      if (value.isNotEmpty && value.first is Map) {
+                        final firstItem = value.first as Map;
+                        debugPrint('           第一项字段: ${firstItem.keys.join(", ")}');
+                      }
+                    } else {
+                      debugPrint('       - $key: ${value.runtimeType} = $value');
+                    }
+                  }
+                }
+              }
+              
               // ✅ 增强检测：支持多种视频输出格式
               for (final entry in outputs.entries) {
                 final output = entry.value;
@@ -882,24 +965,9 @@ class ComfyUIService extends ApiServiceBase {
                 }
               }
               
-              // ✅ 如果有outputs但没找到视频，打印完整结构
-              if (outputs.isNotEmpty) {
-                debugPrint('   ⚠️ 找到outputs但没有识别的视频数据');
-                debugPrint('   📋 输出节点类型: ${outputs.keys.join(", ")}');
-                for (final entry in outputs.entries) {
-                  if (entry.value is Map) {
-                    final output = entry.value as Map;
-                    final keys = output.keys.join(", ");
-                    debugPrint('   📋 节点 ${entry.key} 的输出字段: $keys');
-                    
-                    // 打印每个字段的值类型
-                    for (final key in output.keys) {
-                      final value = output[key];
-                      debugPrint('       - $key: ${value.runtimeType} ${value is List ? "(${value.length}项)" : ""}');
-                    }
-                  }
-                }
-              }
+              // ✅ 如果有outputs但没找到视频，说明不支持的格式
+              debugPrint('   ⚠️ 找到outputs但没有识别的视频数据');
+              debugPrint('   💡 请检查上面的调试输出，查看实际的输出字段');
             }
           }
         } else {
