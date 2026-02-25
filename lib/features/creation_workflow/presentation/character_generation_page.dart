@@ -18,6 +18,7 @@ import '../../../services/api/base/api_config.dart';
 import '../../../services/api/base/api_response.dart';
 import '../../../services/upload_queue_manager.dart';  // ✅ 上传队列管理器
 import '../../../services/api/providers/geeknow_service.dart';  // ✅ 直接导入服务
+import 'widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
 
 /// 角色生成页面
 class CharacterGenerationPage extends StatefulWidget {
@@ -45,6 +46,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> with 
   String _imageRatio = '16:9';  // ✅ 图片比例，默认 16:9
   List<CharacterData> _characters = [];
   bool _isInferring = false;
+  String _inferenceMode = 'preserve';  // ✅ 推理模式：'preserve' = 保留现有，'overwrite' = 覆盖全部
   final ApiRepository _apiRepository = ApiRepository();
   final Set<int> _generatingImages = {};
   final UploadQueueManager _uploadQueue = UploadQueueManager();  // ✅ 上传队列
@@ -458,6 +460,97 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> with 
                           ),
                         ),
                         const SizedBox(width: 8),
+                        // 推理模式选择器
+                        PopupMenuButton<String>(
+                          offset: const Offset(0, 40),
+                          tooltip: '推理模式',
+                          color: const Color(0xFF2A2A2C),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: const BorderSide(color: Color(0xFF3A3A3C)),
+                          ),
+                          itemBuilder: (context) {
+                            return [
+                              PopupMenuItem<String>(
+                                value: 'preserve',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _inferenceMode == 'preserve' ? Icons.check : Icons.shield_outlined,
+                                      size: 16,
+                                      color: _inferenceMode == 'preserve' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '保留现有',
+                                      style: TextStyle(
+                                        color: _inferenceMode == 'preserve' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'overwrite',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _inferenceMode == 'overwrite' ? Icons.check : Icons.refresh,
+                                      size: 16,
+                                      color: _inferenceMode == 'overwrite' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '覆盖全部',
+                                      style: TextStyle(
+                                        color: _inferenceMode == 'overwrite' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ];
+                          },
+                          onSelected: (value) {
+                            setState(() {
+                              _inferenceMode = value;
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: const Color(0xFF3A3A3C)),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _inferenceMode == 'preserve' ? Icons.shield_outlined : Icons.refresh,
+                                  size: 16,
+                                  color: const Color(0xFF888888),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _inferenceMode == 'preserve' ? '保留现有' : '覆盖全部',
+                                  style: const TextStyle(
+                                    color: Color(0xFF888888),
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(
+                                  Icons.arrow_drop_down,
+                                  size: 18,
+                                  color: Color(0xFF888888),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         // 推理按钮
                         OutlinedButton.icon(
                           onPressed: _isInferring ? null : _inferCharacters,
@@ -654,13 +747,29 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> with 
                           color: const Color(0xFF3A3A3C),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: Text(
-                          character.name,
-                          style: const TextStyle(
-                            color: Color(0xFF888888),
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (character.isInherited)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 6),
+                                child: Icon(
+                                  Icons.folder_copy,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            Text(
+                              character.name,
+                              style: TextStyle(
+                                color: character.isInherited 
+                                    ? Colors.white  // ✅ 继承的资产：白色
+                                    : const Color(0xFF888888),  // 新创建的：灰色
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1039,28 +1148,83 @@ ${widget.scriptContent}
         }
         
         if (characterList.isEmpty) {
-          // 如果所有解析都失败，将整个文本作为一个角色
-          print('⚠️ 所有格式解析失败，使用原始文本作为单个角色');
-          characterList.add(CharacterData(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
-            name: '推理结果',
-            description: responseText,
-          ));
+          // 如果所有解析都失败
+          print('⚠️ 所有格式解析失败');
+          
+          // 在保留现有模式下，解析失败应该报错，而不是创建无用的"推理结果"
+          if (_inferenceMode == 'preserve') {
+            throw Exception('无法解析推理结果，请检查提示词设置或LLM返回格式');
+          } else {
+            // 覆盖全部模式下，将整个文本作为一个角色（向后兼容）
+            characterList.add(CharacterData(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              name: '推理结果',
+              description: responseText,
+            ));
+          }
         }
         
-        if (mounted) {
-          setState(() {
-            _characters = characterList;
-          });
-          await _saveCharacterData();
+        // ✅ 根据推理模式处理角色列表
+        if (_inferenceMode == 'preserve') {
+          // 保留现有模式：只添加不存在的角色
+          final existingNames = _characters.map((c) => c.name).toSet();
+          final newCharacters = characterList.where((c) => !existingNames.contains(c.name)).toList();
+          
+          print('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('🔍 推理模式: 保留现有');
+          print('📊 现有角色: ${_characters.length} 个');
+          print('📊 推理角色: ${characterList.length} 个');
+          print('📊 新增角色: ${newCharacters.length} 个');
+          
+          if (newCharacters.isNotEmpty) {
+            print('✅ 新增角色列表:');
+            for (final char in newCharacters) {
+              print('   - ${char.name}');
+            }
+          } else {
+            print('⚠️ 没有新角色需要添加');
+          }
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
           
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('✅ 推理完成，识别到 ${characterList.length} 个角色'),
-                backgroundColor: Colors.green,
-              ),
-            );
+            setState(() {
+              _characters.addAll(newCharacters);
+            });
+            await _saveCharacterData();
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(newCharacters.isEmpty 
+                    ? '✅ 推理完成，没有新角色需要添加' 
+                    : '✅ 推理完成，新增 ${newCharacters.length} 个角色'),
+                  backgroundColor: newCharacters.isEmpty ? const Color(0xFF888888) : Colors.green,
+                ),
+              );
+            }
+          }
+        } else {
+          // 覆盖全部模式：替换所有角色
+          print('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('🔄 推理模式: 覆盖全部');
+          print('📊 原有角色: ${_characters.length} 个');
+          print('📊 新角色: ${characterList.length} 个');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          
+          if (mounted) {
+            setState(() {
+              _characters = characterList;
+            });
+            await _saveCharacterData();
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ 推理完成，识别到 ${characterList.length} 个角色'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
           }
         }
       } else {
@@ -1905,8 +2069,9 @@ ${widget.scriptContent}
     }
     
     try {
+      Widget imageWidget;
       if (imageUrl.startsWith('http')) {
-        return Image.network(
+        imageWidget = Image.network(
           imageUrl, 
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) {
@@ -1918,7 +2083,7 @@ ${widget.scriptContent}
         );
       } else {
         final file = File(imageUrl);
-        return Image.file(
+        imageWidget = Image.file(
           file, 
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) {
@@ -1928,7 +2093,19 @@ ${widget.scriptContent}
             );
           },
         );
+        
+        // ✅ 如果是本地文件，添加拖动功能
+        if (file.existsSync()) {
+          return DraggableMediaItem(
+            filePath: imageUrl,
+            dragPreviewText: path.basename(imageUrl),
+            coverUrl: imageUrl,
+            child: imageWidget,
+          );
+        }
       }
+      
+      return imageWidget;
     } catch (e) {
       debugPrint('⚠️ 构建图片 Widget 失败: $e');
       return const Center(
@@ -1946,6 +2123,8 @@ class CharacterData {
   final String? imageUrl;
   final String? mappingCode;  // ✅ 上传后的@代码
   final bool isUploaded;       // ✅ 是否已上传
+  final bool isInherited;      // ✅ 是否继承自其他作品
+  final String? sourceWorkId;  // ✅ 来源作品ID
 
   CharacterData({
     required this.id,
@@ -1954,6 +2133,8 @@ class CharacterData {
     this.imageUrl,
     this.mappingCode,
     this.isUploaded = false,
+    this.isInherited = false,
+    this.sourceWorkId,
   });
 
   CharacterData copyWith({
@@ -1962,6 +2143,8 @@ class CharacterData {
     String? imageUrl,
     String? mappingCode,
     bool? isUploaded,
+    bool? isInherited,
+    String? sourceWorkId,
   }) {
     return CharacterData(
       id: id,
@@ -1970,6 +2153,8 @@ class CharacterData {
       imageUrl: imageUrl ?? this.imageUrl,
       mappingCode: mappingCode ?? this.mappingCode,
       isUploaded: isUploaded ?? this.isUploaded,
+      isInherited: isInherited ?? this.isInherited,
+      sourceWorkId: sourceWorkId ?? this.sourceWorkId,
     );
   }
 
@@ -1981,6 +2166,8 @@ class CharacterData {
       'imageUrl': imageUrl,
       'mappingCode': mappingCode,
       'isUploaded': isUploaded,
+      'isInherited': isInherited,
+      'sourceWorkId': sourceWorkId,
     };
   }
 
@@ -1988,6 +2175,7 @@ class CharacterData {
     // ✅ 将空字符串转换为 null，避免问题
     final imageUrl = json['imageUrl'] as String?;
     final mappingCode = json['mappingCode'] as String?;
+    final sourceWorkId = json['sourceWorkId'] as String?;
     
     return CharacterData(
       id: json['id'] as String,
@@ -1996,6 +2184,8 @@ class CharacterData {
       imageUrl: (imageUrl == null || imageUrl.isEmpty) ? null : imageUrl,
       mappingCode: (mappingCode == null || mappingCode.isEmpty) ? null : mappingCode,
       isUploaded: json['isUploaded'] as bool? ?? false,
+      isInherited: json['isInherited'] as bool? ?? false,
+      sourceWorkId: (sourceWorkId == null || sourceWorkId.isEmpty) ? null : sourceWorkId,
     );
   }
 }

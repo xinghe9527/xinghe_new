@@ -16,6 +16,7 @@ import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/upload_queue_manager.dart';
 import '../../../services/api/base/api_config.dart';
+import 'widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
 
 /// 物品生成页面
 class ItemGenerationPage extends StatefulWidget {
@@ -43,6 +44,7 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> with WidgetsBin
   String _imageRatio = '16:9';  // ✅ 图片比例，默认 16:9
   List<ItemData> _items = [];
   bool _isInferring = false;
+  String _inferenceMode = 'preserve';  // ✅ 推理模式：'preserve' = 保留现有，'overwrite' = 覆盖全部
   final ApiRepository _apiRepository = ApiRepository();
   final Set<int> _generatingImages = {};
   final UploadQueueManager _uploadQueue = UploadQueueManager();
@@ -363,6 +365,97 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> with WidgetsBin
                           ),
                         ),
                         const SizedBox(width: 8),
+                        // 推理模式选择器
+                        PopupMenuButton<String>(
+                          offset: const Offset(0, 40),
+                          tooltip: '推理模式',
+                          color: const Color(0xFF2A2A2C),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: const BorderSide(color: Color(0xFF3A3A3C)),
+                          ),
+                          itemBuilder: (context) {
+                            return [
+                              PopupMenuItem<String>(
+                                value: 'preserve',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _inferenceMode == 'preserve' ? Icons.check : Icons.shield_outlined,
+                                      size: 16,
+                                      color: _inferenceMode == 'preserve' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '保留现有',
+                                      style: TextStyle(
+                                        color: _inferenceMode == 'preserve' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'overwrite',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _inferenceMode == 'overwrite' ? Icons.check : Icons.refresh,
+                                      size: 16,
+                                      color: _inferenceMode == 'overwrite' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '覆盖全部',
+                                      style: TextStyle(
+                                        color: _inferenceMode == 'overwrite' ? const Color(0xFF4A9EFF) : const Color(0xFF888888),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ];
+                          },
+                          onSelected: (value) {
+                            setState(() {
+                              _inferenceMode = value;
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: const Color(0xFF3A3A3C)),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _inferenceMode == 'preserve' ? Icons.shield_outlined : Icons.refresh,
+                                  size: 16,
+                                  color: const Color(0xFF888888),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _inferenceMode == 'preserve' ? '保留现有' : '覆盖全部',
+                                  style: const TextStyle(
+                                    color: Color(0xFF888888),
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(
+                                  Icons.arrow_drop_down,
+                                  size: 18,
+                                  color: Color(0xFF888888),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         OutlinedButton.icon(
                           onPressed: _isInferring ? null : _inferItems,
                           icon: _isInferring
@@ -528,13 +621,29 @@ class _ItemGenerationPageState extends State<ItemGenerationPage> with WidgetsBin
                               color: const Color(0xFF3A3A3C),
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: Text(
-                              item.name,
-                              style: const TextStyle(
-                                color: Color(0xFF888888),
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (item.isInherited)
+                                  const Padding(
+                                    padding: EdgeInsets.only(right: 6),
+                                    child: Icon(
+                                      Icons.folder_copy,
+                                      size: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                Text(
+                                  item.name,
+                                  style: TextStyle(
+                                    color: item.isInherited 
+                                        ? Colors.white  // ✅ 继承的资产：白色
+                                        : const Color(0xFF888888),  // 新创建的：灰色
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -848,28 +957,83 @@ ${widget.scriptContent}
         }
         
         if (itemList.isEmpty) {
-          // 如果所有解析都失败，将整个文本作为一个物品
-          print('⚠️ 所有格式解析失败，使用原始文本作为单个物品');
-          itemList.add(ItemData(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
-            name: '推理结果',
-            description: responseText,
-          ));
+          // 如果所有解析都失败
+          print('⚠️ 所有格式解析失败');
+          
+          // 在保留现有模式下，解析失败应该报错，而不是创建无用的"推理结果"
+          if (_inferenceMode == 'preserve') {
+            throw Exception('无法解析推理结果，请检查提示词设置或LLM返回格式');
+          } else {
+            // 覆盖全部模式下，将整个文本作为一个物品（向后兼容）
+            itemList.add(ItemData(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              name: '推理结果',
+              description: responseText,
+            ));
+          }
         }
         
-        if (mounted) {
-          setState(() {
-            _items = itemList;
-          });
-          await _saveItemData();
+        // ✅ 根据推理模式处理物品列表
+        if (_inferenceMode == 'preserve') {
+          // 保留现有模式：只添加不存在的物品
+          final existingNames = _items.map((i) => i.name).toSet();
+          final newItems = itemList.where((i) => !existingNames.contains(i.name)).toList();
+          
+          print('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('🔍 推理模式: 保留现有');
+          print('📊 现有物品: ${_items.length} 个');
+          print('📊 推理物品: ${itemList.length} 个');
+          print('📊 新增物品: ${newItems.length} 个');
+          
+          if (newItems.isNotEmpty) {
+            print('✅ 新增物品列表:');
+            for (final item in newItems) {
+              print('   - ${item.name}');
+            }
+          } else {
+            print('⚠️ 没有新物品需要添加');
+          }
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
           
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('✅ 推理完成，识别到 ${itemList.length} 个物品'),
-                backgroundColor: Colors.green,
-              ),
-            );
+            setState(() {
+              _items.addAll(newItems);
+            });
+            await _saveItemData();
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(newItems.isEmpty 
+                    ? '✅ 推理完成，没有新物品需要添加' 
+                    : '✅ 推理完成，新增 ${newItems.length} 个物品'),
+                  backgroundColor: newItems.isEmpty ? const Color(0xFF888888) : Colors.green,
+                ),
+              );
+            }
+          }
+        } else {
+          // 覆盖全部模式：替换所有物品
+          print('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('🔄 推理模式: 覆盖全部');
+          print('📊 原有物品: ${_items.length} 个');
+          print('📊 新物品: ${itemList.length} 个');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          
+          if (mounted) {
+            setState(() {
+              _items = itemList;
+            });
+            await _saveItemData();
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ 推理完成，识别到 ${itemList.length} 个物品'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
           }
         }
       } else {
@@ -1644,11 +1808,48 @@ ${widget.scriptContent}
   }
 
   Widget _buildImageWidget(String imageUrl) {
+    // ✅ 如果是网络图片，直接返回
     if (imageUrl.startsWith('http')) {
-      return Image.network(imageUrl, fit: BoxFit.cover);
-    } else {
-      return Image.file(File(imageUrl), fit: BoxFit.cover);
+      return Image.network(
+        imageUrl, 
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const Center(
+            child: Icon(Icons.broken_image, color: Color(0xFF888888)),
+          );
+        },
+      );
     }
+    
+    // ✅ 本地文件：先检查文件是否存在
+    final file = File(imageUrl);
+    final imageWidget = Image.file(
+      file, 
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return const Center(
+          child: Icon(Icons.broken_image, color: Color(0xFF888888)),
+        );
+      },
+    );
+    
+    // ✅ 如果文件存在，添加拖动功能
+    if (file.existsSync()) {
+      try {
+        return DraggableMediaItem(
+          filePath: imageUrl,
+          dragPreviewText: path.basename(imageUrl),
+          coverUrl: imageUrl,
+          child: imageWidget,
+        );
+      } catch (e) {
+        debugPrint('⚠️ 创建拖动组件失败: $e');
+        return imageWidget;
+      }
+    }
+    
+    // ✅ 文件不存在，直接返回图片组件（会显示错误图标）
+    return imageWidget;
   }
 }
 
@@ -1659,6 +1860,8 @@ class ItemData {
   final String? imageUrl;
   final String? mappingCode;
   final bool isUploaded;
+  final bool isInherited;      // ✅ 是否继承自其他作品
+  final String? sourceWorkId;  // ✅ 来源作品ID
 
   ItemData({
     required this.id,
@@ -1667,9 +1870,19 @@ class ItemData {
     this.imageUrl,
     this.mappingCode,
     this.isUploaded = false,
+    this.isInherited = false,
+    this.sourceWorkId,
   });
 
-  ItemData copyWith({String? name, String? description, String? imageUrl, String? mappingCode, bool? isUploaded}) {
+  ItemData copyWith({
+    String? name, 
+    String? description, 
+    String? imageUrl, 
+    String? mappingCode, 
+    bool? isUploaded,
+    bool? isInherited,
+    String? sourceWorkId,
+  }) {
     return ItemData(
       id: id,
       name: name ?? this.name,
@@ -1677,6 +1890,8 @@ class ItemData {
       imageUrl: imageUrl ?? this.imageUrl,
       mappingCode: mappingCode ?? this.mappingCode,
       isUploaded: isUploaded ?? this.isUploaded,
+      isInherited: isInherited ?? this.isInherited,
+      sourceWorkId: sourceWorkId ?? this.sourceWorkId,
     );
   }
 
@@ -1687,9 +1902,12 @@ class ItemData {
         'imageUrl': imageUrl,
         'mappingCode': mappingCode,
         'isUploaded': isUploaded,
+        'isInherited': isInherited,
+        'sourceWorkId': sourceWorkId,
       };
 
   factory ItemData.fromJson(Map<String, dynamic> json) {
+    final sourceWorkId = json['sourceWorkId'] as String?;
     return ItemData(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -1697,6 +1915,8 @@ class ItemData {
       imageUrl: json['imageUrl'] as String?,
       mappingCode: json['mappingCode'] as String?,
       isUploaded: json['isUploaded'] as bool? ?? false,
+      isInherited: json['isInherited'] as bool? ?? false,
+      sourceWorkId: (sourceWorkId == null || sourceWorkId.isEmpty) ? null : sourceWorkId,
     );
   }
 }

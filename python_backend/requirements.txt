@@ -1,0 +1,9 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+onnxruntime-gpu==1.19.2
+# 如果没有 GPU，使用: onnxruntime==1.19.2
+opencv-python-headless==4.10.0.84  # 无 GUI 版本，体积更小
+numpy==1.26.4
+pillow==10.4.0
+python-multipart==0.0.12
+# torch==2.5.1  # 已移除：不需要用于推理

@@ -108,6 +108,8 @@ class DraggableMediaItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Stack(
+      clipBehavior: Clip.none,  // ✅ 允许子组件超出边界
+      fit: StackFit.passthrough,  // ✅ Stack 大小由 child 决定，不受 Positioned 影响
       children: [
         // 原始内容（不被拖动包裹，保持原有交互）
         child,

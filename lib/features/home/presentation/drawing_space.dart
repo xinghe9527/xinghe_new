@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
 import 'dart:convert';
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
 
 /// GeekNow 图片模型列表（与设置界面保持一致）
 class GeekNowImageModels {
@@ -970,7 +971,12 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   // 构建单个图片项（处理占位符、真实图片、失败状态）
   Widget _buildImageItem(String imageUrl) {
-    return Stack(
+    // 检查是否是真实的本地文件（可以拖动）
+    final imageFile = File(imageUrl);
+    final isLocalFile = imageFile.existsSync();
+    final canDrag = isLocalFile && !imageUrl.startsWith('loading_') && !imageUrl.startsWith('failed_');
+    
+    Widget imageWidget = Stack(
       fit: StackFit.expand,  // ✅ Stack 填充满整个区域
       children: [
         // 图片内容（填充满）
@@ -999,6 +1005,18 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         ),
       ],
     );
+    
+    // ✅ 如果是本地文件，添加拖动功能
+    if (canDrag) {
+      return DraggableMediaItem(
+        filePath: imageUrl,
+        dragPreviewText: path.basename(imageUrl),
+        coverUrl: imageUrl,  // 使用图片本身作为拖动预览
+        child: imageWidget,
+      );
+    }
+    
+    return imageWidget;
   }
 
   Widget _buildImageContent(String imageUrl) {

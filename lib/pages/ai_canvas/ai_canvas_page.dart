@@ -21,6 +21,7 @@ import 'package:path/path.dart' as path;
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
 
 /// GeekNow 图片模型列表（与设置界面保持一致）
 class GeekNowImageModels {
@@ -2763,7 +2764,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     // 检查是否是直接显示的图片
     final displayImagePath = node.data['displayImagePath'];
     if (displayImagePath != null && displayImagePath is String) {
-      return ClipRRect(
+      final imageWidget = ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Image.file(
           File(displayImagePath),
@@ -2801,6 +2802,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           },
         ),
       );
+      
+      // ✅ 添加拖动功能
+      return DraggableMediaItem(
+        filePath: displayImagePath,
+        dragPreviewText: path.basename(displayImagePath),
+        coverUrl: displayImagePath,
+        child: imageWidget,
+      );
     }
     
     // 优先显示生成的图片，而不是参考图片
@@ -2808,7 +2817,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     
     if (generatedImagePath != null && generatedImagePath is String) {
       // 显示API生成的图片
-      return ClipRRect(
+      final imageWidget = ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Image.file(
           File(generatedImagePath),
@@ -2848,6 +2857,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 : child;
           },
         ),
+      );
+      
+      // ✅ 添加拖动功能
+      return DraggableMediaItem(
+        filePath: generatedImagePath,
+        dragPreviewText: path.basename(generatedImagePath),
+        coverUrl: generatedImagePath,
+        child: imageWidget,
       );
     }
     

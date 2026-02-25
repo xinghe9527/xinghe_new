@@ -1197,38 +1197,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                 onSecondaryTapDown: hasImage ? (details) => _showImageContextMenu(
                   context, details, imageUrl!, index, gridIndex,
                 ) : null,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A1C),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: isSelected ? const Color(0xFF888888) : const Color(0xFF3A3A3C),
-                      width: isSelected ? 2 : 1,
-                    ),
-                  ),
-                  child: hasImage
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: imageUrl!.startsWith('http')
-                              ? Image.network(
-                                  imageUrl,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
-                                )
-                              : Image.file(
-                                  File(imageUrl),
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
-                                ),
-                        )
-                      : Center(
-                          child: Icon(
-                            Icons.image_outlined,
-                            size: 24,
-                            color: Colors.white.withOpacity( 0.1),
-                          ),
-                        ),
-                ),
+                child: _buildImageGridItem(hasImage, imageUrl, isSelected, gridIndex),
               );
             },
           ),
@@ -1744,6 +1713,57 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         );
       }
     }
+  }
+
+  /// 构建图片网格项（支持拖动）
+  Widget _buildImageGridItem(bool hasImage, String? imageUrl, bool isSelected, int gridIndex) {
+    final imageWidget = Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1C),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: isSelected ? const Color(0xFF888888) : const Color(0xFF3A3A3C),
+          width: isSelected ? 2 : 1,
+        ),
+      ),
+      child: hasImage
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: imageUrl!.startsWith('http')
+                  ? Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
+                    )
+                  : Image.file(
+                      File(imageUrl),
+                      fit: BoxFit.cover,
+                      errorBuilder: (c, e, s) => const Icon(Icons.error, color: Color(0xFF666666)),
+                    ),
+            )
+          : Center(
+              child: Icon(
+                Icons.image_outlined,
+                size: 24,
+                color: Colors.white.withOpacity(0.1),
+              ),
+            ),
+    );
+    
+    // ✅ 如果是本地图片文件，添加拖动功能
+    if (hasImage && imageUrl != null && !imageUrl.startsWith('http')) {
+      final file = File(imageUrl);
+      if (file.existsSync()) {
+        return DraggableMediaItem(
+          filePath: imageUrl,
+          dragPreviewText: path.basename(imageUrl),
+          coverUrl: imageUrl,
+          child: imageWidget,
+        );
+      }
+    }
+    
+    return imageWidget;
   }
 
   /// 构建视频网格项（支持拖动和原位播放）
