@@ -1982,7 +1982,7 @@ ${widget.scriptContent}
       // 删除本地文件（如果是本地路径且不为空）
       if (imageUrl.isNotEmpty && !imageUrl.startsWith('http')) {
         try {
-          final file = File(imageUrl);
+          final file = File(imageUrl);  // ✅ 创建File对象
           if (await file.exists()) {
             await file.delete();
             debugPrint('✅ 已删除本地文件: $imageUrl');

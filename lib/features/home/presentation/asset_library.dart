@@ -453,27 +453,111 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
         dialogTitle: '选择素材图片',
       );
 
-      if (result != null) {
-        setState(() {
-          final currentStyle = _stylesByCategory[_selectedCategoryIndex]![_selectedStyleIndex];
-          for (var file in result.files) {
-            if (file.path != null) {
-              currentStyle.assets.add(
-                AssetItem(
-                  path: file.path!,
-                  name: file.name,
-                  isUploaded: false,
-                ),
-              );
-            }
-          }
-        });
-        _saveAssets();  // 保存数据
-        _showMessage('成功添加 ${result.files.length} 个素材', isError: false);
+      if (result != null && result.files.isNotEmpty) {
+        // 逐个弹出命名对话框
+        final List<AssetItem> newAssets = [];
+        for (var file in result.files) {
+          if (file.path == null) continue;
+          
+          // 弹出命名对话框，默认名称为文件名（去掉扩展名）
+          final defaultName = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+          final customName = await _showAssetNameDialog(defaultName, file.path!);
+          
+          if (customName == null) continue;  // 用户取消
+          
+          newAssets.add(AssetItem(
+            path: file.path!,
+            name: customName.isEmpty ? file.name : customName,
+            isUploaded: false,
+          ));
+        }
+        
+        if (newAssets.isNotEmpty) {
+          setState(() {
+            final currentStyle = _stylesByCategory[_selectedCategoryIndex]![_selectedStyleIndex];
+            currentStyle.assets.addAll(newAssets);
+          });
+          _saveAssets();
+          _showMessage('成功添加 ${newAssets.length} 个素材', isError: false);
+        }
       }
     } catch (e) {
       _showMessage('添加素材失败: $e', isError: true);
     }
+  }
+
+  /// 弹出素材命名对话框
+  Future<String?> _showAssetNameDialog(String defaultName, String imagePath) async {
+    final controller = TextEditingController(text: defaultName);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceBackground,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text('素材命名', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 预览图
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(
+                File(imagePath),
+                width: 120,
+                height: 120,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '输入素材名称（如角色名"朵莉亚"）\n用于 Vidu 主体库自动匹配',
+              style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: '素材名称',
+                hintStyle: TextStyle(color: AppTheme.subTextColor),
+                filled: true,
+                fillColor: AppTheme.inputBackground,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppTheme.dividerColor),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppTheme.dividerColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Color(0xFF667EEA)),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              onSubmitted: (_) => Navigator.pop(ctx, controller.text.trim()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: Text('跳过', style: TextStyle(color: AppTheme.subTextColor)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF667EEA),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('确定', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   // ============ 语音库操作方法 ============
@@ -635,10 +719,10 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
           final isLandscape = width > height;  // 横屏图片
           
           if (isLandscape) {
-            // 横屏图片：上下留白，左右填充
+            // 横屏图片：居中显示，宽度填充
             return Container(
               color: AppTheme.inputBackground,
-              padding: const EdgeInsets.only(top: 40),  // 上方留白40像素
+              alignment: Alignment.center,
               child: Image.file(
                 File(imagePath),
                 width: double.infinity,
@@ -652,11 +736,12 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
               ),
             );
           } else {
-            // 竖屏图片：保持原样，填充显示
+            // 竖屏图片：占满卡片，裁剪多余部分
             return Image.file(
               File(imagePath),
               width: double.infinity,
-              fit: BoxFit.cover,  // 填充显示
+              height: double.infinity,
+              fit: BoxFit.cover,  // 占满显示
               alignment: Alignment.center,
               errorBuilder: (context, error, stackTrace) {
                 return Container(
@@ -1365,183 +1450,184 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
     );
   }
 
-  // 素材卡片
+  // 素材卡片（图片占满，底部标签半透明叠加）
   Widget _buildAssetCard(AssetItem asset, int index) {
-    // ✅ 调试：打印素材信息
-    if (asset.name == '下载.jpg') {
-      debugPrint('📦 [素材卡片] 构建素材: ${asset.name}');
-      debugPrint('   - characterInfo: ${asset.characterInfo}');
-      debugPrint('   - isUploaded: ${asset.isUploaded}');
-      debugPrint('   - 是否显示映射代码: ${asset.characterInfo != null}');
-    }
-    
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surfaceBackground,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.dividerColor),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 图片预览
-          Expanded(
-            child: Stack(
-              children: [
-                MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: () => _showImagePreview(context, asset.path),
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                      child: _buildSmartImage(asset.path),  // 使用智能图片显示
-                    ),
-                  ),
-                ),
-                // 已上传标识
-                if (asset.isUploaded)
-                  Positioned(
-                    top: 8,
-                    left: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2AF598),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        children: const [
-                          Icon(Icons.check, color: Colors.white, size: 12),
-                          SizedBox(width: 4),
-                          Text('已上传', style: TextStyle(color: Colors.white, fontSize: 10)),
-                        ],
-                      ),
-                    ),
-                  ),
-                // 删除按钮
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () => _deleteAsset(index),
-                      child: Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.close, color: Colors.white, size: 16),  // 改为 ❌ 图标
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // 图片占满整个卡片
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => _showImagePreview(context, asset.path),
+                child: _buildSmartImage(asset.path),
+              ),
             ),
-          ),
-          
-          // 信息和操作区
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 文件名/角色信息
-                if (asset.characterInfo != null)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          asset.characterInfo!,
-                          style: TextStyle(
-                            color: AppTheme.accentColor,
-                            fontSize: 10,  // 字体改小
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      // 复制按钮
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: () async {
-                            await Clipboard.setData(ClipboardData(text: asset.characterInfo!));
-                            _showMessage('已复制: ${asset.characterInfo}', isError: false);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: AppTheme.accentColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(4),
+            
+            // 已上传标识
+            if (asset.isUploaded)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2AF598),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.check, color: Colors.white, size: 12),
+                      SizedBox(width: 4),
+                      Text('已上传', style: TextStyle(color: Colors.white, fontSize: 10)),
+                    ],
+                  ),
+                ),
+              ),
+            
+            // 删除按钮
+            Positioned(
+              top: 8,
+              right: 8,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () => _deleteAsset(index),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, color: Colors.white, size: 16),
+                  ),
+                ),
+              ),
+            ),
+            
+            // 底部半透明信息叠加层
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black.withOpacity(0.7),
+                      Colors.black.withOpacity(0.0),
+                    ],
+                  ),
+                ),
+                padding: const EdgeInsets.fromLTRB(10, 20, 10, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 文件名/角色信息
+                    if (asset.characterInfo != null)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              asset.characterInfo!,
+                              style: const TextStyle(
+                                color: Color(0xFF2AF598),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            child: Icon(
-                              Icons.copy,
-                              size: 12,
-                              color: AppTheme.accentColor,
+                          ),
+                          const SizedBox(width: 4),
+                          MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: GestureDetector(
+                              onTap: () async {
+                                await Clipboard.setData(ClipboardData(text: asset.characterInfo!));
+                                _showMessage('已复制: ${asset.characterInfo}', isError: false);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Icon(Icons.copy, size: 12, color: Colors.white70),
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      Text(
+                        asset.isUploaded ? asset.uploadedId! : asset.name,
+                        style: const TextStyle(
+                          color: Color(0xFF2AF598),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    
+                    // 上传按钮
+                    if (!asset.isUploaded) ...[
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        child: MouseRegion(
+                          cursor: asset.isUploading ? SystemMouseCursors.wait : SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: asset.isUploading ? null : () => _uploadAsset(asset),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Center(
+                                child: asset.isUploading
+                                    ? SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
+                                        ),
+                                      )
+                                    : Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: const [
+                                          Icon(Icons.cloud_upload_outlined, color: Color(0xFF2AF598), size: 14),
+                                          SizedBox(width: 4),
+                                          Text('上传', style: TextStyle(color: Color(0xFF2AF598), fontSize: 11)),
+                                        ],
+                                      ),
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ],
-                  )
-                else
-                  Text(
-                    asset.isUploaded ? asset.uploadedId! : asset.name,
-                    style: TextStyle(
-                      color: AppTheme.textColor,
-                      fontSize: 10,  // 统一字体大小
-                      fontWeight: FontWeight.w500,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                const SizedBox(height: 8),
-                
-                // 上传按钮
-                if (!asset.isUploaded)
-                  SizedBox(
-                    width: double.infinity,
-                    child: MouseRegion(
-                      cursor: asset.isUploading ? SystemMouseCursors.wait : SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: asset.isUploading ? null : () => _uploadAsset(asset),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            color: AppTheme.textColor.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Center(
-                            child: asset.isUploading
-                                ? SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
-                                    ),
-                                  )
-                                : Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.cloud_upload_outlined, color: AppTheme.accentColor, size: 14),
-                                      const SizedBox(width: 4),
-                                      Text('上传', style: TextStyle(color: AppTheme.accentColor, fontSize: 11)),
-                                    ],
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+                  ],
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

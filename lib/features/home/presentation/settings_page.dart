@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'package:xinghe_new/pages/web_automation_test_page.dart';  // ✅ Python 通信测试页面
 
 class SettingsPage extends StatefulWidget {
   final VoidCallback onBack;
@@ -72,6 +73,15 @@ class _SettingsPageState extends State<SettingsPage> {
   String _uploadProvider = 'openai';
   final TextEditingController _uploadApiKeyController = TextEditingController();
   final TextEditingController _uploadBaseUrlController = TextEditingController();
+
+  // ✅ 网页服务商配置（图片）
+  String? _imageWebTool;  // 选择的工具类型（text2image, img2video等）
+  String? _imageWebModel;  // 选择的模型（Vidu Q3等）
+  
+  // ✅ 网页服务商配置（视频）
+  String? _videoWebTool;  // 选择的工具类型
+  String? _videoWebModel;  // 选择的模型
+  String? _videoWebMode;  // 选择的方式（即梦视频生成的自定义下拉：全能参考/首尾帧等）
 
   // 语音合成 配置
   bool _voiceEnabled = false;  // 是否启用语音合成
@@ -154,6 +164,110 @@ class _SettingsPageState extends State<SettingsPage> {
       // VEO3.1 系列（Google，最新）
       'veo3.1', 'veo3.1-fast', 'veo3.1-pro', 'veo3.1-components',
     ],
+  };
+
+  // ✅ Vidu 网页服务商配置
+  final Map<String, dynamic> _viduConfig = {
+    'tools': {
+      'image': [
+        {'id': 'text2image', 'name': '文生图片', 'icon': Icons.image},
+        {'id': 'ref2image', 'name': '参考生图', 'icon': Icons.collections},
+      ],
+      'video': [
+        {'id': 'text2video', 'name': '文生视频', 'icon': Icons.videocam},
+        {'id': 'img2video', 'name': '图生视频', 'icon': Icons.video_library},
+        {'id': 'ref2video', 'name': '参考生视频', 'icon': Icons.video_collection},
+      ],
+    },
+    'models': {
+      'text2video': [
+        {'id': 'vidu-q3', 'name': 'Vidu Q3', 'desc': '声画同步，多镜头直出'},
+        {'id': 'vidu-q2', 'name': 'Vidu Q2', 'desc': '动态鲜活，语义精准'},
+        {'id': 'vidu-q1', 'name': 'Vidu Q1', 'desc': '画面更清晰'},
+      ],
+      'img2video': [
+        {'id': 'vidu-q3', 'name': 'Vidu Q3', 'desc': '声画同步，多镜头直出'},
+        {'id': 'vidu-q2', 'name': 'Vidu Q2', 'desc': '动态鲜活，语义精准'},
+        {'id': 'vidu-q1', 'name': 'Vidu Q1', 'desc': '画面更清晰'},
+        {'id': 'vidu-2.0', 'name': 'Vidu 2.0', 'desc': '生成速度快'},
+      ],
+      'ref2video': [
+        {'id': 'vidu-q2-pro', 'name': 'Vidu Q2 Pro', 'desc': '支持视频参考与编辑'},
+        {'id': 'vidu-q2', 'name': 'Vidu Q2', 'desc': '动态鲜活，语义精准'},
+        {'id': 'vidu-q1', 'name': 'Vidu Q1', 'desc': '画面更清晰'},
+        {'id': 'vidu-2.0', 'name': 'Vidu 2.0', 'desc': '生成速度快'},
+      ],
+      'text2image': [
+        {'id': 'vidu-image-1', 'name': 'Vidu Image 1.0', 'desc': '标准图片生成'},
+      ],
+    },
+  };
+
+  // ✅ 其他网页服务商配置（预留）
+  final Map<String, dynamic> _jimengConfig = {
+    'tools': {
+      'video': [
+        {'id': 'image_gen', 'name': '图片生成', 'icon': Icons.image},
+        {'id': 'video_gen', 'name': '视频生成', 'icon': Icons.videocam},
+        {'id': 'agent', 'name': 'Agent 模式', 'icon': Icons.smart_toy},
+      ],
+    },
+    'models': {
+      'image_gen': [
+        {'id': 'jimeng-image-5.0-lite', 'name': '图片 5.0 Lite', 'desc': '轻量快速'},
+        {'id': 'jimeng-image-4.6', 'name': '图片 4.6', 'desc': '人像、数码摄影'},
+        {'id': 'jimeng-image-4.5', 'name': '图片 4.5', 'desc': '强化一致性'},
+        {'id': 'jimeng-image-4.1', 'name': '图片 4.1', 'desc': '多元创意，美学标杆'},
+        {'id': 'jimeng-image-4.0', 'name': '图片 4.0', 'desc': '多参考图，系列图生成'},
+        {'id': 'jimeng-image-3.1', 'name': '图片 3.1', 'desc': '丰富多样性'},
+        {'id': 'jimeng-image-3.0', 'name': '图片 3.0', 'desc': '基础模型'},
+      ],
+      'video_gen': [
+        {'id': 'seedance-2.0-fast', 'name': 'Seedance 2.0 Fast', 'desc': '快速版'},
+        {'id': 'seedance-2.0', 'name': 'Seedance 2.0', 'desc': '旗舰模型'},
+        {'id': 'jimeng-video-3.5-pro', 'name': '视频 3.5 Pro', 'desc': '全新升级'},
+        {'id': 'jimeng-video-3.0-pro', 'name': '视频 3.0 Pro', 'desc': '高质量'},
+        {'id': 'jimeng-video-3.0-fast', 'name': '视频 3.0 Fast', 'desc': '快速版'},
+        {'id': 'jimeng-video-3.0', 'name': '视频 3.0', 'desc': '基础模型'},
+      ],
+      'agent': [
+        {'id': 'seedance-2.0-agent', 'name': 'Seedance 2.0 全能参考', 'desc': '最强模型'},
+      ],
+    },
+    'modes': {
+      'video_gen': [
+        {'id': 'all_ref', 'name': '全能参考', 'desc': '上传参考图，自由组合'},
+        {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
+        {'id': 'smart_multi_frame', 'name': '智能多帧', 'desc': '多帧智能生成'},
+        {'id': 'subject_ref', 'name': '主体参考', 'desc': '保持主体一致'},
+      ],
+    },
+  };
+
+  final Map<String, dynamic> _kelingConfig = {
+    'tools': {
+      'video': [
+        {'id': 'text2video', 'name': '文生视频', 'icon': Icons.videocam},
+      ],
+    },
+    'models': {
+      'text2video': [
+        {'id': 'keling-pro', 'name': '可灵 Pro', 'desc': '专业模型'},
+      ],
+    },
+  };
+
+  final Map<String, dynamic> _hailuoConfig = {
+    'tools': {
+      'video': [
+        {'id': 'text2video', 'name': '文生视频', 'icon': Icons.videocam},
+      ],
+    },
+    'models': {
+      'text2video': [
+        {'id': 'hailuo-v1', 'name': '海螺 V1', 'desc': '标准模型'},
+      ],
+    },
   };
 
   final List<Map<String, dynamic>> _styleOptions = [
@@ -320,12 +434,18 @@ class _SettingsPageState extends State<SettingsPage> {
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
       final model = await _storage.getModel(provider: provider, modelType: 'image');
 
+      // ✅ 加载网页服务商配置
+      final webTool = prefs.getString('image_web_tool');
+      final webModel = prefs.getString('image_web_model');
+
       if (mounted) {
         setState(() {
           _imageProvider = provider;
           _imageApiKeyController.text = apiKey ?? '';
           _imageBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
           _imageModelController.text = model ?? '';
+          _imageWebTool = webTool;
+          _imageWebModel = webModel;
         });
       }
     } catch (e) {
@@ -341,12 +461,18 @@ class _SettingsPageState extends State<SettingsPage> {
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
       final model = await _storage.getModel(provider: provider, modelType: 'video');
 
+      // ✅ 加载网页服务商配置
+      final webTool = prefs.getString('video_web_tool');
+      final webModel = prefs.getString('video_web_model');
+
       if (mounted) {
         setState(() {
           _videoProvider = provider;
           _videoApiKeyController.text = apiKey ?? '';
           _videoBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
           _videoModelController.text = model ?? '';
+          _videoWebTool = webTool;
+          _videoWebModel = webModel;
         });
       }
     } catch (e) {
@@ -483,14 +609,28 @@ class _SettingsPageState extends State<SettingsPage> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('image_provider', _imageProvider);
       
-      if (_imageApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _imageProvider, apiKey: _imageApiKeyController.text, modelType: 'image');
-      }
-      if (_imageBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _imageProvider, baseUrl: _imageBaseUrlController.text, modelType: 'image');
-      }
-      if (_imageModelController.text.isNotEmpty) {
-        await _storage.saveModel(provider: _imageProvider, modelType: 'image', model: _imageModelController.text);
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_imageProvider);
+      
+      if (isWebProvider) {
+        // 保存网页服务商配置
+        if (_imageWebTool != null) {
+          await prefs.setString('image_web_tool', _imageWebTool!);
+        }
+        if (_imageWebModel != null) {
+          await prefs.setString('image_web_model', _imageWebModel!);
+        }
+      } else {
+        // 保存 API 服务商配置
+        if (_imageApiKeyController.text.isNotEmpty) {
+          await _storage.saveApiKey(provider: _imageProvider, apiKey: _imageApiKeyController.text, modelType: 'image');
+        }
+        if (_imageBaseUrlController.text.isNotEmpty) {
+          await _storage.saveBaseUrl(provider: _imageProvider, baseUrl: _imageBaseUrlController.text, modelType: 'image');
+        }
+        if (_imageModelController.text.isNotEmpty) {
+          await _storage.saveModel(provider: _imageProvider, modelType: 'image', model: _imageModelController.text);
+        }
       }
 
       _logger.success('保存图片API配置成功', module: '设置', extra: {'provider': _imageProvider});
@@ -506,14 +646,28 @@ class _SettingsPageState extends State<SettingsPage> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('video_provider', _videoProvider);
       
-      if (_videoApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _videoProvider, apiKey: _videoApiKeyController.text, modelType: 'video');
-      }
-      if (_videoBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _videoProvider, baseUrl: _videoBaseUrlController.text, modelType: 'video');
-      }
-      if (_videoModelController.text.isNotEmpty) {
-        await _storage.saveModel(provider: _videoProvider, modelType: 'video', model: _videoModelController.text);
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_videoProvider);
+      
+      if (isWebProvider) {
+        // 保存网页服务商配置
+        if (_videoWebTool != null) {
+          await prefs.setString('video_web_tool', _videoWebTool!);
+        }
+        if (_videoWebModel != null) {
+          await prefs.setString('video_web_model', _videoWebModel!);
+        }
+      } else {
+        // 保存 API 服务商配置
+        if (_videoApiKeyController.text.isNotEmpty) {
+          await _storage.saveApiKey(provider: _videoProvider, apiKey: _videoApiKeyController.text, modelType: 'video');
+        }
+        if (_videoBaseUrlController.text.isNotEmpty) {
+          await _storage.saveBaseUrl(provider: _videoProvider, baseUrl: _videoBaseUrlController.text, modelType: 'video');
+        }
+        if (_videoModelController.text.isNotEmpty) {
+          await _storage.saveModel(provider: _videoProvider, modelType: 'video', model: _videoModelController.text);
+        }
       }
 
       _logger.success('保存视频API配置成功', module: '设置', extra: {'provider': _videoProvider});
@@ -1300,6 +1454,89 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
           ),
+          
+          // ✅ 临时测试按钮 - Python 通信测试（测试通过后可删除）
+          const SizedBox(height: 40),
+          Divider(color: AppTheme.dividerColor, thickness: 1),
+          const SizedBox(height: 40),
+          _buildPythonTestSection(),
+        ],
+      ),
+    );
+  }
+  
+  /// ✅ Python 通信测试区域（临时）
+  Widget _buildPythonTestSection() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.science, color: Colors.orange, size: 24),
+              const SizedBox(width: 12),
+              Text(
+                '🧪 开发测试区域',
+                style: TextStyle(
+                  color: AppTheme.textColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '测试 Flutter 与 Python 脚本的通信功能（网页服务商功能的基础）',
+            style: TextStyle(
+              color: AppTheme.subTextColor,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 20),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const WebAutomationTestPage(),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  gradient: LinearGradient(
+                    colors: [Colors.orange, Colors.deepOrange],
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.play_arrow, color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      '打开 Python 通信测试页面',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1663,6 +1900,9 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildImageForm() {
+    // ✅ 判断是否为网页服务商
+    final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_imageProvider);
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1671,80 +1911,110 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildProviderDropdown(
           value: _imageProvider,
           onChanged: (v) {
-            setState(() => _imageProvider = v);
-            _imageBaseUrlController.text = _getDefaultBaseUrl(v);
-            _saveImageConfig();
+            setState(() {
+              _imageProvider = v;
+              // 切换服务商时重置配置
+              if (['vidu', 'jimeng', 'keling', 'hailuo'].contains(v)) {
+                _imageWebTool = null;
+                _imageWebModel = null;
+              } else {
+                _imageBaseUrlController.text = _getDefaultBaseUrl(v);
+              }
+            });
           },
+          modelType: 'image',  // ✅ 传递模型类型
         ),
         
         const SizedBox(height: 30),
-        _buildFieldLabel('API Key'),
-        const SizedBox(height: 10),
-        _buildEditableTextField(
-          _imageApiKeyController, 
-          '请输入您的 API 密钥...', 
-          isPassword: true,
-          isVisible: _imageApiKeyVisible,
-          onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
-          onCopy: () async {
-            await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
-            _showMessage('API Key 已复制', isError: false);
-          },
-          onSave: () => _debouncedSave(_saveImageConfig), // ✅ 自动保存（带防抖）
-        ),
         
-        const SizedBox(height: 30),
-        _buildFieldLabel('Base URL (API 地址)'),
-        const SizedBox(height: 10),
-        _buildEditableTextField(
-          _imageBaseUrlController, 
-          'https://api.openai.com/v1',
-          onSave: () => _debouncedSave(_saveImageConfig), // ✅ 自动保存（带防抖）
-        ),
-        
-        const SizedBox(height: 30),
-        _buildFieldLabel('选择推理模型'),
-        const SizedBox(height: 10),
-        _buildModelSelector(
-          provider: _imageProvider,
-          modelType: 'image',
-          controller: _imageModelController,
-          hint: '例如: dall-e-3',
-        ),
-        
-        // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
-        if (_imageProvider == 'comfyui') ...[
-          const SizedBox(height: 30),
-          _buildFieldLabel('ComfyUI 工作流'),
-          const SizedBox(height: 10),
-          _buildWorkflowSelector(
-            type: 'image',
-            selectedWorkflow: _selectedImageWorkflow,
-            onChanged: (workflowId) async {
-              setState(() => _selectedImageWorkflow = workflowId);
-              
-              // 保存到 SharedPreferences
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setString('comfyui_selected_image_workflow', workflowId);
-              
-              _logger.success('选择图片工作流', module: '设置', extra: {'workflow': workflowId});
+        // ✅ 根据服务商类型显示不同的配置界面
+        if (isWebProvider) ...[
+          // 网页服务商配置界面
+          _buildWebProviderConfig(
+            provider: _imageProvider,
+            modelType: 'image',
+            selectedTool: _imageWebTool,
+            selectedModel: _imageWebModel,
+            onToolChanged: (tool) {
+              setState(() {
+                _imageWebTool = tool;
+                _imageWebModel = null;  // 切换工具时重置模型
+              });
             },
+            onModelChanged: (model) {
+              setState(() => _imageWebModel = model);
+            },
+          ),
+        ] else ...[
+          // API 服务商配置界面（原有逻辑）
+          _buildFieldLabel('API Key'),
+          const SizedBox(height: 10),
+          _buildEditableTextField(
+            _imageApiKeyController, 
+            '请输入您的 API 密钥...', 
+            isPassword: true,
+            isVisible: _imageApiKeyVisible,
+            onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
+            onCopy: () async {
+              await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
+              _showMessage('API Key 已复制', isError: false);
+            },
+            onSave: () => _debouncedSave(_saveImageConfig),
+          ),
+          
+          const SizedBox(height: 30),
+          _buildFieldLabel('Base URL (API 地址)'),
+          const SizedBox(height: 10),
+          _buildEditableTextField(
+            _imageBaseUrlController, 
+            'https://api.openai.com/v1',
+            onSave: () => _debouncedSave(_saveImageConfig),
+          ),
+          
+          const SizedBox(height: 30),
+          _buildFieldLabel('选择推理模型'),
+          const SizedBox(height: 10),
+          _buildModelSelector(
+            provider: _imageProvider,
+            modelType: 'image',
+            controller: _imageModelController,
+            hint: '例如: dall-e-3',
+          ),
+          
+          // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
+          if (_imageProvider == 'comfyui') ...[
+            const SizedBox(height: 30),
+            _buildFieldLabel('ComfyUI 工作流'),
+            const SizedBox(height: 10),
+            _buildWorkflowSelector(
+              type: 'image',
+              selectedWorkflow: _selectedImageWorkflow,
+              onChanged: (workflowId) async {
+                setState(() => _selectedImageWorkflow = workflowId);
+                
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('comfyui_selected_image_workflow', workflowId);
+                
+                _logger.success('选择图片工作流', module: '设置', extra: {'workflow': workflowId});
+              },
+            ),
+          ],
+          
+          const SizedBox(height: 40),
+          Row(
+            children: [
+              Expanded(child: _buildSaveButton(() => _saveImageConfig())),
+              const SizedBox(width: 12),
+              Expanded(child: _buildTestButton(() => _testImageConnection())),
+            ],
           ),
         ],
         
-        const SizedBox(height: 40),
-        // 测试和保存按钮
-        Row(
-          children: [
-            Expanded(child: _buildSaveButton(() => _saveImageConfig())),
-            const SizedBox(width: 12),
-            Expanded(child: _buildTestButton(() => _testImageConnection())),
-          ],
-        ),
-        
         const SizedBox(height: 20),
         Text(
-          '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          isWebProvider 
+            ? '* 提示：网页服务商通过浏览器自动化实现，无需 API Key。'
+            : '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
           style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
         ),
       ],
@@ -1752,6 +2022,9 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildVideoForm() {
+    // ✅ 判断是否为网页服务商
+    final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_videoProvider);
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1760,80 +2033,115 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildProviderDropdown(
           value: _videoProvider,
           onChanged: (v) {
-            setState(() => _videoProvider = v);
-            _videoBaseUrlController.text = _getDefaultBaseUrl(v);
-            _saveVideoConfig();
+            setState(() {
+              _videoProvider = v;
+              // 切换服务商时重置配置
+              if (['vidu', 'jimeng', 'keling', 'hailuo'].contains(v)) {
+                _videoWebTool = null;
+                _videoWebModel = null;
+              } else {
+                _videoBaseUrlController.text = _getDefaultBaseUrl(v);
+              }
+            });
           },
+          modelType: 'video',  // ✅ 传递模型类型
         ),
         
         const SizedBox(height: 30),
-        _buildFieldLabel('API Key'),
-        const SizedBox(height: 10),
-        _buildEditableTextField(
-          _videoApiKeyController, 
-          '请输入您的 API 密钥...', 
-          isPassword: true,
-          isVisible: _videoApiKeyVisible,
-          onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
-          onCopy: () async {
-            await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
-            _showMessage('API Key 已复制', isError: false);
-          },
-          onSave: () => _debouncedSave(_saveVideoConfig), // ✅ 自动保存（带防抖）
-        ),
         
-        const SizedBox(height: 30),
-        _buildFieldLabel('Base URL (API 地址)'),
-        const SizedBox(height: 10),
-        _buildEditableTextField(
-          _videoBaseUrlController, 
-          'https://api.openai.com/v1',
-          onSave: () => _debouncedSave(_saveVideoConfig), // ✅ 自动保存（带防抖）
-        ),
-        
-        const SizedBox(height: 30),
-        _buildFieldLabel('选择推理模型'),
-        const SizedBox(height: 10),
-        _buildModelSelector(
-          provider: _videoProvider,
-          modelType: 'video',
-          controller: _videoModelController,
-          hint: '例如: veo_3_1 或 sora-2',
-        ),
-        
-        // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
-        if (_videoProvider == 'comfyui') ...[
-          const SizedBox(height: 30),
-          _buildFieldLabel('ComfyUI 工作流'),
-          const SizedBox(height: 10),
-          _buildWorkflowSelector(
-            type: 'video',
-            selectedWorkflow: _selectedVideoWorkflow,
-            onChanged: (workflowId) async {
-              setState(() => _selectedVideoWorkflow = workflowId);
-              
-              // 保存到 SharedPreferences
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setString('comfyui_selected_video_workflow', workflowId);
-              
-              _logger.success('选择视频工作流', module: '设置', extra: {'workflow': workflowId});
+        // ✅ 根据服务商类型显示不同的配置界面
+        if (isWebProvider) ...[
+          // 网页服务商配置界面
+          _buildWebProviderConfig(
+            provider: _videoProvider,
+            modelType: 'video',
+            selectedTool: _videoWebTool,
+            selectedModel: _videoWebModel,
+            selectedMode: _videoWebMode,
+            onToolChanged: (tool) {
+              setState(() {
+                _videoWebTool = tool;
+                _videoWebModel = null;  // 切换工具时重置模型
+                _videoWebMode = null;   // 切换工具时重置方式
+              });
             },
+            onModelChanged: (model) {
+              setState(() => _videoWebModel = model);
+            },
+            onModeChanged: (mode) {
+              setState(() => _videoWebMode = mode);
+            },
+          ),
+        ] else ...[
+          // API 服务商配置界面（原有逻辑）
+          _buildFieldLabel('API Key'),
+          const SizedBox(height: 10),
+          _buildEditableTextField(
+            _videoApiKeyController, 
+            '请输入您的 API 密钥...', 
+            isPassword: true,
+            isVisible: _videoApiKeyVisible,
+            onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
+            onCopy: () async {
+              await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
+              _showMessage('API Key 已复制', isError: false);
+            },
+            onSave: () => _debouncedSave(_saveVideoConfig),
+          ),
+          
+          const SizedBox(height: 30),
+          _buildFieldLabel('Base URL (API 地址)'),
+          const SizedBox(height: 10),
+          _buildEditableTextField(
+            _videoBaseUrlController, 
+            'https://api.openai.com/v1',
+            onSave: () => _debouncedSave(_saveVideoConfig),
+          ),
+          
+          const SizedBox(height: 30),
+          _buildFieldLabel('选择推理模型'),
+          const SizedBox(height: 10),
+          _buildModelSelector(
+            provider: _videoProvider,
+            modelType: 'video',
+            controller: _videoModelController,
+            hint: '例如: veo_3_1 或 sora-2',
+          ),
+          
+          // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
+          if (_videoProvider == 'comfyui') ...[
+            const SizedBox(height: 30),
+            _buildFieldLabel('ComfyUI 工作流'),
+            const SizedBox(height: 10),
+            _buildWorkflowSelector(
+              type: 'video',
+              selectedWorkflow: _selectedVideoWorkflow,
+              onChanged: (workflowId) async {
+                setState(() => _selectedVideoWorkflow = workflowId);
+                
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('comfyui_selected_video_workflow', workflowId);
+                
+                _logger.success('选择视频工作流', module: '设置', extra: {'workflow': workflowId});
+              },
+            ),
+          ],
+          
+          const SizedBox(height: 40),
+          Row(
+            children: [
+              Expanded(child: _buildSaveButton(() => _saveVideoConfig())),
+              const SizedBox(width: 12),
+              Expanded(child: _buildTestButton(() => _testVideoConnection())),
+            ],
           ),
         ],
         
-        const SizedBox(height: 40),
-        // 测试和保存按钮
-        Row(
-          children: [
-            Expanded(child: _buildSaveButton(() => _saveVideoConfig())),
-            const SizedBox(width: 12),
-            Expanded(child: _buildTestButton(() => _testVideoConnection())),
-          ],
-        ),
-        
         const SizedBox(height: 20),
         Text(
-          '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          isWebProvider 
+            ? '* 提示：网页服务商通过浏览器自动化实现，无需 API Key。'
+            : '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
           style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
         ),
       ],
@@ -2173,8 +2481,14 @@ class _SettingsPageState extends State<SettingsPage> {
     if (modelType == 'llm') {
       // LLM 模型包含 DeepSeek 和阿里云
       providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun', 'azure', 'anthropic'];
+    } else if (modelType == 'image') {
+      // 图片模型：API服务商 + ComfyUI + 网页服务商
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic', 'vidu', 'jimeng', 'keling', 'hailuo'];
+    } else if (modelType == 'video') {
+      // 视频模型：API服务商 + ComfyUI + 网页服务商
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic', 'vidu', 'jimeng', 'keling', 'hailuo'];
     } else {
-      // 图片、视频、上传包含 ComfyUI
+      // 其他（上传等）：只有 API 服务商
       providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic'];
     }
     
@@ -2187,6 +2501,11 @@ class _SettingsPageState extends State<SettingsPage> {
       'comfyui': 'ComfyUI（本地）',  // ✅ ComfyUI
       'azure': 'Azure',
       'anthropic': 'Anthropic',
+      // ✅ 网页服务商
+      'vidu': 'Vidu（网页服务商）',
+      'jimeng': '即梦（网页服务商）',
+      'keling': '可灵（网页服务商）',
+      'hailuo': '海螺（网页服务商）',
     };
 
     return Container(
@@ -3123,6 +3442,436 @@ class _SettingsPageState extends State<SettingsPage> {
           title.contains('设置') ? title : '$title配置中心',
           style: TextStyle(color: AppTheme.textColor, fontSize: 20, fontWeight: FontWeight.bold),
         ),
+      ],
+    );
+  }
+
+  /// ✅ 网页服务商配置界面
+  Widget _buildWebProviderConfig({
+    required String provider,
+    required String modelType,
+    required String? selectedTool,
+    required String? selectedModel,
+    required Function(String) onToolChanged,
+    required Function(String) onModelChanged,
+    String? selectedMode,
+    Function(String)? onModeChanged,
+  }) {
+    // ✅ 网页服务商官网地址映射
+    final Map<String, String> providerUrls = {
+      'vidu': 'https://www.vidu.cn/home/recommend',
+      'jimeng': 'https://jimeng.jianying.com/ai-tool/home',
+      'keling': 'https://klingai.kuaishou.com',
+      'hailuo': 'https://hailuoai.com',
+    };
+    
+    // ✅ 网页服务商显示名称
+    final Map<String, String> providerDisplayNames = {
+      'vidu': 'Vidu - AI 视频创作',
+      'jimeng': '即梦AI - 一站式AI创作平台',
+      'keling': '可灵AI - 视频生成',
+      'hailuo': '海螺AI - 视频创作',
+    };
+    
+    final websiteUrl = providerUrls[provider];
+    final displayName = providerDisplayNames[provider];
+    
+    // 获取对应服务商的配置
+    Map<String, dynamic>? config;
+    switch (provider) {
+      case 'vidu':
+        config = _viduConfig;
+        break;
+      case 'jimeng':
+        config = _jimengConfig;
+        break;
+      case 'keling':
+        config = _kelingConfig;
+        break;
+      case 'hailuo':
+        config = _hailuoConfig;
+        break;
+    }
+
+    if (config == null) {
+      return Text(
+        '该服务商配置暂未实现',
+        style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
+      );
+    }
+
+    // 获取工具列表
+    final tools = (config['tools']?[modelType] as List<dynamic>?) ?? [];
+    
+    // 获取当前选择工具的模型列表
+    List<dynamic> models = [];
+    if (selectedTool != null) {
+      models = (config['models']?[selectedTool] as List<dynamic>?) ?? [];
+    }
+
+    // 获取当前选择工具的方式列表（如即梦视频生成的：全能参考/首尾帧/智能多帧/主体参考）
+    List<dynamic> modes = [];
+    if (selectedTool != null) {
+      modes = (config['modes']?[selectedTool] as List<dynamic>?) ?? [];
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ✅ 显示官网地址（可点击跳转）
+        if (websiteUrl != null) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppTheme.textColor.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.textColor.withOpacity(0.08)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.language_rounded,
+                  color: AppTheme.subTextColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '官网地址',
+                        style: TextStyle(
+                          color: AppTheme.subTextColor,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        displayName ?? websiteUrl,
+                        style: TextStyle(
+                          color: AppTheme.subTextColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () async {
+                      try {
+                        // 显示加载提示
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('正在打开浏览器...'),
+                              duration: Duration(seconds: 2),
+                              backgroundColor: Color(0xFF2AF598),
+                            ),
+                          );
+                        }
+                        
+                        // ✅ 直接启动系统 Edge/Chrome 浏览器
+                        // 使用独立 profile 目录，登录态自动保存
+                        final profileDir = 'python_backend\\user_data\\${provider}_cdp_profile';
+                        
+                        // CDP 端口映射（不同平台不同端口，避免冲突）
+                        final Map<String, String> portMap = {
+                          'jimeng': '9222',
+                          'vidu': '9223',
+                          'keling': '9224',
+                          'hailuo': '9225',
+                        };
+                        final cdpPort = portMap[provider] ?? '9222';
+                        
+                        // 检测系统浏览器路径（Edge 优先）
+                        String? browserExe;
+                        final edgePaths = [
+                          r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                          r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+                        ];
+                        final chromePaths = [
+                          r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                          r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                        ];
+                        
+                        for (final path in [...edgePaths, ...chromePaths]) {
+                          if (await File(path).exists()) {
+                            browserExe = path;
+                            break;
+                          }
+                        }
+                        
+                        if (browserExe == null) {
+                          throw Exception('未找到 Edge 或 Chrome 浏览器');
+                        }
+                        
+                        // 确保 profile 目录存在
+                        final profileDirObj = Directory(profileDir);
+                        if (!await profileDirObj.exists()) {
+                          await profileDirObj.create(recursive: true);
+                        }
+                        
+                        // 直接启动浏览器，带 CDP 端口和独立 profile
+                        await Process.start(
+                          browserExe,
+                          [
+                            '--remote-debugging-port=$cdpPort',
+                            '--user-data-dir=$profileDir',
+                            '--no-first-run',
+                            '--no-default-browser-check',
+                            websiteUrl,  // 直接打开目标网址
+                          ],
+                          mode: ProcessStartMode.detached,
+                        );
+                        
+                        print('✅ 浏览器已启动: $browserExe → $websiteUrl');
+                        
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('浏览器已打开，登录态会自动保存'),
+                              duration: Duration(seconds: 3),
+                              backgroundColor: Color(0xFF2AF598),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        print('❌ 打开浏览器失败: $e');
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('打开浏览器失败\n\n$e'),
+                              duration: const Duration(seconds: 5),
+                              backgroundColor: const Color(0xFFFF6B6B),
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF2AF598).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Text(
+                            '访问',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(width: 6),
+                          Icon(
+                            Icons.open_in_new_rounded,
+                            color: Colors.white,
+                            size: 15,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+        
+        // 工具选择
+        _buildFieldLabel('选择工具'),
+        const SizedBox(height: 6),
+        Text(
+          '选择要使用的生成工具类型',
+          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceBackground,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: tools.any((t) => t['id'] == selectedTool) ? selectedTool : null,
+              hint: Text('请选择工具', style: TextStyle(color: AppTheme.subTextColor)),
+              isExpanded: true,
+              dropdownColor: AppTheme.surfaceBackground,
+              icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+              items: tools.map<DropdownMenuItem<String>>((tool) {
+                return DropdownMenuItem<String>(
+                  value: tool['id'],
+                  child: Row(
+                    children: [
+                      Icon(tool['icon'] as IconData, size: 16, color: AppTheme.accentColor),
+                      const SizedBox(width: 12),
+                      Text(
+                        tool['name'],
+                        style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              onChanged: (v) {
+                if (v != null) {
+                  onToolChanged(v);
+                }
+              },
+            ),
+          ),
+        ),
+
+        // 模型选择（只在选择了工具后显示）
+        if (selectedTool != null && models.isNotEmpty) ...[
+          const SizedBox(height: 30),
+          _buildFieldLabel('选择模型'),
+          const SizedBox(height: 6),
+          Text(
+            '选择要使用的具体模型',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceBackground,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: models.any((m) => m['id'] == selectedModel) ? selectedModel : null,
+                hint: Text('请选择模型', style: TextStyle(color: AppTheme.subTextColor)),
+                isExpanded: true,
+                dropdownColor: AppTheme.surfaceBackground,
+                icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+                items: models.map<DropdownMenuItem<String>>((model) {
+                  return DropdownMenuItem<String>(
+                    value: model['id'],
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          model['name'],
+                          style: TextStyle(
+                            color: AppTheme.textColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (model['desc'] != null && model['desc'].toString().isNotEmpty)
+                          Text(
+                            model['desc'],
+                            style: TextStyle(
+                              color: AppTheme.subTextColor,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    onModelChanged(v);
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
+
+        // ✅ 方式选择（仅在有方式列表时显示，如即梦视频生成的自定义下拉）
+        if (selectedTool != null && modes.isNotEmpty) ...[
+          const SizedBox(height: 30),
+          _buildFieldLabel('选择方式'),
+          const SizedBox(height: 6),
+          Text(
+            '选择生成方式（对应即梦"自定义"下拉）',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceBackground,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: modes.any((m) => m['id'] == selectedMode) ? selectedMode : null,
+                hint: Text('请选择方式', style: TextStyle(color: AppTheme.subTextColor)),
+                isExpanded: true,
+                dropdownColor: AppTheme.surfaceBackground,
+                icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+                items: modes.map<DropdownMenuItem<String>>((mode) {
+                  return DropdownMenuItem<String>(
+                    value: mode['id'],
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          mode['name'],
+                          style: TextStyle(
+                            color: AppTheme.textColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (mode['desc'] != null && mode['desc'].toString().isNotEmpty)
+                          Text(
+                            mode['desc'],
+                            style: TextStyle(
+                              color: AppTheme.subTextColor,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (v) {
+                  if (v != null && onModeChanged != null) {
+                    onModeChanged(v);
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
+
+        // 保存按钮
+        const SizedBox(height: 40),
+        _buildSaveButton(() {
+          if (modelType == 'image') {
+            _saveImageConfig();
+          } else if (modelType == 'video') {
+            _saveVideoConfig();
+          }
+        }),
       ],
     );
   }

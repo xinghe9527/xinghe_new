@@ -7,6 +7,7 @@ class VideoTask {
   int batchCount;
   String seconds;  // 时长选择
   String prompt;
+  String characterName;  // 主体库角色名称（用于 ref2video）
   List<String> referenceImages;
   List<String> generatedVideos;
   TaskStatus status;
@@ -19,6 +20,7 @@ class VideoTask {
     this.batchCount = 1,
     this.seconds = '10秒',  // 默认10秒
     this.prompt = '',
+    this.characterName = '',
     List<String>? referenceImages,
     List<String>? generatedVideos,
     this.status = TaskStatus.idle,
@@ -42,6 +44,7 @@ class VideoTask {
       batchCount: json['batchCount'] as int? ?? 1,
       seconds: json['seconds'] as String? ?? '10秒',
       prompt: json['prompt'] as String? ?? '',
+      characterName: json['characterName'] as String? ?? '',
       referenceImages: (json['referenceImages'] as List<dynamic>?)
           ?.map((e) => e as String)
           .toList() ?? [],
@@ -62,6 +65,7 @@ class VideoTask {
       'batchCount': batchCount,
       'seconds': seconds,
       'prompt': prompt,
+      'characterName': characterName,
       'referenceImages': referenceImages,
       'generatedVideos': generatedVideos,
       'status': status.index,
@@ -75,6 +79,7 @@ class VideoTask {
     int? batchCount,
     String? seconds,
     String? prompt,
+    String? characterName,
     List<String>? referenceImages,
     List<String>? generatedVideos,
     TaskStatus? status,
@@ -87,6 +92,7 @@ class VideoTask {
       batchCount: batchCount ?? this.batchCount,
       seconds: seconds ?? this.seconds,
       prompt: prompt ?? this.prompt,
+      characterName: characterName ?? this.characterName,
       referenceImages: referenceImages ?? this.referenceImages,
       generatedVideos: generatedVideos ?? this.generatedVideos,
       status: status ?? this.status,

@@ -1,0 +1,967 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Vidu 自动化 API 服务器
+提供本地 HTTP 接口供 Flutter 调用
+
+功能：
+- 异步任务提交（不阻塞接口）
+- 浏览器窗口显隐控制
+- 任务状态查询
+- 长时间运行的后台服务
+
+启动方式：
+    python python_backend/web_automation/api_server.py
+    或
+    uvicorn api_server:app --host 127.0.0.1 --port 8123
+"""
+
+import sys
+import os
+import io
+import json
+import asyncio
+import subprocess
+from typing import Optional, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
+
+# Windows 窗口控制
+try:
+    import pygetwindow as gw
+    WINDOW_CONTROL_AVAILABLE = True
+except ImportError:
+    WINDOW_CONTROL_AVAILABLE = False
+    print("⚠️  警告: pygetwindow 未安装，窗口控制功能将不可用")
+
+# 确保标准输出使用 UTF-8 编码
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# ============================================================================
+# 配置
+# ============================================================================
+
+# 获取项目根目录的绝对路径
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+
+# Python 可执行文件路径
+PYTHON_EXECUTABLE = sys.executable  # 使用当前 Python 解释器
+
+# auto_vidu.py 脚本路径
+AUTO_VIDU_SCRIPT = os.path.join(SCRIPT_DIR, 'auto_vidu.py')
+AUTO_VIDU_COMPLETE_SCRIPT = os.path.join(SCRIPT_DIR, 'auto_vidu_complete.py')  # ✅ 完整版脚本
+AUTO_JIMENG_SCRIPT = os.path.join(SCRIPT_DIR, 'auto_jimeng.py')  # ✅ 即梦自动化脚本
+
+# ============================================================================
+# 数据模型
+# ============================================================================
+
+class TaskStatus(str, Enum):
+    """任务状态枚举"""
+    PENDING = "pending"      # 等待执行
+    RUNNING = "running"      # 执行中
+    SUCCESS = "success"      # 成功
+    FAILED = "failed"        # 失败
+    CANCELLED = "cancelled"  # 已取消
+
+
+class GenerateRequest(BaseModel):
+    """视频生成请求"""
+    prompt: str
+    platform: str = "vidu"  # 预留：支持多平台
+
+
+class TaskResponse(BaseModel):
+    """任务响应"""
+    task_id: str
+    status: TaskStatus
+    message: str
+    created_at: str
+    prompt: Optional[str] = None
+
+
+class TaskStatusResponse(BaseModel):
+    """任务状态响应"""
+    task_id: str
+    status: TaskStatus
+    message: str
+    created_at: str
+    updated_at: str
+    prompt: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class BrowserControlResponse(BaseModel):
+    """浏览器控制响应"""
+    success: bool
+    message: str
+    window_found: bool = False
+
+
+# ============================================================================
+# 全局状态管理
+# ============================================================================
+
+class TaskManager:
+    """任务管理器"""
+    
+    def __init__(self):
+        self.tasks: Dict[str, Dict[str, Any]] = {}
+        self.current_process: Optional[subprocess.Popen] = None
+        self.browser_window_title: Optional[str] = None
+        
+    def create_task(
+        self, 
+        task_id: str, 
+        prompt: str, 
+        platform: str = "vidu",
+        tool_type: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """创建新任务"""
+        task = {
+            "task_id": task_id,
+            "status": TaskStatus.PENDING,
+            "message": "任务已创建，等待执行",  # ✅ 添加 message 字段
+            "prompt": prompt,
+            "platform": platform,
+            "tool_type": tool_type,
+            "payload": payload,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "result": None,
+            "error": None,
+        }
+        self.tasks[task_id] = task
+        return task
+    
+    def update_task(self, task_id: str, **kwargs):
+        """更新任务状态"""
+        if task_id in self.tasks:
+            self.tasks[task_id].update(kwargs)
+            self.tasks[task_id]["updated_at"] = datetime.now().isoformat()
+    
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取任务信息"""
+        return self.tasks.get(task_id)
+    
+    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """获取所有任务"""
+        return self.tasks
+
+
+# 全局任务管理器实例
+task_manager = TaskManager()
+
+# ============================================================================
+# FastAPI 应用
+# ============================================================================
+
+app = FastAPI(
+    title="Vidu 自动化 API",
+    description="本地微服务，供 Flutter 调用 Vidu 自动化功能",
+    version="1.0.0",
+)
+
+# 添加 CORS 中间件（允许 Flutter 跨域访问）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产环境建议限制为具体域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# 后台任务执行
+# ============================================================================
+
+# Vidu 自动化单例（所有任务共享同一个浏览器）
+_vidu_auto_instance = None
+_vidu_auto_lock = None
+_vidu_poll_lock = None  # Vidu 轮询锁（因为没有 history_id，poll 必须串行）
+
+def _get_vidu_lock():
+    """延迟创建 Vidu 浏览器锁（保护 submit 阶段）"""
+    global _vidu_auto_lock
+    if _vidu_auto_lock is None:
+        _vidu_auto_lock = asyncio.Lock()
+    return _vidu_auto_lock
+
+def _get_vidu_poll_lock():
+    """延迟创建 Vidu 轮询锁（保护 poll 阶段，因为 Vidu 无法按任务 ID 区分结果）"""
+    global _vidu_poll_lock
+    if _vidu_poll_lock is None:
+        _vidu_poll_lock = asyncio.Lock()
+    return _vidu_poll_lock
+
+
+async def execute_vidu_automation(
+    task_id: str, 
+    prompt: str, 
+    save_path: Optional[str] = None,
+    aspect_ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
+    duration: Optional[str] = None,
+    tool_type: Optional[str] = 'text2video',
+    model: Optional[str] = None,
+    reference_file: Optional[str] = None,
+    character_name: Optional[str] = None,
+):
+    """
+    后台异步执行 Vidu 自动化（并发模式）
+    
+    锁只保护 UI 操作（提交生成），轮询结果不需要锁。
+    多个任务可以同时在后台等待生成结果。
+    """
+    try:
+        task_manager.update_task(task_id, status=TaskStatus.RUNNING)
+        
+        print(f"\n{'='*60}")
+        print(f"  🚀 开始执行 Vidu 任务: {task_id}")
+        print(f"  📝 提示词: {prompt}")
+        if save_path:
+            print(f"  📁 保存路径: {save_path}")
+        print(f"{'='*60}\n")
+        
+        if save_path is None:
+            downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+            os.makedirs(downloads_dir, exist_ok=True)
+            save_path = os.path.join(downloads_dir, f'{task_id}.mp4')
+        
+        import concurrent.futures
+        
+        # ============================================================
+        # 阶段1：提交生成（需要浏览器锁）
+        # ============================================================
+        lock = _get_vidu_lock()
+        print(f"   🔒 [{task_id}] 等待 Vidu 浏览器锁（提交阶段）...")
+        
+        async with lock:
+            print(f"   🔓 [{task_id}] 获取到 Vidu 浏览器锁")
+            
+            def _run_submit():
+                from auto_vidu_v2 import ViduAutomation
+                
+                global _vidu_auto_instance
+                
+                if _vidu_auto_instance is None or not _vidu_auto_instance._started:
+                    _vidu_auto_instance = ViduAutomation()
+                    if not _vidu_auto_instance.start():
+                        raise Exception("无法启动 Vidu 浏览器，请先登录")
+                
+                auto = _vidu_auto_instance
+                
+                if not auto.check_login():
+                    raise Exception("Vidu 未登录，请先运行: python open_browser_for_login.py vidu")
+                
+                # 只提交生成，不等待结果
+                submit_result = auto.submit_generate(
+                    prompt=prompt,
+                    tool_type=tool_type or 'text2video',
+                    model=model,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    duration=duration,
+                    reference_file=reference_file,
+                    character_name=character_name,
+                )
+                
+                return submit_result
+            
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                submit_result = await loop.run_in_executor(pool, _run_submit)
+        
+        print(f"   🔒 [{task_id}] Vidu 浏览器锁已释放（提交完成）")
+        
+        if not submit_result.get('success'):
+            error_message = submit_result.get('error', '提交失败')
+            task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
+            print(f"❌ Vidu 任务提交失败: {task_id}\n错误: {error_message}")
+            return
+        
+        task_key = submit_result.get('task_key', '')
+        initial_video_count = submit_result.get('initial_video_count', 0)
+        print(f"   ✅ [{task_id}] 提交成功，task_key={task_key}")
+        
+        # ============================================================
+        # 阶段2：轮询结果（Vidu 需要 poll 锁，因为无法按任务 ID 区分）
+        # 注意：即梦有 history_id 可以并行 poll，但 Vidu 只能靠 DOM 检测，
+        # 多个 poll 同时运行会互相干扰，所以 poll 也需要串行。
+        # 但 poll 锁和 submit 锁是分开的，submit 不会被 poll 阻塞。
+        # ============================================================
+        poll_lock = _get_vidu_poll_lock()
+        print(f"   ⏳ [{task_id}] 等待 Vidu 轮询锁...")
+        
+        async with poll_lock:
+            print(f"   🔓 [{task_id}] 获取到轮询锁，开始轮询结果...")
+            
+            def _run_poll():
+                global _vidu_auto_instance
+                auto = _vidu_auto_instance
+                if auto is None:
+                    raise Exception("Vidu 自动化实例丢失")
+                
+                result = auto.poll_result(
+                    task_key=task_key,
+                    initial_video_count=initial_video_count,
+                    max_wait=600,
+                    save_path=save_path,
+                )
+                return result
+            
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                result = await loop.run_in_executor(pool, _run_poll)
+        
+        print(f"   🔒 [{task_id}] Vidu 轮询锁已释放")
+        
+        if result.get('success'):
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.SUCCESS,
+                result={
+                    'success': True,
+                    'local_video_path': save_path,
+                    'video_url': result.get('video_url', ''),
+                    'task_key': result.get('task_key', ''),
+                    'message': 'Vidu 视频生成成功',
+                },
+                message="Vidu 视频生成成功",
+            )
+            print(f"✅ Vidu 任务成功: {task_id}")
+        else:
+            error_message = result.get('error', '未知错误')
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=error_message,
+            )
+            print(f"❌ Vidu 任务失败: {task_id}\n错误: {error_message}")
+    
+    except asyncio.CancelledError:
+        task_manager.update_task(task_id, status=TaskStatus.CANCELLED, error="任务被用户取消")
+        print(f"⚠️  Vidu 任务取消: {task_id}")
+    except Exception as e:
+        error_message = f"执行异常: {str(e)}"
+        task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
+        print(f"❌ Vidu 任务异常: {task_id}\n{error_message}")
+    finally:
+        task_manager.current_process = None
+
+
+# ============================================================================
+# 即梦自动化执行（常驻浏览器实例 + 任务队列）
+# ============================================================================
+
+# 即梦自动化单例（所有任务共享同一个浏览器连接）
+_jimeng_auto_instance = None
+_jimeng_auto_lock = asyncio.Lock() if 'asyncio' in dir() else None
+
+def _get_jimeng_lock():
+    """延迟创建锁（避免在模块加载时创建）"""
+    global _jimeng_auto_lock
+    if _jimeng_auto_lock is None:
+        _jimeng_auto_lock = asyncio.Lock()
+    return _jimeng_auto_lock
+
+async def _get_jimeng_auto():
+    """获取或创建即梦自动化实例（单例）"""
+    global _jimeng_auto_instance
+    
+    if _jimeng_auto_instance is not None and _jimeng_auto_instance._started:
+        return _jimeng_auto_instance
+    
+    # 在线程池中启动（Playwright 是同步的）
+    import concurrent.futures
+    
+    def _start_jimeng():
+        from auto_jimeng import JimengAutomation
+        auto = JimengAutomation()
+        if auto.start():
+            return auto
+        return None
+    
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        _jimeng_auto_instance = await loop.run_in_executor(pool, _start_jimeng)
+    
+    return _jimeng_auto_instance
+
+async def execute_jimeng_automation(
+    task_id: str,
+    prompt: str,
+    save_path: Optional[str] = None,
+    aspect_ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
+    duration: Optional[str] = None,
+    tool_type: Optional[str] = 'video_gen',
+    model: Optional[str] = None,
+    mode: Optional[str] = None,
+    reference_file: Optional[str] = None,
+):
+    """
+    后台异步执行即梦自动化（并发模式）
+    
+    锁只保护 UI 操作（提交生成），轮询结果不需要锁。
+    多个任务可以同时在后台等待生成结果。
+    """
+    try:
+        task_manager.update_task(task_id, status=TaskStatus.RUNNING)
+        
+        print(f"\n{'='*60}")
+        print(f"  🚀 开始执行即梦任务: {task_id}")
+        print(f"  📝 提示词: {prompt}")
+        if save_path:
+            print(f"  📁 保存路径: {save_path}")
+        print(f"{'='*60}\n")
+        
+        if save_path is None:
+            downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+            os.makedirs(downloads_dir, exist_ok=True)
+            save_path = os.path.join(downloads_dir, f'{task_id}.mp4')
+        
+        import concurrent.futures
+        
+        # ============================================================
+        # 阶段1：提交生成（需要浏览器锁）
+        # ============================================================
+        lock = _get_jimeng_lock()
+        print(f"   🔒 [{task_id}] 等待浏览器锁（提交阶段）...")
+        
+        history_id = ''
+        
+        async with lock:
+            print(f"   🔓 [{task_id}] 获取到浏览器锁")
+            
+            def _run_submit():
+                from auto_jimeng import JimengAutomation
+                
+                global _jimeng_auto_instance
+                
+                if _jimeng_auto_instance is None or not _jimeng_auto_instance._started:
+                    _jimeng_auto_instance = JimengAutomation()
+                    if not _jimeng_auto_instance.start():
+                        raise Exception("无法启动即梦浏览器，请先登录")
+                
+                auto = _jimeng_auto_instance
+                
+                if not auto.check_login():
+                    raise Exception("即梦未登录，请先运行: python open_browser_for_login.py jimeng")
+                
+                dur = int(''.join(filter(str.isdigit, str(duration)))) if duration else 5
+                
+                # 只提交生成，不等待结果
+                submit_result = auto.submit_generate(
+                    prompt=prompt,
+                    model=model or 'seedance-2.0-fast',
+                    tool_type=tool_type or 'video_gen',
+                    mode=mode,
+                    aspect_ratio=aspect_ratio or '16:9',
+                    resolution=resolution or '720p',
+                    duration=dur,
+                    reference_file=reference_file,
+                )
+                
+                return submit_result
+            
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                submit_result = await loop.run_in_executor(pool, _run_submit)
+        
+        print(f"   🔒 [{task_id}] 浏览器锁已释放（提交完成）")
+        
+        if not submit_result.get('success'):
+            error_message = submit_result.get('error', '提交失败')
+            task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
+            print(f"❌ 即梦任务提交失败: {task_id}\n错误: {error_message}")
+            return
+        
+        history_id = submit_result.get('history_id', '')
+        print(f"   ✅ [{task_id}] 提交成功，history_id={history_id}")
+        
+        # ============================================================
+        # 阶段2：轮询结果（不需要浏览器锁，可并发）
+        # ============================================================
+        print(f"   ⏳ [{task_id}] 开始轮询结果（不占用浏览器锁）...")
+        
+        def _run_poll():
+            global _jimeng_auto_instance
+            auto = _jimeng_auto_instance
+            if auto is None:
+                raise Exception("即梦自动化实例丢失")
+            
+            result = auto.poll_result(
+                history_id=history_id,
+                max_wait=600,
+                save_path=save_path,
+            )
+            return result
+        
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = await loop.run_in_executor(pool, _run_poll)
+        
+        if result.get('success'):
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.SUCCESS,
+                result={
+                    'success': True,
+                    'local_video_path': save_path,
+                    'video_url': result.get('video_url', ''),
+                    'history_id': result.get('history_id', ''),
+                    'message': '即梦视频生成成功',
+                },
+                message="即梦视频生成成功",
+            )
+            print(f"✅ 即梦任务成功: {task_id}")
+        else:
+            error_message = result.get('error', '未知错误')
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=error_message,
+            )
+            print(f"❌ 即梦任务失败: {task_id}\n错误: {error_message}")
+    
+    except asyncio.CancelledError:
+        task_manager.update_task(task_id, status=TaskStatus.CANCELLED, error="任务被取消")
+    except Exception as e:
+        task_manager.update_task(task_id, status=TaskStatus.FAILED, error=f"执行异常: {str(e)}")
+        print(f"❌ 即梦任务异常: {task_id}\n{e}")
+    finally:
+        task_manager.current_process = None
+
+
+# ============================================================================
+# 浏览器窗口控制
+# ============================================================================
+
+def find_browser_window() -> Optional[Any]:
+    """
+    查找 Playwright 启动的浏览器窗口
+    
+    Returns:
+        窗口对象，如果未找到则返回 None
+    """
+    if not WINDOW_CONTROL_AVAILABLE:
+        return None
+    
+    try:
+        # 查找包含特定关键词的窗口
+        # Playwright 启动的 Chrome 窗口通常包含 "Chrome" 或网站标题
+        all_windows = gw.getAllWindows()
+        
+        # 优先查找包含 "Vidu" 的窗口
+        for window in all_windows:
+            if window.title and ("vidu" in window.title.lower() or "chrome" in window.title.lower()):
+                return window
+        
+        # 如果没找到，返回最近的 Chrome 窗口
+        for window in all_windows:
+            if window.title and "chrome" in window.title.lower():
+                return window
+        
+        return None
+        
+    except Exception as e:
+        print(f"⚠️  查找窗口失败: {e}")
+        return None
+
+
+def show_browser_window() -> BrowserControlResponse:
+    """显示浏览器窗口（激活并置顶）"""
+    if not WINDOW_CONTROL_AVAILABLE:
+        return BrowserControlResponse(
+            success=False,
+            message="窗口控制功能不可用（pygetwindow 未安装）",
+            window_found=False,
+        )
+    
+    try:
+        window = find_browser_window()
+        
+        if window is None:
+            return BrowserControlResponse(
+                success=False,
+                message="未找到浏览器窗口",
+                window_found=False,
+            )
+        
+        # 恢复窗口（如果最小化）
+        if window.isMinimized:
+            window.restore()
+        
+        # 激活窗口（置顶）
+        window.activate()
+        
+        return BrowserControlResponse(
+            success=True,
+            message=f"浏览器窗口已显示: {window.title}",
+            window_found=True,
+        )
+        
+    except Exception as e:
+        return BrowserControlResponse(
+            success=False,
+            message=f"显示窗口失败: {str(e)}",
+            window_found=False,
+        )
+
+
+def hide_browser_window() -> BrowserControlResponse:
+    """隐藏浏览器窗口（最小化）"""
+    if not WINDOW_CONTROL_AVAILABLE:
+        return BrowserControlResponse(
+            success=False,
+            message="窗口控制功能不可用（pygetwindow 未安装）",
+            window_found=False,
+        )
+    
+    try:
+        window = find_browser_window()
+        
+        if window is None:
+            return BrowserControlResponse(
+                success=False,
+                message="未找到浏览器窗口",
+                window_found=False,
+            )
+        
+        # 最小化窗口
+        window.minimize()
+        
+        return BrowserControlResponse(
+            success=True,
+            message=f"浏览器窗口已最小化: {window.title}",
+            window_found=True,
+        )
+        
+    except Exception as e:
+        return BrowserControlResponse(
+            success=False,
+            message=f"最小化窗口失败: {str(e)}",
+            window_found=False,
+        )
+
+
+# ============================================================================
+# API 路由
+# ============================================================================
+
+@app.get("/")
+async def root():
+    """根路径：服务状态"""
+    return {
+        "service": "Vidu 自动化 API",
+        "status": "running",
+        "version": "1.0.0",
+        "endpoints": {
+            "generate": "POST /api/vidu/generate",
+            "task_status": "GET /api/task/{task_id}",
+            "all_tasks": "GET /api/tasks",
+            "browser_show": "POST /api/browser/show",
+            "browser_hide": "POST /api/browser/hide",
+        }
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """健康检查"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "window_control": WINDOW_CONTROL_AVAILABLE,
+    }
+
+
+@app.post("/api/vidu/generate", response_model=TaskResponse)
+async def generate_video(request: GenerateRequest, background_tasks: BackgroundTasks):
+    """
+    核心接口 1：提交视频生成任务（Vidu 专用，保留兼容性）
+    
+    立即返回任务 ID，后台异步执行
+    """
+    # 生成任务 ID
+    task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    
+    # 创建任务
+    task = task_manager.create_task(
+        task_id=task_id,
+        prompt=request.prompt,
+        platform=request.platform,
+    )
+    
+    # 添加后台任务（不阻塞接口）
+    background_tasks.add_task(execute_vidu_automation, task_id, request.prompt)
+    
+    print(f"\n✅ 任务已受理: {task_id}")
+    print(f"📝 提示词: {request.prompt}\n")
+    
+    return TaskResponse(
+        task_id=task_id,
+        status=TaskStatus.PENDING,
+        message="任务已受理，正在后台执行",
+        created_at=task["created_at"],
+        prompt=request.prompt,
+    )
+
+
+class UniversalGenerateRequest(BaseModel):
+    """通用生成请求（支持多平台）"""
+    platform: str  # vidu, jimeng, keling, hailuo
+    tool_type: str  # text2video, img2video, text2image
+    payload: Dict[str, Any]  # 包含 prompt, model 等参数
+
+
+@app.post("/api/generate", response_model=TaskResponse)
+async def generate_universal(request: UniversalGenerateRequest, background_tasks: BackgroundTasks):
+    """
+    通用生成接口（支持多平台、多工具类型）
+    
+    Args:
+        platform: 平台名称（vidu, jimeng, keling, hailuo）
+        tool_type: 工具类型（text2video, img2video, text2image）
+        payload: 参数字典，包含 prompt, model, savePath 等
+    
+    立即返回任务 ID，后台异步执行
+    """
+    # 验证平台
+    supported_platforms = ['vidu', 'jimeng', 'keling', 'hailuo']
+    if request.platform not in supported_platforms:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的平台: {request.platform}，支持的平台: {', '.join(supported_platforms)}"
+        )
+    
+    # 验证工具类型
+    supported_tools = ['text2video', 'img2video', 'ref2video', 'text2image', 'video_gen', 'image_gen', 'agent']
+    if request.tool_type not in supported_tools:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的工具类型: {request.tool_type}，支持的工具: {', '.join(supported_tools)}"
+        )
+    
+    # 验证必需参数
+    if 'prompt' not in request.payload:
+        raise HTTPException(status_code=400, detail="payload 必须包含 prompt 字段")
+    
+    # 生成任务 ID
+    task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    
+    # 创建任务
+    task = task_manager.create_task(
+        task_id=task_id,
+        prompt=request.payload.get('prompt'),
+        platform=request.platform,
+        tool_type=request.tool_type,
+        payload=request.payload,
+    )
+    
+    # 根据平台选择执行函数
+    if request.platform == 'vidu':
+        # ✅ 从 payload 中提取保存路径和视频参数
+        save_path = request.payload.get('savePath')
+        aspect_ratio = request.payload.get('aspectRatio')
+        resolution = request.payload.get('resolution')
+        duration = request.payload.get('duration')
+        tool_type = request.tool_type  # 从请求中获取工具类型
+        model = request.payload.get('model')
+        reference_file = request.payload.get('referenceFile')  # ✅ 获取参考文件路径
+        character_name = request.payload.get('characterName')  # ✅ 获取主体库角色名称
+        
+        # 添加后台任务
+        background_tasks.add_task(
+            execute_vidu_automation, 
+            task_id, 
+            request.payload.get('prompt'),
+            save_path,
+            aspect_ratio,
+            resolution,
+            duration,
+            tool_type,
+            model,
+            reference_file,
+            character_name,
+        )
+    elif request.platform == 'jimeng':
+        # ✅ 即梦：UI 自动化方案
+        save_path = request.payload.get('savePath')
+        aspect_ratio = request.payload.get('aspectRatio')
+        resolution = request.payload.get('resolution')
+        duration = request.payload.get('duration')
+        tool_type = request.tool_type
+        model = request.payload.get('model')
+        mode = request.payload.get('mode')
+        reference_file = request.payload.get('referenceFile')
+        
+        background_tasks.add_task(
+            execute_jimeng_automation,
+            task_id,
+            request.payload.get('prompt'),
+            save_path,
+            aspect_ratio,
+            resolution,
+            duration,
+            tool_type,
+            model,
+            mode,
+            reference_file,
+        )
+    else:
+        # 其他平台暂未实现
+        task_manager.update_task(
+            task_id,
+            status=TaskStatus.FAILED,
+            error=f"平台 {request.platform} 功能开发中"
+        )
+    
+    print(f"\n✅ 任务已受理: {task_id}")
+    print(f"📝 平台: {request.platform}")
+    print(f"📝 工具: {request.tool_type}")
+    print(f"📝 提示词: {request.payload.get('prompt')}")
+    if request.payload.get('savePath'):
+        print(f"📁 保存路径: {request.payload.get('savePath')}")
+    print()
+    
+    return TaskResponse(
+        task_id=task_id,
+        status=TaskStatus.PENDING,
+        message="任务已受理，正在后台执行",
+        created_at=task["created_at"],
+        prompt=request.payload.get('prompt'),
+    )
+
+
+@app.get("/api/task/{task_id}", response_model=TaskStatusResponse)
+async def get_task_status(task_id: str):
+    """
+    查询任务状态
+    
+    Args:
+        task_id: 任务 ID
+    """
+    task = task_manager.get_task(task_id)
+    
+    if task is None:
+        # ✅ 添加详细的日志，帮助调试
+        print(f"\n⚠️  查询不存在的任务: {task_id}")
+        print(f"   当前存在的任务: {list(task_manager.tasks.keys())}")
+        print(f"   任务总数: {len(task_manager.tasks)}\n")
+        
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    
+    return TaskStatusResponse(**task)
+
+
+@app.get("/api/tasks")
+async def get_all_tasks():
+    """
+    获取所有任务列表
+    """
+    tasks = task_manager.get_all_tasks()
+    return {
+        "total": len(tasks),
+        "tasks": list(tasks.values()),
+    }
+
+
+@app.post("/api/browser/show", response_model=BrowserControlResponse)
+async def show_browser():
+    """
+    核心接口 2：显示浏览器窗口
+    
+    激活并置顶浏览器窗口
+    """
+    result = show_browser_window()
+    print(f"🖥️  显示浏览器: {result.message}")
+    return result
+
+
+@app.post("/api/browser/hide", response_model=BrowserControlResponse)
+async def hide_browser():
+    """
+    核心接口 2：隐藏浏览器窗口
+    
+    最小化浏览器窗口
+    """
+    result = hide_browser_window()
+    print(f"🖥️  隐藏浏览器: {result.message}")
+    return result
+
+
+@app.delete("/api/task/{task_id}")
+async def cancel_task(task_id: str):
+    """
+    取消任务（如果正在运行）
+    
+    Args:
+        task_id: 任务 ID
+    """
+    task = task_manager.get_task(task_id)
+    
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    
+    if task["status"] == TaskStatus.RUNNING:
+        # 尝试终止进程
+        if task_manager.current_process:
+            try:
+                task_manager.current_process.terminate()
+                task_manager.update_task(task_id, status=TaskStatus.CANCELLED)
+                return {"message": f"任务已取消: {task_id}"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"取消任务失败: {str(e)}")
+        else:
+            raise HTTPException(status_code=400, detail="无法找到运行中的进程")
+    else:
+        return {"message": f"任务状态为 {task['status']}，无需取消"}
+
+
+# ============================================================================
+# 启动服务
+# ============================================================================
+
+def print_startup_banner():
+    """打印启动横幅"""
+    banner = f"""
+╔══════════════════════════════════════════════════════════╗
+║                                                          ║
+║          🚀 Vidu 自动化 API 服务器                        ║
+║                                                          ║
+║  本地地址: http://127.0.0.1:8123                         ║
+║  API 文档: http://127.0.0.1:8123/docs                    ║
+║                                                          ║
+║  核心接口:                                                ║
+║  • POST /api/vidu/generate    - 提交生成任务             ║
+║  • GET  /api/task/{{task_id}}   - 查询任务状态            ║
+║  • POST /api/browser/show     - 显示浏览器               ║
+║  • POST /api/browser/hide     - 隐藏浏览器               ║
+║                                                          ║
+║  窗口控制: {'✅ 可用' if WINDOW_CONTROL_AVAILABLE else '❌ 不可用'}                                      ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+"""
+    print(banner)
+
+
+if __name__ == "__main__":
+    print_startup_banner()
+    
+    # 启动 Uvicorn 服务器
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=8123,
+        log_level="info",
+    )

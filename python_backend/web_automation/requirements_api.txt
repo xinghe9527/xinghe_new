@@ -1,0 +1,15 @@
+# Vidu 自动化 API 服务器依赖
+
+# 核心依赖
+playwright>=1.40.0
+
+# FastAPI 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# Windows 窗口控制
+pygetwindow>=0.0.9
+
+# 可选：更好的日志输出
+colorama>=0.4.6

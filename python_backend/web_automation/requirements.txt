@@ -1,0 +1,8 @@
+# Web Automation 依赖
+
+# Playwright - 浏览器自动化核心库
+playwright>=1.40.0
+
+# 可选依赖（未来可能需要）
+# requests>=2.31.0  # HTTP 请求
+# pillow>=10.0.0    # 图片处理

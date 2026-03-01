@@ -13,6 +13,7 @@ import 'package:xinghe_new/features/home/domain/video_task.dart';
 import 'package:xinghe_new/features/home/presentation/batch_video_space.dart';  // ✅ 导入批量空间
 import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
 import 'package:xinghe_new/features/creation_workflow/presentation/widgets/video_grid_item.dart';  // ✅ 导入原位播放组件
+import 'package:xinghe_new/core/aigc_engine/automation_api_client.dart';  // ✅ 导入网页服务商客户端
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
@@ -963,6 +964,268 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // 读取视频 API 配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('video_provider') ?? 'geeknow';
+      
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(provider);
+      
+      if (isWebProvider) {
+        // ========== 网页服务商路线 ==========
+        _logger.info('使用网页服务商生成视频', module: '视频空间', extra: {'provider': provider});
+        
+        // 读取网页服务商配置
+        final webTool = prefs.getString('video_web_tool');
+        final webModel = prefs.getString('video_web_model');
+        
+        if (webTool == null || webTool.isEmpty) {
+          throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
+        }
+        
+        if (webModel == null || webModel.isEmpty) {
+          throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型（如：Vidu Q3）');
+        }
+        
+        _logger.info('网页服务商配置', module: '视频空间', extra: {
+          'provider': provider,
+          'tool': webTool,
+          'model': webModel,
+        });
+        
+        // ✅ 创建 AutomationApiClient 实例
+        final aigcClient = AutomationApiClient();
+        
+        // ✅ 检查 API 服务是否可用
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception(
+            'Python API 服务未启动\n\n'
+            '请先启动 Python 服务：\n'
+            '1. 打开命令行\n'
+            '2. 进入项目目录\n'
+            '3. 运行: python python_backend/web_automation/api_server.py'
+          );
+        }
+        
+        _logger.success('Python API 服务连接成功', module: '视频空间');
+        
+        // ✅ 并发提交所有任务
+        _logger.info('开始并发提交 $batchCount 个视频任务', module: '视频空间');
+        
+        final submitFutures = List.generate(batchCount, (i) async {
+          final placeholder = placeholders[i];
+          
+          try {
+            _logger.info('提交任务 ${i + 1}/$batchCount', module: '视频空间');
+            
+            // ✅ 构建 payload，根据工具类型添加不同参数
+            final payload = <String, dynamic>{
+              'prompt': widget.task.prompt,
+              'model': webModel,
+            };
+            
+            // ✅ 添加保存路径（从设置中读取）
+            final savePath = prefs.getString('video_save_path');
+            if (savePath != null && savePath.isNotEmpty) {
+              // 生成唯一的文件名
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              final fileName = 'video_${timestamp}_${widget.task.id}_$i.mp4';
+              final fullPath = path.join(savePath, fileName);
+              payload['savePath'] = fullPath;
+              _logger.info('设置保存路径: $fullPath', module: '视频空间');
+            } else {
+              _logger.warning('未设置视频保存路径，将使用默认路径', module: '视频空间');
+            }
+            
+            // ✅ 如果是图生视频，需要提供图片
+            if (webTool == 'img2video') {
+              if (widget.task.referenceImages == null || widget.task.referenceImages!.isEmpty) {
+                throw Exception(
+                  '图生视频需要提供参考图片\n\n'
+                  '请在视频空间添加参考图片后再生成'
+                );
+              }
+              // 使用第一张参考图片
+              payload['imageUrl'] = widget.task.referenceImages!.first;
+              _logger.info('使用参考图片: ${widget.task.referenceImages!.first}', module: '视频空间');
+            }
+            
+            // ✅ 如果是参考生视频，可选提供参考文件（图片或视频）
+            if (webTool == 'ref2video') {
+              if (widget.task.referenceImages != null && widget.task.referenceImages!.isNotEmpty) {
+                // 遍历所有参考图片，收集素材库名称和普通文件
+                final List<String> assetNames = [];
+                final List<String> normalFiles = [];
+                
+                for (final refPath in widget.task.referenceImages!) {
+                  final assetName = await _findAssetNameByPath(refPath);
+                  if (assetName != null && assetName.isNotEmpty) {
+                    assetNames.add(assetName);
+                  } else {
+                    normalFiles.add(refPath);
+                  }
+                }
+                
+                // 素材库主体名称（逗号分隔，支持多个）
+                if (assetNames.isNotEmpty) {
+                  payload['characterName'] = assetNames.join(',');
+                  _logger.info('参考生视频：素材库主体「${assetNames.join(", ")}」', module: '视频空间');
+                }
+                
+                // 普通文件：只取第一个作为参考文件上传
+                if (normalFiles.isNotEmpty && assetNames.isEmpty) {
+                  payload['referenceFile'] = normalFiles.first;
+                  _logger.info('参考生视频：上传参考文件 ${normalFiles.first}', module: '视频空间');
+                }
+              } else {
+                // 无参考文件，检查是否有角色名用于主体库选择
+                if (widget.task.characterName.isNotEmpty) {
+                  payload['characterName'] = widget.task.characterName;
+                  _logger.info('参考生视频：使用主体库角色「${widget.task.characterName}」', module: '视频空间');
+                } else {
+                  _logger.info('参考生视频：无参考文件和角色名，仅使用提示词', module: '视频空间');
+                }
+              }
+            }
+            
+            // ✅ 添加视频参数（比例、分辨率、时长）
+            payload['aspectRatio'] = widget.task.ratio;    // e.g. '16:9', '9:16', '1:1'
+            payload['resolution'] = widget.task.quality;   // e.g. '1080P', '720P'
+            payload['duration'] = widget.task.seconds;     // e.g. '10秒'
+            
+            // 提交生成任务
+            final result = await aigcClient.submitGenerationTask(
+              platform: provider,
+              toolType: webTool,
+              payload: payload,
+            );
+            
+            _logger.success('任务 ${i + 1} 提交成功: ${result.taskId}', module: '视频空间');
+            
+            return {
+              'index': i,
+              'taskId': result.taskId,
+              'placeholder': placeholder,
+            };
+          } catch (e) {
+            _logger.error('任务 ${i + 1} 提交失败: $e', module: '视频空间');
+            rethrow;
+          }
+        });
+        
+        // 等待所有任务提交完成
+        final submittedTasks = await Future.wait(submitFutures);
+        _logger.success('所有任务已提交，开始轮询', module: '视频空间');
+        
+        // ✅ 并发轮询所有任务
+        final pollFutures = submittedTasks.map((task) async {
+          final index = task['index'] as int;
+          final taskId = task['taskId'] as String;
+          final placeholder = task['placeholder'] as String;
+          
+          try {
+            _logger.info('开始轮询任务 ${index + 1}: $taskId', module: '视频空间');
+            
+            // 轮询任务状态
+            final result = await aigcClient.pollTaskStatus(
+              taskId: taskId,
+              interval: const Duration(seconds: 3),
+              maxAttempts: 200,  // 最多 10 分钟
+              onProgress: (taskResult) {
+                // 更新进度（网页服务商暂时没有精确进度，显示为运行中）
+                if (taskResult.isRunning) {
+                  _globalVideoProgress[placeholder] = 50;  // 显示 50% 表示运行中
+                }
+                
+                if (mounted && widget.task.generatedVideos.contains(placeholder)) {
+                  setState(() {});
+                }
+                
+                _logger.info('任务 ${index + 1} 状态: ${taskResult.status}', module: '视频空间');
+              },
+            );
+            
+            if (result.isSuccess) {
+              // 任务成功完成
+              final videoPath = result.localVideoPath ?? result.videoUrl;
+              
+              if (videoPath == null || videoPath.isEmpty) {
+                throw Exception('任务完成但未返回视频地址');
+              }
+              
+              _logger.success('任务 ${index + 1} 完成', module: '视频空间', extra: {
+                'videoPath': videoPath,
+                'isLocal': result.localVideoPath != null,
+              });
+              
+              // ✅ 提取视频首帧作为缩略图（本地文件才需要）
+              if (videoPath != null && !videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+                try {
+                  final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                  final ffmpeg = FFmpegService();
+                  final success = await ffmpeg.extractFrame(
+                    videoPath: videoPath,
+                    outputPath: thumbnailPath,
+                  );
+                  if (success) {
+                    _logger.success('网页服务商视频首帧已提取', module: '视频空间');
+                  }
+                } catch (e) {
+                  _logger.warning('提取首帧失败: $e', module: '视频空间');
+                }
+              }
+              
+              // 替换占位符
+              final currentVideos = List<String>.from(widget.task.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+              
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = videoPath;
+                _globalVideoProgress.remove(placeholder);
+                _update(widget.task.copyWith(generatedVideos: currentVideos));
+                
+                if (mounted) {
+                  setState(() {});
+                }
+              }
+              
+              return true;
+            } else {
+              // 任务失败
+              throw Exception(result.error ?? '生成失败');
+            }
+          } catch (e) {
+            _logger.error('任务 ${index + 1} 处理失败: $e', module: '视频空间');
+            
+            // 标记为失败
+            final currentVideos = List<String>.from(widget.task.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _globalVideoProgress.remove(placeholder);
+              _update(widget.task.copyWith(generatedVideos: currentVideos));
+              
+              if (mounted) {
+                setState(() {});
+              }
+            }
+            
+            return false;
+          }
+        }).toList();
+        
+        // 等待所有任务完成
+        await Future.wait(pollFutures, eagerError: false);
+        
+        _logger.success('所有网页服务商任务已处理完成', module: '视频空间');
+        
+        // 清理资源
+        aigcClient.dispose();
+        
+        // ✅ 网页服务商处理完成，直接返回
+        return;
+      }
+      
+      // ========== API 服务商路线（原有逻辑）==========
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
       
@@ -2005,6 +2268,39 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     );
   }
 
+  /// 根据图片路径在素材库中查找素材名称
+  /// 如果找到，说明这张图来自素材库，返回用户自定义的名称
+  Future<String?> _findAssetNameByPath(String imagePath) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final assetsJson = prefs.getString('asset_library_data');
+      if (assetsJson == null || assetsJson.isEmpty) return null;
+      
+      final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+      for (final entry in data.values) {
+        final stylesList = entry as List;
+        for (final styleData in stylesList) {
+          final assets = (styleData['assets'] as List?) ?? [];
+          for (final assetData in assets) {
+            final asset = assetData as Map<String, dynamic>;
+            if (asset['path'] == imagePath) {
+              final name = asset['name'] as String? ?? '';
+              // 检查名称是否是用户自定义的（不是默认文件名）
+              // 如果名称不包含扩展名且不是随机ID格式，认为是自定义名称
+              if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
+                return name;
+              }
+              return null;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      _logger.error('查找素材名称失败: $e', module: '视频空间');
+    }
+    return null;
+  }
+
   void _showImagePreview(BuildContext context, String imagePath) {
     showDialog(
       context: context,
@@ -2189,28 +2485,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     return MouseRegion(
       cursor: canAddMore ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
       child: GestureDetector(
-        onTap: canAddMore ? () async {
-          try {
-            final result = await FilePicker.platform.pickFiles(
-              type: FileType.image,
-              allowMultiple: true,
-            );
-            if (result != null && result.files.isNotEmpty) {
-              final currentCount = widget.task.referenceImages.length;
-              final availableSlots = 9 - currentCount;
-              final newImages = result.files
-                  .take(availableSlots.toInt())
-                  .map((file) => file.path!)
-                  .toList();
-              _update(widget.task.copyWith(
-                referenceImages: [...widget.task.referenceImages, ...newImages],
-              ));
-              _logger.success('添加 ${newImages.length} 张参考图片', module: '视频空间');
-            }
-          } catch (e) {
-            _logger.error('添加图片失败: $e', module: '视频空间');
-          }
-        } : null,
+        onTap: canAddMore ? () => _showAddImageMenu() : null,
         child: Container(
           width: 44,
           height: 44,
@@ -2227,6 +2502,228 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         ),
       ),
     );
+  }
+
+  /// 显示添加图片菜单（本地文件 / 素材库）
+  void _showAddImageMenu() {
+    final RenderBox button = context.findRenderObject() as RenderBox;
+    final offset = button.localToGlobal(Offset.zero);
+    
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(offset.dx, offset.dy + 44, offset.dx + 44, 0),
+      color: AppTheme.surfaceBackground,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      items: [
+        PopupMenuItem(
+          value: 'local',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: AppTheme.textColor),
+              const SizedBox(width: 8),
+              Text('本地文件', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'library',
+          child: Row(
+            children: [
+              Icon(Icons.photo_library, size: 16, color: AppTheme.textColor),
+              const SizedBox(width: 8),
+              Text('素材库', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'local') {
+        _pickLocalImages();
+      } else if (value == 'library') {
+        _pickFromAssetLibrary();
+      }
+    });
+  }
+
+  /// 从本地选择图片
+  Future<void> _pickLocalImages() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final currentCount = widget.task.referenceImages.length;
+        final availableSlots = 9 - currentCount;
+        final newImages = result.files
+            .take(availableSlots.toInt())
+            .map((file) => file.path!)
+            .toList();
+        _update(widget.task.copyWith(
+          referenceImages: [...widget.task.referenceImages, ...newImages],
+        ));
+        _logger.success('添加 ${newImages.length} 张参考图片', module: '视频空间');
+      }
+    } catch (e) {
+      _logger.error('添加图片失败: $e', module: '视频空间');
+    }
+  }
+
+  /// 从素材库选择图片
+  Future<void> _pickFromAssetLibrary() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final assetsJson = prefs.getString('asset_library_data');
+      
+      if (assetsJson == null || assetsJson.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('素材库为空，请先在素材库中添加图片')),
+          );
+        }
+        return;
+      }
+      
+      final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+      final allAssets = <Map<String, String>>[];
+      
+      data.forEach((key, value) {
+        final stylesList = value as List;
+        for (var styleData in stylesList) {
+          final assets = (styleData['assets'] as List?) ?? [];
+          for (var assetData in assets) {
+            final asset = assetData as Map<String, dynamic>;
+            allAssets.add({
+              'path': asset['path'] as String,
+              'name': asset['name'] as String,
+            });
+          }
+        }
+      });
+      
+      if (allAssets.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('素材库中没有图片')),
+          );
+        }
+        return;
+      }
+      
+      // 显示素材库选择对话框
+      final selected = await showDialog<List<String>>(
+        context: context,
+        builder: (ctx) {
+          final selectedPaths = <String>[];
+          return StatefulBuilder(
+            builder: (ctx, setDialogState) => AlertDialog(
+              backgroundColor: AppTheme.surfaceBackground,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              title: Row(
+                children: [
+                  Icon(Icons.photo_library, color: const Color(0xFF667EEA), size: 22),
+                  const SizedBox(width: 8),
+                  Text('选择素材', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
+                  const Spacer(),
+                  if (selectedPaths.isNotEmpty)
+                    Text('已选 ${selectedPaths.length}', style: const TextStyle(color: Color(0xFF667EEA), fontSize: 13)),
+                ],
+              ),
+              content: SizedBox(
+                width: 500,
+                height: 400,
+                child: GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 0.85,
+                  ),
+                  itemCount: allAssets.length,
+                  itemBuilder: (ctx, index) {
+                    final asset = allAssets[index];
+                    final isSelected = selectedPaths.contains(asset['path']);
+                    return GestureDetector(
+                      onTap: () {
+                        setDialogState(() {
+                          if (isSelected) {
+                            selectedPaths.remove(asset['path']);
+                          } else {
+                            selectedPaths.add(asset['path']!);
+                          }
+                        });
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isSelected ? const Color(0xFF667EEA) : AppTheme.dividerColor,
+                            width: isSelected ? 2 : 1,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                child: Image.file(
+                                  File(asset['path']!),
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    color: AppTheme.inputBackground,
+                                    child: Icon(Icons.broken_image, color: AppTheme.subTextColor),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Text(
+                                asset['name']!,
+                                style: TextStyle(color: AppTheme.textColor, fontSize: 10),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+                ),
+                ElevatedButton(
+                  onPressed: selectedPaths.isEmpty ? null : () => Navigator.pop(ctx, selectedPaths),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF667EEA),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('确定', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      
+      if (selected != null && selected.isNotEmpty) {
+        final currentCount = widget.task.referenceImages.length;
+        final availableSlots = 9 - currentCount;
+        final newImages = selected.take(availableSlots).toList();
+        _update(widget.task.copyWith(
+          referenceImages: [...widget.task.referenceImages, ...newImages],
+        ));
+        _logger.success('从素材库添加 ${newImages.length} 张图片', module: '视频空间');
+      }
+    } catch (e) {
+      _logger.error('从素材库选择失败: $e', module: '视频空间');
+    }
   }
 
   Widget _genButton() {
