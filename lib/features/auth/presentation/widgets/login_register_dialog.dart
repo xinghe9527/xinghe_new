@@ -17,6 +17,7 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
   bool _isLogin = true;
   bool _isLoading = false;
   bool _rememberMe = false;
+  String? _errorMessage; // 错误消息（在表单内显示）
 
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -54,11 +55,14 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
 
   Future<void> _handleLogin() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      _showError('请填写完整信息');
+      setState(() => _errorMessage = '请填写完整信息');
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null; // 清除之前的错误
+    });
 
     try {
       await widget.authProvider.login(
@@ -72,11 +76,15 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
         _showSuccess('登录成功');
       }
     } catch (e) {
-      // 显示真实的底层错误信息，用于调试
-      final errorMessage = e.toString().replaceFirst('Exception: ', '');
-      _showError(errorMessage);
+      // 提取纯净的错误信息（去掉 "Exception: " 前缀和嵌套）
+      String errorMessage = e.toString();
+      errorMessage = errorMessage.replaceAll('Exception: ', '');
+      // 如果有多层嵌套，只取最后一个错误信息
+      if (errorMessage.contains('Exception: ')) {
+        errorMessage = errorMessage.split('Exception: ').last;
+      }
       
-      // 同时打印到控制台，方便调试
+      setState(() => _errorMessage = errorMessage);
       debugPrint('登录失败详情: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -88,17 +96,14 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
         _emailController.text.isEmpty ||
         _passwordController.text.isEmpty ||
         _invitationCodeController.text.isEmpty) {
-      _showError('请填写完整信息');
+      setState(() => _errorMessage = '请填写完整信息');
       return;
     }
 
-    // 暂时不强制验证码（后端未实现时）
-    // if (_verificationCodeController.text.isEmpty) {
-    //   _showError('请输入验证码');
-    //   return;
-    // }
-
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null; // 清除之前的错误
+    });
 
     try {
       await widget.authProvider.register(
@@ -113,11 +118,15 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
         _showSuccess('注册成功');
       }
     } catch (e) {
-      // 显示真实的底层错误信息，用于调试
-      final errorMessage = e.toString().replaceFirst('Exception: ', '');
-      _showError(errorMessage);
+      // 提取纯净的错误信息（去掉 "Exception: " 前缀和嵌套）
+      String errorMessage = e.toString();
+      errorMessage = errorMessage.replaceAll('Exception: ', '');
+      // 如果有多层嵌套，只取最后一个错误信息
+      if (errorMessage.contains('Exception: ')) {
+        errorMessage = errorMessage.split('Exception: ').last;
+      }
       
-      // 同时打印到控制台，方便调试
+      setState(() => _errorMessage = errorMessage);
       debugPrint('注册失败详情: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -244,9 +253,10 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(40),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                         // 标题和切换按钮
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -408,6 +418,34 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
                           ),
                         ],
 
+                        // 错误提示（在表单内显示）
+                        if (_errorMessage != null) ...[
+                          const SizedBox(height: 20),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withValues(alpha: 0.1),
+                              border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage!,
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+
                         const SizedBox(height: 32),
 
                         // 提交按钮 - 渐变色
@@ -465,6 +503,7 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
                           ),
                         ),
                       ],
+                    ),
                     ),
                   ),
                 ),

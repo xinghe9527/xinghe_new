@@ -1,23 +1,14 @@
 import 'dart:convert';
-import 'dart:io';
-import 'package:http/io_client.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../domain/models/user.dart';
 import '../domain/models/invitation_code.dart';
 
 class AuthApiService {
-  // ⚠️ 临时降级为 HTTP 以解决握手失败
-  static const String baseUrl = 'http://api.xhaigc.cn';
+  // 🎉 生产环境正式域名（已通过 ICP 备案，拥有合法 SSL 证书）
+  static const String baseUrl = 'https://api.xhaigc.cn';
 
-  // 🚀 核心修复：创建一个"百毒不侵"的自定义客户端
-  static http.Client _getSecureClient() {
-    final httpClient = HttpClient();
-    httpClient.badCertificateCallback = (X509Certificate cert, String host, int port) => true; // 忽略证书
-    httpClient.connectionTimeout = const Duration(seconds: 15);
-    return IOClient(httpClient);
-  }
-
-  // 1. 验证邀请码 (使用自定义客户端)
+  // 1. 验证邀请码（永久有效，无需核销）
   Future<InvitationCode> verifyInvitationCode(String code) async {
     final trimmedCode = code.trim();
     
@@ -25,10 +16,16 @@ class AuthApiService {
       throw Exception('邀请码不能为空');
     }
 
-    final client = _getSecureClient();
     try {
-      final response = await client.get(
-        Uri.parse('$baseUrl/invitation_codes?code=$trimmedCode&is_used=false'),
+      // 使用 PocketBase List/Search API 规范
+      final uri = Uri.parse('$baseUrl/api/collections/invitation_codes/records').replace(
+        queryParameters: {
+          'filter': "code='$trimmedCode'",
+        },
+      );
+
+      final response = await http.get(
+        uri,
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 15));
 
@@ -37,24 +34,30 @@ class AuthApiService {
       }
 
       final data = json.decode(response.body);
-      if (data is! List || data.isEmpty) {
-        throw Exception('邀请码不存在或已被使用');
+      
+      // PocketBase 返回格式：{ "items": [...], "page": 1, "perPage": 30, "totalItems": 1 }
+      if (data is! Map || data['items'] == null || (data['items'] as List).isEmpty) {
+        throw Exception('邀请码不存在');
       }
       
-      return InvitationCode.fromJson(data[0]);
+      return InvitationCode.fromJson(data['items'][0]);
     } catch (e) {
       throw Exception('验证邀请码失败: $e');
-    } finally {
-      client.close();
     }
   }
 
   // 2. 检查邮箱是否已注册
   Future<bool> checkEmailExists(String email) async {
-    final client = _getSecureClient();
     try {
-      final response = await client.get(
-        Uri.parse('$baseUrl/users?email=$email'),
+      // 使用 PocketBase List/Search API 规范
+      final uri = Uri.parse('$baseUrl/api/collections/users/records').replace(
+        queryParameters: {
+          'filter': "email='$email'",
+        },
+      );
+
+      final response = await http.get(
+        uri,
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 15));
 
@@ -63,25 +66,22 @@ class AuthApiService {
       }
 
       final data = json.decode(response.body);
-      return data is List && data.isNotEmpty;
+      return data is Map && data['items'] != null && (data['items'] as List).isNotEmpty;
     } catch (e) {
       throw Exception('检查邮箱失败: $e');
-    } finally {
-      client.close();
     }
   }
 
-  // 3. 注册方法 (整合验证码逻辑)
+  // 3. 注册方法（极速流程：查验 -> 创建用户）
   Future<Map<String, dynamic>> register({
     required String username,
     required String email,
     required String password,
     required String invitationCode,
-    String? verificationCode, // 验证码参数（暂时可选）
+    String? verificationCode,
   }) async {
-    final client = _getSecureClient();
     try {
-      // Step 1: 验证邀请码
+      // Step 1: 验证邀请码（永久有效）
       final code = await verifyInvitationCode(invitationCode.trim());
 
       // Step 2: 检查邮箱唯一性
@@ -93,51 +93,96 @@ class AuthApiService {
       // Step 3: 计算会员过期时间
       final expireDate = DateTime.now().add(Duration(days: code.durationDays));
 
-      // Step 4: 创建用户
+      // Step 4: 创建用户（使用 PocketBase Create API）
       final body = {
         'username': username.trim(),
+        'name': username.trim(), // PocketBase 可能使用 name 字段
         'email': email.trim(),
         'password': password,
+        'passwordConfirm': password, // PocketBase 要求
         'expire_date': expireDate.toIso8601String(),
-        'created_at': DateTime.now().toIso8601String(),
       };
 
-      final regResponse = await client.post(
-        Uri.parse('$baseUrl/users'),
+      debugPrint('=== 准备注册用户 ===');
+      debugPrint('请求体: $body');
+      debugPrint('==================');
+
+      final regResponse = await http.post(
+        Uri.parse('$baseUrl/api/collections/users/records'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 15));
 
       if (regResponse.statusCode >= 400) {
-        throw Exception('注册失败: ${regResponse.body}');
+        // 解析 PocketBase 错误信息，转换为用户友好的中文提示
+        final errorMsg = _parseErrorMessage(regResponse.body);
+        throw Exception(errorMsg);
       }
 
       final userData = json.decode(regResponse.body);
-      final userId = userData['_id'] ?? userData['id'];
+      final userId = userData['id'];
 
-      // Step 5: 核销邀请码
-      await client.put(
-        Uri.parse('$baseUrl/invitation_codes/${code.id}'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'is_used': true,
-          'used_at': DateTime.now().toIso8601String(),
-          'used_by': userId,
-        }),
-      ).timeout(const Duration(seconds: 15));
+      // 调试输出
+      debugPrint('=== 注册成功，用户数据 ===');
+      debugPrint('完整响应: $userData');
+      debugPrint('userId: $userId');
+      debugPrint('username: ${userData['username']}');
+      debugPrint('email: ${userData['email']}');
+      debugPrint('=======================');
 
+      // ✅ 注册完成，邀请码永久有效无需核销
       return {
         'user': User.fromJson(userData),
         'token': 'token_$userId',
       };
     } catch (e) {
+      // 如果是我们自己抛出的异常，直接传递
+      if (e.toString().startsWith('Exception: ')) {
+        rethrow;
+      }
       throw Exception('注册失败: $e');
-    } finally {
-      client.close();
     }
   }
 
-  // 4. 登录
+  // 解析 PocketBase 错误信息，转换为用户友好的中文提示
+  String _parseErrorMessage(String errorBody) {
+    try {
+      final errorData = json.decode(errorBody);
+      
+      // 检查是否有 data 字段（包含具体字段错误）
+      if (errorData['data'] != null) {
+        final data = errorData['data'] as Map<String, dynamic>;
+        
+        // 邮箱格式错误
+        if (data['email'] != null) {
+          final emailError = data['email'];
+          if (emailError['code'] == 'validation_is_email') {
+            return '邮箱格式不正确';
+          }
+        }
+        
+        // 密码长度错误
+        if (data['password'] != null) {
+          final passwordError = data['password'];
+          if (passwordError['code'] == 'validation_min_text_constraint') {
+            return '密码至少需要8个字符';
+          }
+        }
+        
+        // 用户名错误
+        if (data['username'] != null) {
+          return '用户名格式不正确';
+        }
+      }
+      
+      // 返回通用错误信息
+      return errorData['message'] ?? '注册失败，请检查输入信息';
+    } catch (e) {
+      return '注册失败，请稍后重试';
+    }
+  }
+
+  // 4. 登录（使用 PocketBase 认证 API）
   Future<Map<String, dynamic>> login({
     required String email,
     required String password,
@@ -148,23 +193,23 @@ class AuthApiService {
       throw Exception('邮箱和密码不能为空');
     }
     
-    final client = _getSecureClient();
     try {
-      final response = await client.get(
-        Uri.parse('$baseUrl/users?email=$trimmedEmail&password=$password'),
+      // 使用 PocketBase 认证 API
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/collections/users/auth-with-password'),
         headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identity': trimmedEmail,
+          'password': password,
+        }),
       ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode >= 400) {
-        throw Exception('HTTP 错误 ${response.statusCode}: ${response.body}');
+        throw Exception('邮箱或密码错误');
       }
 
       final data = json.decode(response.body);
-      if (data is! List || data.isEmpty) {
-        throw Exception('邮箱或密码错误');
-      }
-      
-      final user = User.fromJson(data[0]);
+      final user = User.fromJson(data['record']);
       
       // 检查会员是否过期
       if (user.isExpired) {
@@ -173,12 +218,10 @@ class AuthApiService {
 
       return {
         'user': user,
-        'token': 'token_${user.id}',
+        'token': data['token'] ?? 'token_${user.id}',
       };
     } catch (e) {
       throw Exception('登录失败: $e');
-    } finally {
-      client.close();
     }
   }
 
@@ -188,13 +231,12 @@ class AuthApiService {
     required String avatarUrl,
     required String token,
   }) async {
-    final client = _getSecureClient();
     try {
-      final response = await client.put(
-        Uri.parse('$baseUrl/users/$userId'),
+      final response = await http.patch(
+        Uri.parse('$baseUrl/api/collections/users/records/$userId'),
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
+          'Authorization': token,
         },
         body: json.encode({'avatar': avatarUrl}),
       ).timeout(const Duration(seconds: 15));
@@ -206,20 +248,17 @@ class AuthApiService {
       return User.fromJson(json.decode(response.body));
     } catch (e) {
       return null;
-    } finally {
-      client.close();
     }
   }
 
   // 6. 获取用户信息
   Future<User?> getUserInfo(String userId, String token) async {
-    final client = _getSecureClient();
     try {
-      final response = await client.get(
-        Uri.parse('$baseUrl/users/$userId'),
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/collections/users/records/$userId'),
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
+          'Authorization': token,
         },
       ).timeout(const Duration(seconds: 15));
 
@@ -230,17 +269,14 @@ class AuthApiService {
       return User.fromJson(json.decode(response.body));
     } catch (e) {
       return null;
-    } finally {
-      client.close();
     }
   }
 
   // 7. 发送邮箱验证码（占位方法，需要后端支持）
   Future<void> sendVerificationCode(String email) async {
-    final client = _getSecureClient();
     try {
-      final response = await client.post(
-        Uri.parse('$baseUrl/send-verification-code'),
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/send-verification-code'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email.trim()}),
       ).timeout(const Duration(seconds: 15));
@@ -250,8 +286,6 @@ class AuthApiService {
       }
     } catch (e) {
       throw Exception('发送验证码失败: $e');
-    } finally {
-      client.close();
     }
   }
 }

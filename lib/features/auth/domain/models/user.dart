@@ -20,7 +20,7 @@ class User {
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
       id: json['_id'] ?? json['id'] ?? '',
-      username: json['username'] ?? '',
+      username: json['username'] ?? json['name'] ?? '', // 支持两种字段名
       email: json['email'] ?? '',
       avatar: json['avatar'],
       expireDate: DateTime.parse(json['expire_date'] ?? json['expireDate']),

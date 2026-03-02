@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,8 +24,6 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // 🚀 核心修复：全局忽略 SSL 证书错误，允许 VPN/代理 环境调试
-  HttpOverrides.global = MyHttpOverrides();
   
   // ✅ 初始化 media_kit（视频播放器）
   MediaKit.ensureInitialized();
@@ -233,14 +230,5 @@ class AppTheme {
       case 2: return Colors.white.withOpacity(0.3);
       default: return const Color(0xFF3E3F42);
     }
-  }
-}
-
-// 全局 HTTP 覆盖类：忽略 SSL 证书错误（用于 VPN/代理环境）
-class MyHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
   }
 }
