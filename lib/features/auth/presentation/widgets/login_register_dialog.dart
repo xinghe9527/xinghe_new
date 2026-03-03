@@ -23,10 +23,6 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
   final _passwordController = TextEditingController();
   final _usernameController = TextEditingController();
   final _invitationCodeController = TextEditingController();
-  final _verificationCodeController = TextEditingController(); // 新增验证码控制器
-
-  int _countdown = 0; // 倒计时秒数
-  bool _isSendingCode = false; // 是否正在发送验证码
 
   @override
   void initState() {
@@ -49,7 +45,6 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
     _passwordController.dispose();
     _usernameController.dispose();
     _invitationCodeController.dispose();
-    _verificationCodeController.dispose(); // 释放验证码控制器
     super.dispose();
   }
 
@@ -114,8 +109,15 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
       );
       
       if (mounted) {
+        final email = _emailController.text; // 保存邮箱
+        // 先关闭注册对话框
         Navigator.of(context).pop();
-        _showSuccess('注册成功');
+        // 延迟显示验证提示，确保注册对话框已完全关闭
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (context.mounted) {
+            _showVerificationDialog(context, email);
+          }
+        });
       }
     } catch (e) {
       // 提取纯净的错误信息（去掉 "Exception: " 前缀和嵌套）
@@ -133,62 +135,70 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
     }
   }
 
-  // 发送验证码
-  Future<void> _sendVerificationCode() async {
-    if (_emailController.text.trim().isEmpty) {
-      _showError('请先输入邮箱');
-      return;
-    }
-
-    // 邮箱格式验证
-    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-    if (!emailRegex.hasMatch(_emailController.text.trim())) {
-      _showError('邮箱格式不正确');
-      return;
-    }
-
-    setState(() => _isSendingCode = true);
-
-    try {
-      // TODO: 调用后端发送验证码接口
-      // await widget.authProvider.apiService.sendVerificationCode(_emailController.text.trim());
-      
-      // 暂时模拟成功
-      await Future.delayed(const Duration(seconds: 1));
-      
-      if (mounted) {
-        _showSuccess('验证码功能需配置 SMTP，当前仅作演示');
-        
-        // 开始倒计时
-        setState(() {
-          _countdown = 60;
-        });
-        
-        _startCountdown();
-      }
-    } catch (e) {
-      _showError('发送验证码失败: ${e.toString().replaceFirst('Exception: ', '')}');
-    } finally {
-      if (mounted) setState(() => _isSendingCode = false);
-    }
-  }
-
-  // 倒计时
-  void _startCountdown() {
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted && _countdown > 0) {
-        setState(() => _countdown--);
-        _startCountdown();
-      }
-    });
-  }
-
-  void _showError(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
+  // 显示邮件验证提示对话框（静态方法，不依赖 State）
+  static void _showVerificationDialog(BuildContext context, String email) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF0D0D0D),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.mark_email_read, color: Color(0xFF00E5FF), size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              '注册成功',
+              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '已向您的邮箱发送了一封激活邮件，请点击邮件中的链接以完成账号激活。',
+              style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '邮箱: $email',
+                      style: const TextStyle(color: Colors.orange, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext); // 关闭验证对话框
+            },
+            child: const Text('我知道了', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 16)),
+          ),
+        ],
       ),
     );
   }
@@ -290,86 +300,6 @@ class _LoginRegisterDialogState extends State<LoginRegisterDialog> {
                           label: '邮箱',
                           icon: Icons.email_outlined,
                         ),
-                        if (!_isLogin) ...[
-                          const SizedBox(height: 20),
-                          // 验证码输入框 + 获取验证码按钮
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _GlassInputField(
-                                  controller: _verificationCodeController,
-                                  label: '验证码',
-                                  icon: Icons.verified_user_outlined,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              // 获取验证码按钮 - 渐变色
-                              SizedBox(
-                                height: 48,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    gradient: (_countdown > 0 || _isSendingCode)
-                                        ? null
-                                        : const LinearGradient(
-                                            colors: [
-                                              Color(0xFF00E5FF),
-                                              Color(0xFFAA00FF),
-                                            ],
-                                            begin: Alignment.centerLeft,
-                                            end: Alignment.centerRight,
-                                          ),
-                                    color: (_countdown > 0 || _isSendingCode)
-                                        ? Colors.white.withValues(alpha: 0.05)
-                                        : null,
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: (_countdown > 0 || _isSendingCode)
-                                        ? null
-                                        : [
-                                            BoxShadow(
-                                              color: const Color(0xFF00E5FF).withValues(alpha: 0.3),
-                                              blurRadius: 10,
-                                              spreadRadius: 1,
-                                            ),
-                                          ],
-                                  ),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: (_countdown > 0 || _isSendingCode)
-                                          ? null
-                                          : _sendVerificationCode,
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                                        alignment: Alignment.center,
-                                        child: _isSendingCode
-                                            ? const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                                ),
-                                              )
-                                            : Text(
-                                                _countdown > 0 ? '${_countdown}s' : '获取验证码',
-                                                style: TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: (_countdown > 0 || _isSendingCode)
-                                                      ? Colors.white30
-                                                      : Colors.white,
-                                                  letterSpacing: 0.5,
-                                                ),
-                                              ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
                         const SizedBox(height: 20),
                         _GlassInputField(
                           controller: _passwordController,

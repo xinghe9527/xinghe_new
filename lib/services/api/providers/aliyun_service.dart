@@ -102,7 +102,7 @@ class AliyunService extends ApiServiceBase {
           'Content-Type': 'application/json',
         },
         body: jsonEncode(requestBody),
-      ).timeout(const Duration(seconds: 180));  // ✅ 增加到180秒（3分钟），支持生成大量内容
+      ).timeout(const Duration(seconds: 300));  // ✅ 增加到300秒（5分钟），支持生成大量内容
       
       final elapsed = DateTime.now().difference(startTime).inMilliseconds;
       print('✅ 请求完成，耗时: ${elapsed}ms');
@@ -144,7 +144,20 @@ class AliyunService extends ApiServiceBase {
       }
     } catch (e) {
       print('💥 阿里云异常: $e\n');
-      return ApiResponse.failure('生成错误: $e');
+      
+      // 将英文错误提示转换为中文
+      String errorMessage = e.toString();
+      if (errorMessage.contains('TimeoutException')) {
+        errorMessage = '请求超时，请重试。如果问题持续，请尝试缩短剧本长度或稍后再试。';
+      } else if (errorMessage.contains('SocketException')) {
+        errorMessage = '网络连接失败，请检查网络设置';
+      } else if (errorMessage.contains('HandshakeException')) {
+        errorMessage = 'SSL 证书验证失败，请检查网络环境';
+      } else {
+        errorMessage = '生成失败: $errorMessage';
+      }
+      
+      return ApiResponse.failure(errorMessage);
     }
   }
 

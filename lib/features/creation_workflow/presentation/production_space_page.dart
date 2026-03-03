@@ -2187,12 +2187,34 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       String fullPrompt = '';
       
       if (widget.storyboardPromptContent.isNotEmpty) {
-        // ✅ 如果用户设置了提示词预设，使用预设并强调生成完整分镜
+        // ✅ 如果用户设置了提示词预设，使用预设并替换所有模板变量
+        
+        // 构建角色信息文本
+        final characterInfoText = _characters.isNotEmpty 
+            ? _characters.map((c) => c.name).join('、')
+            : '无角色信息';
+        
+        // 构建场景信息文本
+        final sceneInfoText = _scenes.isNotEmpty 
+            ? _scenes.map((s) => s.name).join('、')
+            : '无场景信息';
+        
+        // 构建物品信息文本
+        final itemInfoText = _items.isNotEmpty 
+            ? _items.map((i) => i.name).join('、')
+            : '无物品信息';
+        
         final userPrompt = widget.storyboardPromptContent
             .replaceAll('{{小说原文}}', widget.scriptContent)
             .replaceAll('{{推文文案}}', widget.scriptContent)
             .replaceAll('{{故事情节}}', widget.scriptContent)
-            .replaceAll('{{剧本内容}}', widget.scriptContent);
+            .replaceAll('{{剧本内容}}', widget.scriptContent)
+            .replaceAll('{{输入文案}}', widget.scriptContent)
+            .replaceAll('{{角色信息}}', characterInfoText)
+            .replaceAll('{{场景信息}}', sceneInfoText)
+            .replaceAll('{{物品信息}}', itemInfoText)
+            .replaceAll('{{前面文案:2}}', '')  // 当前暂无上下文数据
+            .replaceAll('{{后面文案:2}}', '');  // 当前暂无上下文数据
         
         // ✅ 纯粹使用用户的提示词预设，不添加任何额外要求
         // 用户的预设中应该包含剧本拆分和分镜生成的所有规则
@@ -2255,71 +2277,90 @@ ${widget.scriptContent}
             
             print('📦 找到 ${matches.length} 个输出块');
             
+            int currentScriptPosition = 0;  // 当前在原剧本中的位置
+            
             for (final match in matches) {
               final content = match.group(1)?.trim() ?? '';
               if (content.isEmpty) continue;
               
-              // ✅ 使用正则表达式匹配所有的 "内容===内容" 对
-              // 改进：使用贪婪匹配直到遇到独立的 === 或结尾
-              final storyboardPattern = RegExp(
-                r'([\s\S]+?)===\s*([\s\S]+?)(?=\s*===\s*[\s\S]+?===|$)',
-                dotAll: true,
-                multiLine: true,
-              );
+              // ✅ 使用简单的 split('===') 分割，替代复杂正则
+              // 每个 OUTPUT 块包含一个分镜，格式：剧本原文===图片提示词===视频提示词
+              final parts = content.split('===');
               
-              final storyboards = storyboardPattern.allMatches(content);
+              String scriptSegment = '';
+              String imagePrompt = '';
+              String videoPrompt = '';
+              int startIndex = -1;
+              int endIndex = -1;
               
-              print('   正则匹配到 ${storyboards.length} 个分镜段落');
-              
-              int currentScriptPosition = 0;  // 当前在原剧本中的位置
-              
-              for (final sb in storyboards) {
-                var imagePrompt = sb.group(1)?.trim() ?? '';
-                var videoPrompt = sb.group(2)?.trim() ?? '';
+              if (parts.length >= 3) {
+                // ✅ 三段式：剧本原文 === 图片提示词 === 视频提示词
+                scriptSegment = parts[0].trim();
+                imagePrompt = parts[1].trim();
+                // 第3段及之后全部作为视频提示词（防止视频提示词中也包含===）
+                videoPrompt = parts.sublist(2).join('===').trim();
                 
-                // ✅ 尝试提取剧本片段（如果有）
-                String scriptSegment = '';
-                int startIndex = -1;
-                int endIndex = -1;
+                print('   📋 三段式格式（剧本+图片+视频）');
+              } else if (parts.length == 2) {
+                // ✅ 两段式：图片提示词 === 视频提示词（无剧本片段）
+                imagePrompt = parts[0].trim();
+                videoPrompt = parts[1].trim();
                 
-                // 检查图片提示词中是否包含【剧本片段】标记
-                final scriptPattern = RegExp(r'【剧本片段】(.*?)【图片提示词】', dotAll: true);
+                print('   📋 两段式格式（图片+视频）');
+              } else {
+                // 只有一段内容，作为图片提示词
+                imagePrompt = parts[0].trim();
+                print('   ⚠️ 仅一段内容，作为图片提示词');
+              }
+              
+              // ✅ 检查是否包含【剧本片段】和【图片提示词】等标记（兼容旧格式）
+              if (scriptSegment.isEmpty && imagePrompt.isNotEmpty) {
+                final scriptPattern = RegExp(r'【剧本片段】(.*?)【图片提示词】(.*)', dotAll: true);
                 final scriptMatch = scriptPattern.firstMatch(imagePrompt);
-                
                 if (scriptMatch != null) {
                   scriptSegment = scriptMatch.group(1)?.trim() ?? '';
-                  // 移除【剧本片段】部分，保留纯粹的图片提示词
-                  imagePrompt = imagePrompt.replaceFirst(scriptPattern, '').trim();
-                  
-                  // ✅ 在原剧本中查找该片段的位置
-                  final foundIndex = widget.scriptContent.indexOf(scriptSegment, currentScriptPosition);
-                  if (foundIndex != -1) {
-                    startIndex = foundIndex;
-                    endIndex = foundIndex + scriptSegment.length;
-                    currentScriptPosition = endIndex;  // 下次从这里开始找
-                  }
-                  
-                  print('   📖 剧本片段: ${scriptSegment.substring(0, scriptSegment.length > 40 ? 40 : scriptSegment.length)}...');
-                  print('      位置: $startIndex - $endIndex');
+                  imagePrompt = scriptMatch.group(2)?.trim() ?? '';
+                  print('   📋 从标记中提取了剧本片段');
                 }
-                
-                if (imagePrompt.isNotEmpty || videoPrompt.isNotEmpty) {
-                  storyboardList.add(StoryboardRow(
-                    id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
-                    scriptSegment: scriptSegment,
-                    startIndex: startIndex,
-                    endIndex: endIndex,
-                    isUserCreated: false,
-                    imagePrompt: imagePrompt,
-                    videoPrompt: videoPrompt,
-                    selectedImageAssets: [],
-                    selectedVideoAssets: [],
-                  ));
-                  
-                  print('   ✅ 分镜 ${storyboardList.length}');
-                  print('      图片: ${imagePrompt.substring(0, imagePrompt.length > 50 ? 50 : imagePrompt.length)}...');
-                  print('      视频: ${videoPrompt.substring(0, videoPrompt.length > 50 ? 50 : videoPrompt.length)}...');
+              }
+              
+              // ✅ 在原剧本中查找该片段的位置
+              if (scriptSegment.isNotEmpty) {
+                final foundIndex = widget.scriptContent.indexOf(scriptSegment, currentScriptPosition);
+                if (foundIndex != -1) {
+                  startIndex = foundIndex;
+                  endIndex = foundIndex + scriptSegment.length;
+                  currentScriptPosition = endIndex;
                 }
+              }
+              
+              // ✅ 确保图片提示词不为空才添加
+              if (imagePrompt.isEmpty) {
+                print('   ⚠️ 跳过不完整分镜（图片提示词为空）');
+                continue;
+              }
+              
+              storyboardList.add(StoryboardRow(
+                id: DateTime.now().millisecondsSinceEpoch.toString() + '_' + storyboardList.length.toString(),
+                scriptSegment: scriptSegment,
+                startIndex: startIndex,
+                endIndex: endIndex,
+                isUserCreated: false,
+                imagePrompt: imagePrompt,
+                videoPrompt: videoPrompt,
+                selectedImageAssets: [],
+                selectedVideoAssets: [],
+              ));
+              
+              print('   ✅ 分镜 ${storyboardList.length}');
+              if (scriptSegment.isNotEmpty) {
+                print('      剧本: ${scriptSegment.substring(0, scriptSegment.length > 40 ? 40 : scriptSegment.length)}...');
+              }
+              if (imagePrompt.isNotEmpty) {
+                print('      图片: ${imagePrompt.substring(0, imagePrompt.length > 50 ? 50 : imagePrompt.length)}...');
+              }
+              if (videoPrompt.isNotEmpty) {
+                print('      视频: ${videoPrompt.substring(0, videoPrompt.length > 50 ? 50 : videoPrompt.length)}...');
               }
             }
             

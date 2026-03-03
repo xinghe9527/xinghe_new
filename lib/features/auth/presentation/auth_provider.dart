@@ -129,4 +129,25 @@ class AuthProvider extends ChangeNotifier {
       print('刷新用户信息失败: $e');
     }
   }
+
+  // 修改密码
+  Future<void> updatePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    if (_authState.user == null || _authState.token == null) {
+      throw Exception('用户未登录');
+    }
+
+    try {
+      await _apiService.updatePassword(
+        userId: _authState.user!.id,
+        oldPassword: oldPassword,
+        newPassword: newPassword,
+        token: _authState.token!,
+      );
+    } catch (e) {
+      rethrow;
+    }
+  }
 }

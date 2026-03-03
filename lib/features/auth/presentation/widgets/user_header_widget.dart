@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:xinghe_new/main.dart';
-import 'package:xinghe_new/features/auth/data/avatar_upload_service.dart';
 import '../auth_provider.dart';
 import 'login_register_dialog.dart';
 
 class UserHeaderWidget extends StatelessWidget {
   final AuthProvider authProvider;
-  final AvatarUploadService _avatarUploadService = AvatarUploadService();
 
-  UserHeaderWidget({
+  const UserHeaderWidget({
     super.key,
     required this.authProvider,
   });
@@ -145,24 +142,10 @@ class UserHeaderWidget extends StatelessWidget {
               // 菜单项
               _buildMenuItem(
                 context,
-                icon: Icons.person_outline,
-                iconColor: Colors.blue,
-                title: '编辑个人资料',
-                subtitle: '修改用户名、头像',
-                onTap: () {
-                  Navigator.pop(context);
-                  _showEditProfileDialog(context);
-                },
-              ),
-              
-              Divider(color: AppTheme.dividerColor, height: 1),
-              
-              _buildMenuItem(
-                context,
                 icon: Icons.settings_outlined,
                 iconColor: Colors.purple,
                 title: '账号设置',
-                subtitle: '修改密码、安全设置',
+                subtitle: '修改密码',
                 onTap: () {
                   Navigator.pop(context);
                   _showAccountSettingsDialog(context);
@@ -247,17 +230,6 @@ class UserHeaderWidget extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  // 编辑个人资料对话框
-  void _showEditProfileDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => _EditProfileDialog(
-        authProvider: authProvider,
-        avatarUploadService: _avatarUploadService,
       ),
     );
   }
@@ -448,236 +420,6 @@ class UserHeaderWidget extends StatelessWidget {
 }
 
 
-// 编辑个人资料对话框
-class _EditProfileDialog extends StatefulWidget {
-  final AuthProvider authProvider;
-  final AvatarUploadService avatarUploadService;
-
-  const _EditProfileDialog({
-    required this.authProvider,
-    required this.avatarUploadService,
-  });
-
-  @override
-  State<_EditProfileDialog> createState() => _EditProfileDialogState();
-}
-
-class _EditProfileDialogState extends State<_EditProfileDialog> {
-  late TextEditingController _usernameController;
-  bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _usernameController = TextEditingController(
-      text: widget.authProvider.currentUser?.username ?? '',
-    );
-  }
-
-  @override
-  void dispose() {
-    _usernameController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _uploadAvatar() async {
-    // 暂时禁用头像上传功能（OSS 权限问题）
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('头像上传功能开发中，敬请期待'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-    return;
-
-    /* 原头像上传代码（待 OSS 权限配置后启用）
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 512,
-      maxHeight: 512,
-      imageQuality: 85,
-    );
-
-    if (image != null && mounted) {
-      setState(() => _isLoading = true);
-
-      try {
-        final avatarUrl = await widget.avatarUploadService.uploadAvatar(
-          userId: widget.authProvider.currentUser!.id,
-          localPath: image.path,
-        );
-        
-        await widget.authProvider.updateAvatar(avatarUrl);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('头像更新成功'), backgroundColor: Colors.green),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('头像更新失败: $e'), backgroundColor: Colors.red),
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
-      }
-    }
-    */
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final user = widget.authProvider.currentUser;
-    if (user == null) {
-      return const SizedBox();
-    }
-
-    return Dialog(
-      backgroundColor: AppTheme.surfaceBackground,
-      child: Container(
-        width: 400,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '编辑个人资料',
-              style: TextStyle(
-                color: AppTheme.textColor,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 24),
-            
-            // 头像编辑
-            Center(
-              child: Stack(
-                children: [
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppTheme.accentColor, width: 2),
-                    ),
-                    child: ClipOval(
-                      child: user.avatar != null && user.avatar!.isNotEmpty
-                          ? Image.network(
-                              user.avatar!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Image.asset(
-                                  'assets/logo.png',
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) {
-                                    return Icon(Icons.person, color: AppTheme.accentColor, size: 50);
-                                  },
-                                );
-                              },
-                            )
-                          : Image.asset(
-                              'assets/logo.png',
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) {
-                                return Icon(Icons.person, color: AppTheme.accentColor, size: 50);
-                              },
-                            ),
-                    ),
-                  ),
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: GestureDetector(
-                      onTap: _isLoading ? null : _uploadAvatar,
-                      child: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: AppTheme.accentColor,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.3),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: _isLoading
-                            ? const Padding(
-                                padding: EdgeInsets.all(8),
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(Colors.white),
-                                ),
-                              )
-                            : const Icon(Icons.camera_alt, color: Colors.white, size: 16),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            
-            // 用户名编辑
-            Text(
-              '用户名',
-              style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _usernameController,
-              style: TextStyle(color: AppTheme.textColor),
-              decoration: InputDecoration(
-                hintText: '输入用户名',
-                hintStyle: TextStyle(color: AppTheme.subTextColor),
-                filled: true,
-                fillColor: AppTheme.inputBackground,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            
-            // 按钮
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: () {
-                    // TODO: 实现用户名更新
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('用户名更新功能开发中')),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.accentColor,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('保存'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // 账号设置对话框
 class _AccountSettingsDialog extends StatefulWidget {
   final AuthProvider authProvider;
@@ -693,6 +435,7 @@ class _AccountSettingsDialogState extends State<_AccountSettingsDialog> {
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
+  String? _errorMessage; // 错误消息（在表单内显示）
 
   @override
   void dispose() {
@@ -700,6 +443,74 @@ class _AccountSettingsDialogState extends State<_AccountSettingsDialog> {
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleUpdatePassword() async {
+    // 验证输入
+    if (_oldPasswordController.text.isEmpty) {
+      setState(() => _errorMessage = '请输入当前密码');
+      return;
+    }
+    if (_newPasswordController.text.isEmpty) {
+      setState(() => _errorMessage = '请输入新密码');
+      return;
+    }
+    if (_newPasswordController.text.length < 8) {
+      setState(() => _errorMessage = '新密码至少需要8个字符');
+      return;
+    }
+    if (_newPasswordController.text != _confirmPasswordController.text) {
+      setState(() => _errorMessage = '两次输入的新密码不一致');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null; // 清除之前的错误
+    });
+
+    try {
+      await widget.authProvider.updatePassword(
+        oldPassword: _oldPasswordController.text,
+        newPassword: _newPasswordController.text,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+        _showSuccessSnackBar('密码修改成功，请重新登录');
+        
+        // 延迟退出登录，让用户看到成功提示
+        Future.delayed(const Duration(seconds: 1), () async {
+          await widget.authProvider.logout();
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        // 提取纯净的错误信息
+        String errorMsg = e.toString().replaceAll('Exception: ', '');
+        if (errorMsg.contains('Exception: ')) {
+          errorMsg = errorMsg.split('Exception: ').last;
+        }
+        if (errorMsg.contains('旧密码') || errorMsg.contains('old password')) {
+          errorMsg = '当前密码错误';
+        }
+        setState(() {
+          _isLoading = false;
+          _errorMessage = errorMsg;
+        });
+      }
+    }
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -734,29 +545,61 @@ class _AccountSettingsDialogState extends State<_AccountSettingsDialog> {
             _buildPasswordField('新密码', _newPasswordController),
             const SizedBox(height: 12),
             _buildPasswordField('确认新密码', _confirmPasswordController),
+            
+            // 错误提示（在表单内显示）
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.1),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            
             const SizedBox(height: 24),
             
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: _isLoading ? null : () => Navigator.pop(context),
                   child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
                 ),
                 const SizedBox(width: 12),
                 ElevatedButton(
-                  onPressed: () {
-                    // TODO: 实现密码修改
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('密码修改功能开发中')),
-                    );
-                  },
+                  onPressed: _isLoading ? null : _handleUpdatePassword,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.accentColor,
                     foregroundColor: Colors.white,
                   ),
-                  child: const Text('确认修改'),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(Colors.white),
+                          ),
+                        )
+                      : const Text('确认修改'),
                 ),
               ],
             ),
