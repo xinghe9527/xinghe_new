@@ -270,6 +270,19 @@ class _StoryboardPromptManagerState extends State<StoryboardPromptManager> {
 
   void _confirmSelection() {
     if (_presets.isEmpty) return;
+    // ✅ 确认选择前自动保存所有预设修改，防止修改丢失
+    _savePresetsSync();
     Navigator.pop(context, _presets[_selectedIndex]);
+  }
+  
+  /// 同步保存预设（不显示 SnackBar 提示）
+  Future<void> _savePresetsSync() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('storyboard_prompt_presets', jsonEncode(_presets));
+      debugPrint('✅ 预设已自动保存');
+    } catch (e) {
+      debugPrint('⚠️ 保存预设失败: $e');
+    }
   }
 }

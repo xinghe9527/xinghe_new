@@ -20,6 +20,7 @@ import 'widgets/video_grid_item.dart';  // ✅ 导入视频格子组件
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/ffmpeg_service.dart';
+import '../../../core/aigc_engine/automation_api_client.dart';  // ✅ 网页服务商
 
 /// 分镜空间页面（分镜生成和管理 - Excel风格）
 class ProductionSpacePage extends StatefulWidget {
@@ -2189,19 +2190,34 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       if (widget.storyboardPromptContent.isNotEmpty) {
         // ✅ 如果用户设置了提示词预设，使用预设并替换所有模板变量
         
-        // 构建角色信息文本
+        // 构建角色信息文本（包含映射代码，如果有的话）
         final characterInfoText = _characters.isNotEmpty 
-            ? _characters.map((c) => c.name).join('、')
+            ? _characters.map((c) {
+                if (c.mappingCode != null && c.mappingCode!.isNotEmpty) {
+                  return '- 角色：${c.name}, 映射代码：${c.mappingCode}${c.name}';
+                }
+                return '- 角色：${c.name}';
+              }).join('\n')
             : '无角色信息';
         
-        // 构建场景信息文本
+        // 构建场景信息文本（包含映射代码，如果有的话）
         final sceneInfoText = _scenes.isNotEmpty 
-            ? _scenes.map((s) => s.name).join('、')
+            ? _scenes.map((s) {
+                if (s.mappingCode != null && s.mappingCode!.isNotEmpty) {
+                  return '- 场景：${s.name}, 映射代码：${s.mappingCode}${s.name}';
+                }
+                return '- 场景：${s.name}';
+              }).join('\n')
             : '无场景信息';
         
-        // 构建物品信息文本
+        // 构建物品信息文本（包含映射代码，如果有的话）
         final itemInfoText = _items.isNotEmpty 
-            ? _items.map((i) => i.name).join('、')
+            ? _items.map((i) {
+                if (i.mappingCode != null && i.mappingCode!.isNotEmpty) {
+                  return '- 物品：${i.name}, 映射代码：${i.mappingCode}${i.name}';
+                }
+                return '- 物品：${i.name}';
+              }).join('\n')
             : '无物品信息';
         
         final userPrompt = widget.storyboardPromptContent
@@ -2214,7 +2230,9 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             .replaceAll('{{场景信息}}', sceneInfoText)
             .replaceAll('{{物品信息}}', itemInfoText)
             .replaceAll('{{前面文案:2}}', '')  // 当前暂无上下文数据
-            .replaceAll('{{后面文案:2}}', '');  // 当前暂无上下文数据
+            .replaceAll('{{后面文案:2}}', '')  // 当前暂无上下文数据
+            .replaceAll('{{前面分镜:1}}', '')  // 当前暂无上下文数据
+            .replaceAll('{{后面分镜:1}}', '');  // 当前暂无上下文数据
         
         // ✅ 纯粹使用用户的提示词预设，不添加任何额外要求
         // 用户的预设中应该包含剧本拆分和分镜生成的所有规则
@@ -2267,12 +2285,18 @@ ${widget.scriptContent}
         final storyboardList = <StoryboardRow>[];
         
         try {
-          // 方法1：检测特殊格式标记（_::~OUTPUT_START::~_ ... _::~OUTPUT_END::~_）
-          if (responseText.contains('_::~OUTPUT_START::~_') && responseText.contains('_::~OUTPUT_END::~_')) {
-            print('🔍 检测到特殊输出格式标记');
+          // 方法1：检测 OUTPUT_START/OUTPUT_END 格式标记
+          // ✅ 兼容多种变体：_::~OUTPUT_START::~_、::OUTPUT_START::、_::~OUTPUT_START~ 等
+          final hasOutputMarkers = RegExp(r'_?::~?OUTPUT_START::?~?_?', caseSensitive: false).hasMatch(responseText);
+          
+          if (hasOutputMarkers) {
+            print('🔍 检测到 OUTPUT_START/OUTPUT_END 格式标记');
             
-            // ✅ 提取所有输出块（每个块是一个分镜）
-            final outputPattern = RegExp(r'_::~OUTPUT_START::~_(.*?)_::~OUTPUT_END::~_', dotAll: true);
+            // ✅ 灵活匹配各种变体的 OUTPUT 标记
+            final outputPattern = RegExp(
+              r'_?::~?OUTPUT_START::?~?_?(.*?)_?::~?OUTPUT_END::?~?_?',
+              dotAll: true,
+            );
             final matches = outputPattern.allMatches(responseText);
             
             print('📦 找到 ${matches.length} 个输出块');
@@ -2696,6 +2720,242 @@ ${widget.scriptContent}
       print('   Provider: $provider');
       print('   Model: ${model ?? "未设置"}\n');
       
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(provider);
+      
+      if (isWebProvider) {
+        // ========== 网页服务商路线 ==========
+        print('🌐 使用网页服务商批量生成视频: $provider');
+        
+        // 读取网页服务商配置
+        final webTool = prefs.getString('video_web_tool');
+        final webModel = prefs.getString('video_web_model');
+        
+        if (webTool == null || webTool.isEmpty) {
+          throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型');
+        }
+        if (webModel == null || webModel.isEmpty) {
+          throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型');
+        }
+        
+        // 创建 AutomationApiClient 实例
+        final aigcClient = AutomationApiClient();
+        
+        // 检查 API 服务是否可用
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception(
+            'Python API 服务未启动\n\n'
+            '请先启动 Python 服务：\n'
+            '1. 打开命令行\n'
+            '2. 进入项目目录\n'
+            '3. 运行: python python_backend/web_automation/api_server.py'
+          );
+        }
+        
+        // 获取保存路径
+        final workPath = workSavePathNotifier.value;
+        final videoSavePath = videoSavePathNotifier.value;
+        String? saveDirPath;
+        if (workPath != '未设置' && workPath.isNotEmpty) {
+          saveDirPath = path.join(workPath, widget.workName);
+        } else if (videoSavePath != '未设置' && videoSavePath.isNotEmpty) {
+          saveDirPath = videoSavePath;
+        }
+        
+        // ✅ 并发提交所有任务
+        print('🚀 开始并发提交 ${storyboardsToGenerate.length} 个网页服务商任务\n');
+        
+        final submitFutures = storyboardsToGenerate.map((sb) async {
+          final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+          
+          try {
+            // 构建完整提示词
+            String fullPrompt = sb.videoPrompt.isNotEmpty ? sb.videoPrompt : sb.imagePrompt;
+            if (_globalVideoTheme.isNotEmpty) {
+              fullPrompt = '$_globalVideoTheme, $fullPrompt';
+            }
+            
+            // 获取参考图片
+            final referenceImage = sb.imageUrls.isNotEmpty ? sb.imageUrls[sb.selectedImageIndex] : null;
+            
+            // 构建 payload
+            final payload = <String, dynamic>{
+              'prompt': fullPrompt,
+              'model': webModel,
+            };
+            
+            // 添加保存路径
+            if (saveDirPath != null) {
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              final fileName = 'storyboard_${storyboardIndex + 1}_$timestamp.mp4';
+              payload['savePath'] = path.join(saveDirPath, fileName);
+            }
+            
+            // 根据工具类型添加不同参数
+            if (webTool == 'img2video') {
+              if (referenceImage == null) {
+                throw Exception('分镜${storyboardIndex + 1}：图生视频需要先生成图片');
+              }
+              payload['imageUrl'] = referenceImage;
+            }
+            
+            if (webTool == 'ref2video') {
+              // ✅ 检查分镜关联的资产是否来自素材库
+              final selectedAssetIds = [...sb.selectedImageAssets, ...sb.selectedVideoAssets].toSet().toList();
+              final List<String> assetNames = [];
+              final List<String> assetImagePaths = [];
+              
+              for (final assetId in selectedAssetIds) {
+                String? imageUrl;
+                for (final char in _characters) {
+                  if (char.id == assetId && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+                    imageUrl = char.imageUrl;
+                    break;
+                  }
+                }
+                if (imageUrl == null) {
+                  for (final scene in _scenes) {
+                    if (scene.id == assetId && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+                      imageUrl = scene.imageUrl;
+                      break;
+                    }
+                  }
+                }
+                if (imageUrl == null) {
+                  for (final item in _items) {
+                    if (item.id == assetId && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                      imageUrl = item.imageUrl;
+                      break;
+                    }
+                  }
+                }
+                
+                if (imageUrl != null) {
+                  final assetName = await _findAssetNameByPath(imageUrl);
+                  if (assetName != null && assetName.isNotEmpty) {
+                    assetNames.add(assetName);
+                  } else {
+                    assetImagePaths.add(imageUrl);
+                  }
+                }
+              }
+              
+              if (assetNames.isNotEmpty) {
+                payload['characterName'] = assetNames.join(',');
+                print('   📦 [${storyboardIndex + 1}] 素材库主体: ${assetNames.join(", ")}');
+              }
+              if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
+                payload['referenceFile'] = assetImagePaths.first;
+              } else if (referenceImage != null && assetNames.isEmpty) {
+                payload['referenceFile'] = referenceImage;
+              }
+            }
+            
+            // 添加视频参数
+            payload['aspectRatio'] = '16:9';
+            payload['duration'] = '8秒';
+            
+            // 提交任务
+            final result = await aigcClient.submitGenerationTask(
+              platform: provider,
+              toolType: webTool,
+              payload: payload,
+            );
+            
+            print('   ✅ [${storyboardIndex + 1}] 任务已提交: ${result.taskId}');
+            
+            return {
+              'storyboardIndex': storyboardIndex,
+              'taskId': result.taskId,
+              'sb': sb,
+            };
+          } catch (e) {
+            print('   ❌ [${storyboardIndex + 1}] 提交失败: $e');
+            rethrow;
+          }
+        }).toList();
+        
+        // 等待所有任务提交完成
+        final List<Map<String, dynamic>> submittedTasks = [];
+        for (final future in submitFutures) {
+          try {
+            submittedTasks.add(await future);
+          } catch (e) {
+            failCount++;
+          }
+        }
+        
+        print('\n⏳ 开始轮询 ${submittedTasks.length} 个任务...\n');
+        
+        // ✅ 并发轮询所有任务
+        final pollFutures = submittedTasks.map((task) async {
+          final storyboardIndex = task['storyboardIndex'] as int;
+          final taskId = task['taskId'] as String;
+          
+          try {
+            final pollResult = await aigcClient.pollTaskStatus(
+              taskId: taskId,
+              interval: const Duration(seconds: 3),
+              maxAttempts: 200,
+              onProgress: (taskResult) {
+                if (taskResult.isRunning) {
+                  print('   ⏳ [${storyboardIndex + 1}] 进行中...');
+                }
+              },
+            );
+            
+            if (pollResult.isSuccess) {
+              final videoPath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+              if (videoPath2 == null || videoPath2.isEmpty) {
+                throw Exception('任务完成但未返回视频地址');
+              }
+              
+              // 提取视频首帧
+              if (!videoPath2.startsWith('http') && videoPath2.endsWith('.mp4')) {
+                try {
+                  final thumbnailPath = videoPath2.replaceAll('.mp4', '.jpg');
+                  final ffmpeg = FFmpegService();
+                  await ffmpeg.extractFrame(
+                    videoPath: videoPath2,
+                    outputPath: thumbnailPath,
+                  );
+                } catch (e) {
+                  print('   ⚠️ [${storyboardIndex + 1}] 提取首帧失败: $e');
+                }
+              }
+              
+              // 更新分镜数据
+              if (storyboardIndex != -1 && mounted) {
+                setState(() {
+                  final newUrls = List<String>.from(_storyboards[storyboardIndex].videoUrls)..add(videoPath2);
+                  _storyboards[storyboardIndex] = _storyboards[storyboardIndex].copyWith(
+                    videoUrls: newUrls,
+                  );
+                });
+              }
+              
+              print('      ✅ [${storyboardIndex + 1}] 成功');
+              return true;
+            } else {
+              throw Exception(pollResult.error ?? '生成失败');
+            }
+          } catch (e) {
+            print('      ❌ [${storyboardIndex + 1}] 异常: $e');
+            return false;
+          }
+        }).toList();
+        
+        // 等待所有轮询完成
+        final results = await Future.wait(pollFutures);
+        successCount += results.where((r) => r == true).length;
+        failCount += results.where((r) => r == false).length;
+        
+        // 清理资源
+        aigcClient.dispose();
+        
+      } else {
+        // ========== API 服务商路线（原有逻辑）==========
       // ✅ 一次性并发生成所有分镜的视频（API 支持 100 条并发）
       print('🚀 开始并发生成 ${storyboardsToGenerate.length} 个分镜视频\n');
       
@@ -2761,6 +3021,8 @@ ${widget.scriptContent}
       final results = await Future.wait(futures);
       successCount = results.where((r) => r == true).length;
       failCount = results.where((r) => r == false).length;
+      
+      }  // end of isWebProvider else
       
       // 保存所有结果
       await _saveProductionData();
@@ -4301,6 +4563,212 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(provider);
+      
+      if (isWebProvider) {
+        // ========== 网页服务商路线 ==========
+        print('🌐 使用网页服务商生成视频: $provider');
+        
+        // 读取网页服务商配置
+        final webTool = prefs.getString('video_web_tool');
+        final webModel = prefs.getString('video_web_model');
+        
+        if (webTool == null || webTool.isEmpty) {
+          throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
+        }
+        if (webModel == null || webModel.isEmpty) {
+          throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型');
+        }
+        
+        print('🔧 Web工具: $webTool, Web模型: $webModel');
+        
+        // 创建 AutomationApiClient 实例
+        final aigcClient = AutomationApiClient();
+        
+        // 检查 API 服务是否可用
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception(
+            'Python API 服务未启动\n\n'
+            '请先启动 Python 服务：\n'
+            '1. 打开命令行\n'
+            '2. 进入项目目录\n'
+            '3. 运行: python python_backend/web_automation/api_server.py'
+          );
+        }
+        
+        // 构建 payload
+        final payload = <String, dynamic>{
+          'prompt': fullPrompt,
+          'model': webModel,
+        };
+        
+        // 添加保存路径
+        final workPath = workSavePathNotifier.value;
+        final videoPath = videoSavePathNotifier.value;
+        String? saveDirPath;
+        if (workPath != '未设置' && workPath.isNotEmpty) {
+          saveDirPath = path.join(workPath, widget.workName);
+        } else if (videoPath != '未设置' && videoPath.isNotEmpty) {
+          saveDirPath = videoPath;
+        }
+        if (saveDirPath != null) {
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = 'storyboard_${index + 1}_$timestamp.mp4';
+          payload['savePath'] = path.join(saveDirPath, fileName);
+        }
+        
+        // 根据工具类型添加不同参数
+        if (webTool == 'img2video') {
+          if (selectedImageUrl == null) {
+            throw Exception('图生视频需要先生成分镜图片');
+          }
+          payload['imageUrl'] = selectedImageUrl;
+          print('🖼️ img2video: 使用分镜图片');
+        }
+        
+        if (webTool == 'ref2video') {
+          // ✅ 检查分镜关联的资产是否来自素材库
+          final selectedAssetIds = [...row.selectedImageAssets, ...row.selectedVideoAssets].toSet().toList();
+          final List<String> assetNames = [];
+          final List<String> assetImagePaths = [];
+          
+          for (final assetId in selectedAssetIds) {
+            // 查找角色、场景、物品
+            String? imageUrl;
+            for (final char in _characters) {
+              if (char.id == assetId && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+                imageUrl = char.imageUrl;
+                break;
+              }
+            }
+            if (imageUrl == null) {
+              for (final scene in _scenes) {
+                if (scene.id == assetId && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+                  imageUrl = scene.imageUrl;
+                  break;
+                }
+              }
+            }
+            if (imageUrl == null) {
+              for (final item in _items) {
+                if (item.id == assetId && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                  imageUrl = item.imageUrl;
+                  break;
+                }
+              }
+            }
+            
+            if (imageUrl != null) {
+              final assetName = await _findAssetNameByPath(imageUrl);
+              if (assetName != null && assetName.isNotEmpty) {
+                assetNames.add(assetName);
+                print('   ✅ 素材库主体: $assetName');
+              } else {
+                assetImagePaths.add(imageUrl);
+              }
+            }
+          }
+          
+          // 素材库主体名称（逗号分隔，支持多个）
+          if (assetNames.isNotEmpty) {
+            payload['characterName'] = assetNames.join(',');
+            print('📦 ref2video: 素材库主体「${assetNames.join(", ")}」');
+          }
+          
+          // 非素材库图片或分镜选中图片作为参考文件
+          if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
+            payload['referenceFile'] = assetImagePaths.first;
+            print('📁 ref2video: 上传参考文件 ${assetImagePaths.first}');
+          } else if (selectedImageUrl != null && assetNames.isEmpty) {
+            payload['referenceFile'] = selectedImageUrl;
+            print('📁 ref2video: 使用分镜图片作为参考');
+          }
+        }
+        
+        // 添加视频参数
+        payload['aspectRatio'] = '16:9';
+        payload['duration'] = '8秒';
+        
+        // 提交生成任务
+        print('🚀 提交网页服务商任务...');
+        final result = await aigcClient.submitGenerationTask(
+          platform: provider,
+          toolType: webTool,
+          payload: payload,
+        );
+        
+        print('✅ 任务已提交: ${result.taskId}');
+        
+        // 轮询任务状态
+        final pollResult = await aigcClient.pollTaskStatus(
+          taskId: result.taskId,
+          interval: const Duration(seconds: 3),
+          maxAttempts: 200,
+          onProgress: (taskResult) {
+            if (taskResult.isRunning) {
+              print('   ⏳ 任务进行中...');
+            }
+          },
+        );
+        
+        if (pollResult.isSuccess) {
+          final videoPath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+          if (videoPath2 == null || videoPath2.isEmpty) {
+            throw Exception('任务完成但未返回视频地址');
+          }
+          
+          print('✅ 网页服务商视频生成成功: $videoPath2');
+          
+          // ✅ 提取视频首帧（本地文件才需要）
+          if (!videoPath2.startsWith('http') && videoPath2.endsWith('.mp4')) {
+            try {
+              final thumbnailPath = videoPath2.replaceAll('.mp4', '.jpg');
+              final ffmpeg = FFmpegService();
+              final success = await ffmpeg.extractFrame(
+                videoPath: videoPath2,
+                outputPath: thumbnailPath,
+              );
+              if (success) {
+                print('✅ 视频首帧已提取');
+              }
+            } catch (e) {
+              print('⚠️ 提取首帧失败: $e');
+            }
+          }
+          
+          // 更新分镜数据
+          if (mounted) {
+            setState(() {
+              final newUrls = List<String>.from(row.videoUrls)..add(videoPath2);
+              _storyboards[index] = row.copyWith(videoUrls: newUrls);
+            });
+            await _saveProductionData();
+            
+            await Future.delayed(const Duration(milliseconds: 300));
+            if (mounted) setState(() {});
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ 分镜${index + 1}视频生成成功 (${row.videoUrls.length + 1}/4) - $mode [网页服务商]'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          }
+          
+          aigcClient.dispose();
+        } else {
+          aigcClient.dispose();
+          throw Exception(pollResult.error ?? '网页服务商生成失败');
+        }
+        
+        return;  // 网页服务商路线完成，直接返回
+      }
+      
+      // ========== API 服务商路线（原有逻辑）==========
       // ✅ 调用真实视频 API
       final response = await _apiRepository.generateVideos(
         provider: provider,
@@ -4360,6 +4828,38 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         );
       }
     }
+  }
+
+  /// ✅ 根据图片路径在素材库中查找素材名称
+  /// 如果找到，说明这张图来自素材库，返回用户自定义的名称
+  Future<String?> _findAssetNameByPath(String imagePath) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final assetsJson = prefs.getString('asset_library_data');
+      if (assetsJson == null || assetsJson.isEmpty) return null;
+      
+      final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+      for (final entry in data.values) {
+        final stylesList = entry as List;
+        for (final styleData in stylesList) {
+          final assets = (styleData['assets'] as List?) ?? [];
+          for (final assetData in assets) {
+            final asset = assetData as Map<String, dynamic>;
+            if (asset['path'] == imagePath) {
+              final name = asset['name'] as String? ?? '';
+              // 检查名称是否是用户自定义的（不是默认文件名）
+              if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
+                return name;
+              }
+              return null;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ 查找素材名称失败: $e');
+    }
+    return null;
   }
 
   /// 下载并保存视频到本地
