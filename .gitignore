@@ -60,3 +60,24 @@ app.*.map.json
 /android/app/release
 
 windows/ffmpeg/ffmpeg.exe
+
+# ========== 大文件和运行时产物 ==========
+
+# Python 构建产物和可执行文件
+python_backend/dist/
+python_backend/build/
+*.exe
+!clear_storage.bat
+!test_release.bat
+
+# AI 模型文件
+*.onnx
+
+# 浏览器自动化运行时缓存和用户数据
+python_backend/user_data/
+**/cdp_profile/
+**/jimeng_cdp_profile/
+jimeng_web_video_plugin_seedance_2_0/
+
+# 下载的媒体文件
+python_backend/web_automation/downloads/
