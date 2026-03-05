@@ -2763,6 +2763,174 @@ ${widget.scriptContent}
           saveDirPath = videoSavePath;
         }
         
+        // ✅ Vidu 需要顺序生成（每次生成需要刷新页面），其他网页服务商可以并发
+        final isViduProvider = provider == 'vidu';
+        
+        if (isViduProvider) {
+          // ========== Vidu 顺序生成模式 ==========
+          print('🔄 Vidu 顺序生成模式：逐个生成 ${storyboardsToGenerate.length} 个分镜视频\n');
+          
+          for (var i = 0; i < storyboardsToGenerate.length; i++) {
+            final sb = storyboardsToGenerate[i];
+            final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+            
+            try {
+              print('   🎬 Vidu 顺序提交任务 ${i + 1}/${storyboardsToGenerate.length} (分镜${storyboardIndex + 1})');
+              
+              // 构建完整提示词
+              String fullPrompt = sb.videoPrompt.isNotEmpty ? sb.videoPrompt : sb.imagePrompt;
+              if (_globalVideoTheme.isNotEmpty) {
+                fullPrompt = '$_globalVideoTheme, $fullPrompt';
+              }
+              
+              // 获取参考图片
+              final referenceImage = sb.imageUrls.isNotEmpty ? sb.imageUrls[sb.selectedImageIndex] : null;
+              
+              // 构建 payload
+              final payload = <String, dynamic>{
+                'prompt': fullPrompt,
+                'model': webModel,
+              };
+              
+              // 添加保存路径
+              if (saveDirPath != null) {
+                final timestamp = DateTime.now().millisecondsSinceEpoch;
+                final fileName = 'storyboard_${storyboardIndex + 1}_$timestamp.mp4';
+                payload['savePath'] = path.join(saveDirPath, fileName);
+              }
+              
+              // 根据工具类型添加不同参数
+              if (webTool == 'img2video') {
+                if (referenceImage == null) {
+                  throw Exception('分镜${storyboardIndex + 1}：图生视频需要先生成图片');
+                }
+                payload['imageUrl'] = referenceImage;
+              }
+              
+              if (webTool == 'ref2video') {
+                final selectedAssetIds = [...sb.selectedImageAssets, ...sb.selectedVideoAssets].toSet().toList();
+                final List<String> assetNames = [];
+                final List<String> assetImagePaths = [];
+                
+                for (final assetId in selectedAssetIds) {
+                  String? imageUrl;
+                  for (final char in _characters) {
+                    if (char.id == assetId && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+                      imageUrl = char.imageUrl;
+                      break;
+                    }
+                  }
+                  if (imageUrl == null) {
+                    for (final scene in _scenes) {
+                      if (scene.id == assetId && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+                        imageUrl = scene.imageUrl;
+                        break;
+                      }
+                    }
+                  }
+                  if (imageUrl == null) {
+                    for (final item in _items) {
+                      if (item.id == assetId && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                        imageUrl = item.imageUrl;
+                        break;
+                      }
+                    }
+                  }
+                  
+                  if (imageUrl != null) {
+                    final assetName = await _findAssetNameByPath(imageUrl);
+                    if (assetName != null && assetName.isNotEmpty) {
+                      assetNames.add(assetName);
+                    } else {
+                      assetImagePaths.add(imageUrl);
+                    }
+                  }
+                }
+                
+                if (assetNames.isNotEmpty) {
+                  payload['characterName'] = assetNames.join(',');
+                  print('   📦 [${storyboardIndex + 1}] 素材库主体: ${assetNames.join(", ")}');
+                }
+                if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
+                  payload['referenceFile'] = assetImagePaths.first;
+                } else if (referenceImage != null && assetNames.isEmpty) {
+                  payload['referenceFile'] = referenceImage;
+                }
+              }
+              
+              // 添加视频参数
+              payload['aspectRatio'] = '16:9';
+              payload['duration'] = '8秒';
+              
+              // 提交任务
+              final result = await aigcClient.submitGenerationTask(
+                platform: provider,
+                toolType: webTool,
+                payload: payload,
+              );
+              
+              print('   ✅ [${storyboardIndex + 1}] 任务已提交: ${result.taskId}');
+              
+              // 立即轮询等待完成
+              print('   ⏳ [${storyboardIndex + 1}] 等待任务完成...');
+              
+              final pollResult = await aigcClient.pollTaskStatus(
+                taskId: result.taskId,
+                interval: const Duration(seconds: 3),
+                maxAttempts: 300,
+                onProgress: (taskResult) {
+                  if (taskResult.isRunning) {
+                    print('   ⏳ [${storyboardIndex + 1}] 进行中...');
+                  }
+                },
+              );
+              
+              if (pollResult.isSuccess) {
+                final videoPath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+                if (videoPath2 == null || videoPath2.isEmpty) {
+                  throw Exception('任务完成但未返回视频地址');
+                }
+                
+                // 提取视频首帧
+                if (!videoPath2.startsWith('http') && videoPath2.endsWith('.mp4')) {
+                  try {
+                    final thumbnailPath = videoPath2.replaceAll('.mp4', '.jpg');
+                    final ffmpeg = FFmpegService();
+                    await ffmpeg.extractFrame(
+                      videoPath: videoPath2,
+                      outputPath: thumbnailPath,
+                    );
+                  } catch (e) {
+                    print('   ⚠️ [${storyboardIndex + 1}] 提取首帧失败: $e');
+                  }
+                }
+                
+                // 更新分镜数据
+                if (storyboardIndex != -1 && mounted) {
+                  setState(() {
+                    final newUrls = List<String>.from(_storyboards[storyboardIndex].videoUrls)..add(videoPath2);
+                    _storyboards[storyboardIndex] = _storyboards[storyboardIndex].copyWith(
+                      videoUrls: newUrls,
+                    );
+                  });
+                }
+                
+                print('   ✅ [${storyboardIndex + 1}] 完成: $videoPath2');
+                successCount++;
+              } else {
+                throw Exception(pollResult.error ?? '生成失败');
+              }
+            } catch (e) {
+              print('   ❌ [${storyboardIndex + 1}] 失败: $e');
+              failCount++;
+            }
+          }
+          
+          print('\n✅ Vidu 顺序生成全部完成 (成功: $successCount, 失败: $failCount)');
+          aigcClient.dispose();
+          
+        } else {
+        // ========== 非 Vidu 网页服务商：并发提交 ==========
         // ✅ 并发提交所有任务
         print('🚀 开始并发提交 ${storyboardsToGenerate.length} 个网页服务商任务\n');
         
@@ -2897,7 +3065,7 @@ ${widget.scriptContent}
             final pollResult = await aigcClient.pollTaskStatus(
               taskId: taskId,
               interval: const Duration(seconds: 3),
-              maxAttempts: 200,
+              maxAttempts: 300,  // 最多 15 分钟（与后端 max_wait=900 匹配）
               onProgress: (taskResult) {
                 if (taskResult.isRunning) {
                   print('   ⏳ [${storyboardIndex + 1}] 进行中...');
@@ -2953,6 +3121,8 @@ ${widget.scriptContent}
         
         // 清理资源
         aigcClient.dispose();
+        
+        } // end of non-Vidu concurrent block
         
       } else {
         // ========== API 服务商路线（原有逻辑）==========
@@ -4705,7 +4875,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         final pollResult = await aigcClient.pollTaskStatus(
           taskId: result.taskId,
           interval: const Duration(seconds: 3),
-          maxAttempts: 200,
+          maxAttempts: 300,  // 最多 15 分钟（与后端 max_wait=900 匹配）
           onProgress: (taskResult) {
             if (taskResult.isRunning) {
               print('   ⏳ 任务进行中...');
@@ -4839,13 +5009,19 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       if (assetsJson == null || assetsJson.isEmpty) return null;
       
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+      // ✅ 规范化路径用于比较（Windows 路径大小写不敏感，分隔符可能不同）
+      final normalizedInput = imagePath.replaceAll('\\', '/').toLowerCase();
+      
       for (final entry in data.values) {
         final stylesList = entry as List;
         for (final styleData in stylesList) {
           final assets = (styleData['assets'] as List?) ?? [];
           for (final assetData in assets) {
             final asset = assetData as Map<String, dynamic>;
-            if (asset['path'] == imagePath) {
+            final assetPath = (asset['path'] as String?) ?? '';
+            final normalizedAsset = assetPath.replaceAll('\\', '/').toLowerCase();
+            
+            if (normalizedAsset == normalizedInput || assetPath == imagePath) {
               final name = asset['name'] as String? ?? '';
               // 检查名称是否是用户自定义的（不是默认文件名）
               if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {

@@ -81,3 +81,4 @@ jimeng_web_video_plugin_seedance_2_0/
 
 # 下载的媒体文件
 python_backend/web_automation/downloads/
+python_backend/web_automation/*.png

@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'package:path/path.dart' as path;
 import 'package:xinghe_new/pages/web_automation_test_page.dart';  // ✅ Python 通信测试页面
 
 class SettingsPage extends StatefulWidget {
@@ -3576,7 +3577,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         
                         // ✅ 直接启动系统 Edge/Chrome 浏览器
                         // 使用独立 profile 目录，登录态自动保存
-                        final profileDir = 'python_backend\\user_data\\${provider}_cdp_profile';
+                        // ✅ 使用绝对路径，确保与 Python API 服务使用同一个 profile
+                        final currentDir = Directory.current.path;
+                        final profileDir = path.join(currentDir, 'python_backend', 'user_data', '${provider}_cdp_profile');
+                        print('📁 浏览器 profile 目录: $profileDir');
                         
                         // CDP 端口映射（不同平台不同端口，避免冲突）
                         final Map<String, String> portMap = {

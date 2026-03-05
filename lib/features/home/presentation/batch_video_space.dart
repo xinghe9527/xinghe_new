@@ -456,6 +456,75 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     _logger.success('✅ 批量生成完成', module: '批量空间');
   }
 
+  /// 构建网页服务商的 payload
+  Future<Map<String, dynamic>> _buildWebPayload({
+    required VideoTask task,
+    required String webModel,
+    required String webTool,
+    required int index,
+    required SharedPreferences prefs,
+  }) async {
+    final payload = <String, dynamic>{
+      'prompt': task.prompt,
+      'model': webModel,
+    };
+    
+    // 添加保存路径
+    final savePath = prefs.getString('video_save_path');
+    if (savePath != null && savePath.isNotEmpty) {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'video_${timestamp}_${task.id}_$index.mp4';
+      final fullPath = path.join(savePath, fileName);
+      payload['savePath'] = fullPath;
+    }
+    
+    // 图生视频
+    if (webTool == 'img2video') {
+      if (task.referenceImages.isEmpty) {
+        throw Exception('图生视频需要提供参考图片\n\n请在批量空间添加参考图片后再生成');
+      }
+      payload['imageUrl'] = task.referenceImages.first;
+    }
+    
+    // 参考生视频
+    if (webTool == 'ref2video') {
+      if (task.referenceImages.isNotEmpty) {
+        final List<String> assetNames = [];
+        final List<String> normalFiles = [];
+        
+        for (final refPath in task.referenceImages) {
+          final assetName = await _findAssetNameByPath(refPath);
+          if (assetName != null && assetName.isNotEmpty) {
+            assetNames.add(assetName);
+          } else {
+            normalFiles.add(refPath);
+          }
+        }
+        
+        if (assetNames.isNotEmpty) {
+          payload['characterName'] = assetNames.join(',');
+          _logger.info('【批量空间】参考生视频：素材库主体「${assetNames.join(", ")}」', module: '批量空间');
+        }
+        if (normalFiles.isNotEmpty) {
+          payload['referenceFile'] = normalFiles.first;
+          _logger.info('【批量空间】参考生视频：上传参考文件 ${normalFiles.first}', module: '批量空间');
+        }
+      } else {
+        if (task.characterName.isNotEmpty) {
+          payload['characterName'] = task.characterName;
+          _logger.info('【批量空间】参考生视频：使用任务角色名「${task.characterName}」', module: '批量空间');
+        }
+      }
+    }
+    
+    // 视频参数
+    payload['aspectRatio'] = task.ratio;
+    payload['resolution'] = task.quality;
+    payload['duration'] = task.seconds;
+    
+    return payload;
+  }
+
   /// 生成单个任务
   Future<void> _generateSingleTask(VideoTask task) async {
     if (task.prompt.trim().isEmpty) return;
@@ -538,7 +607,111 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         
         _logger.success('【批量空间】Python API 服务连接成功', module: '批量空间');
         
-        // ✅ 并发提交所有任务
+        // ✅ Vidu 需要顺序生成（每次生成需要刷新页面），其他网页服务商可以并发
+        final isViduProvider = provider == 'vidu';
+        
+        if (isViduProvider) {
+          // ========== Vidu 顺序生成模式 ==========
+          _logger.info('【批量空间】Vidu 顺序生成模式：逐个生成 $batchCount 个视频', module: '批量空间');
+          
+          for (var i = 0; i < batchCount; i++) {
+            final placeholder = placeholders[i];
+            
+            try {
+              _logger.info('【批量空间】Vidu 顺序提交任务 ${i + 1}/$batchCount', module: '批量空间');
+              
+              // 构建 payload
+              final payload = await _buildWebPayload(
+                task: task, webModel: webModel!, webTool: webTool!, 
+                index: i, prefs: prefs,
+              );
+              
+              // 提交生成任务
+              final result = await aigcClient.submitGenerationTask(
+                platform: provider,
+                toolType: webTool,
+                payload: payload,
+              );
+              
+              _logger.success('【批量空间】Vidu 任务 ${i + 1} 提交成功: ${result.taskId}', module: '批量空间');
+              
+              // 立即轮询等待完成
+              _logger.info('【批量空间】Vidu 等待任务 ${i + 1} 完成: ${result.taskId}', module: '批量空间');
+              
+              final pollResult = await aigcClient.pollTaskStatus(
+                taskId: result.taskId,
+                interval: const Duration(seconds: 3),
+                maxAttempts: 300,
+                onProgress: (taskResult) {
+                  if (taskResult.isRunning) {
+                    _batchVideoProgress[placeholder] = 50;
+                  }
+                  if (mounted) setState(() {});
+                  _logger.info('【批量空间】Vidu 任务 ${i + 1} 状态: ${taskResult.status}', module: '批量空间');
+                },
+              );
+              
+              if (pollResult.isSuccess) {
+                final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
+                if (videoPath == null || videoPath.isEmpty) {
+                  throw Exception('任务完成但未返回视频地址');
+                }
+                
+                _logger.success('【批量空间】Vidu 任务 ${i + 1} 完成: $videoPath', module: '批量空间');
+                
+                // 提取首帧
+                if (!videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+                  try {
+                    final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                    final ffmpeg = FFmpegService();
+                    await ffmpeg.extractFrame(videoPath: videoPath, outputPath: thumbnailPath);
+                  } catch (e) {
+                    _logger.warning('【批量空间】提取首帧失败: $e', module: '批量空间');
+                  }
+                }
+                
+                // 替换占位符
+                final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+                final currentVideos = List<String>.from(currentTask.generatedVideos);
+                final placeholderIndex = currentVideos.indexOf(placeholder);
+                if (placeholderIndex != -1) {
+                  currentVideos[placeholderIndex] = videoPath;
+                  _batchVideoProgress.remove(placeholder);
+                  _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                  if (mounted) setState(() {});
+                }
+              } else {
+                throw Exception(pollResult.error ?? '生成失败');
+              }
+            } catch (e) {
+              _logger.error('【批量空间】Vidu 任务 ${i + 1} 失败: $e', module: '批量空间');
+              
+              // 标记为失败
+              try {
+                final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+                final currentVideos = List<String>.from(currentTask.generatedVideos);
+                final placeholderIndex = currentVideos.indexOf(placeholder);
+                if (placeholderIndex != -1) {
+                  currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+                  _batchVideoProgress.remove(placeholder);
+                  _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                }
+              } catch (e2) {
+                _logger.error('【批量空间】清理占位符失败: $e2', module: '批量空间');
+              }
+              
+              if (mounted) {
+                _showMessage('Vidu 任务 ${i + 1} 失败: $e', isError: true);
+              }
+            }
+          }
+          
+          _logger.success('【批量空间】Vidu 顺序生成全部完成', module: '批量空间');
+          aigcClient.dispose();
+          return;
+        }
+        
+        // ========== 非 Vidu 网页服务商：并发提交 ==========
         _logger.info('【批量空间】开始并发提交 $batchCount 个网页服务商视频任务', module: '批量空间');
         
         final submitFutures = List.generate(batchCount, (i) async {
@@ -547,69 +720,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           try {
             _logger.info('【批量空间】提交网页任务 ${i + 1}/$batchCount', module: '批量空间');
             
-            // ✅ 构建 payload
-            final payload = <String, dynamic>{
-              'prompt': task.prompt,
-              'model': webModel,
-            };
-            
-            // ✅ 添加保存路径
-            final savePath = prefs.getString('video_save_path');
-            if (savePath != null && savePath.isNotEmpty) {
-              final timestamp = DateTime.now().millisecondsSinceEpoch;
-              final fileName = 'video_${timestamp}_${task.id}_$i.mp4';
-              final fullPath = path.join(savePath, fileName);
-              payload['savePath'] = fullPath;
-              _logger.info('【批量空间】设置保存路径: $fullPath', module: '批量空间');
-            } else {
-              _logger.warning('【批量空间】未设置视频保存路径，将使用默认路径', module: '批量空间');
-            }
-            
-            // ✅ 如果是图生视频，需要提供图片
-            if (webTool == 'img2video') {
-              if (task.referenceImages.isEmpty) {
-                throw Exception('图生视频需要提供参考图片\n\n请在批量空间添加参考图片后再生成');
-              }
-              payload['imageUrl'] = task.referenceImages.first;
-              _logger.info('【批量空间】使用参考图片: ${task.referenceImages.first}', module: '批量空间');
-            }
-            
-            // ✅ 如果是参考生视频，可选提供参考文件（图片或视频）
-            if (webTool == 'ref2video') {
-              if (task.referenceImages.isNotEmpty) {
-                // 遍历所有参考图片，收集素材库名称和普通文件
-                final List<String> assetNames = [];
-                final List<String> normalFiles = [];
-                
-                for (final refPath in task.referenceImages) {
-                  final assetName = await _findAssetNameByPath(refPath);
-                  if (assetName != null && assetName.isNotEmpty) {
-                    assetNames.add(assetName);
-                  } else {
-                    normalFiles.add(refPath);
-                  }
-                }
-                
-                // 素材库主体名称（逗号分隔，支持多个）
-                if (assetNames.isNotEmpty) {
-                  payload['characterName'] = assetNames.join(',');
-                  _logger.info('【批量空间】参考生视频：素材库主体「${assetNames.join(", ")}」', module: '批量空间');
-                }
-                
-                // 普通文件：只取第一个作为参考文件上传
-                if (normalFiles.isNotEmpty && assetNames.isEmpty) {
-                  payload['referenceFile'] = normalFiles.first;
-                  _logger.info('【批量空间】参考生视频：上传参考文件 ${normalFiles.first}', module: '批量空间');
-                }
-              } else {
-                _logger.info('【批量空间】参考生视频：无参考文件，仅使用提示词', module: '批量空间');
-              }
-            }
-            
-            // ✅ 添加视频参数
-            payload['aspectRatio'] = task.ratio;
-            payload['resolution'] = task.quality;
-            payload['duration'] = task.seconds;
+            // ✅ 构建 payload（复用辅助方法）
+            final payload = await _buildWebPayload(
+              task: task, webModel: webModel!, webTool: webTool!,
+              index: i, prefs: prefs,
+            );
             
             // 提交生成任务
             final result = await aigcClient.submitGenerationTask(
@@ -619,6 +734,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             );
             
             _logger.success('【批量空间】网页任务 ${i + 1} 提交成功: ${result.taskId}', module: '批量空间');
+            print('✅ [批量空间] 任务 ${i + 1} 提交成功: taskId=${result.taskId}, status=${result.status}');
             
             return {
               'index': i,
@@ -648,7 +764,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             final result = await aigcClient.pollTaskStatus(
               taskId: taskId,
               interval: const Duration(seconds: 3),
-              maxAttempts: 200,  // 最多 10 分钟
+              maxAttempts: 300,  // 最多 15 分钟（与后端 max_wait=900 匹配）
               onProgress: (taskResult) {
                 // 更新进度
                 if (taskResult.isRunning) {
@@ -659,9 +775,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   setState(() {});
                 }
                 
+                print('📡 [批量空间] 任务 ${index + 1} 轮询: status=${taskResult.status}, taskId=$taskId');
                 _logger.info('【批量空间】网页任务 ${index + 1} 状态: ${taskResult.status}', module: '批量空间');
               },
             );
+            
+            print('📡 [批量空间] 任务 ${index + 1} 轮询结束: status=${result.status}, success=${result.isSuccess}');
             
             if (result.isSuccess) {
               // 任务成功完成
@@ -715,20 +834,26 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             }
           } catch (e) {
             _logger.error('【批量空间】网页任务 ${index + 1} 处理失败: $e', module: '批量空间');
+            print('❌ [批量空间] 网页任务 ${index + 1} 失败: $e');  // 确保控制台可见
             
             // 标记为失败
-            final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-            final currentVideos = List<String>.from(currentTask.generatedVideos);
-            final placeholderIndex = currentVideos.indexOf(placeholder);
-            
-            if (placeholderIndex != -1) {
-              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
-              _batchVideoProgress.remove(placeholder);
-              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+            try {
+              final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
               
-              if (mounted) {
-                setState(() {});
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+                _batchVideoProgress.remove(placeholder);
+                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
               }
+            } catch (e2) {
+              _logger.error('【批量空间】清理占位符失败: $e2', module: '批量空间');
+            }
+            
+            // 显示错误给用户
+            if (mounted) {
+              _showMessage('任务 ${index + 1} 失败: $e', isError: true);
             }
             
             return false;
@@ -937,18 +1062,23 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       }
     } catch (e) {
       _logger.error('任务生成失败: $e', module: '批量空间');
+      print('❌ [批量空间] 外层异常: $e');
       
       // 清理占位符
-      final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
-      final currentVideos = List<String>.from(currentTask.generatedVideos);
-      for (var placeholder in placeholders) {
-        final index = currentVideos.indexOf(placeholder);
-        if (index != -1) {
-          currentVideos[index] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
-          _batchVideoProgress.remove(placeholder);
+      try {
+        final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+        final currentVideos = List<String>.from(currentTask.generatedVideos);
+        for (var placeholder in placeholders) {
+          final index = currentVideos.indexOf(placeholder);
+          if (index != -1) {
+            currentVideos[index] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+            _batchVideoProgress.remove(placeholder);
+          }
         }
+        _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+      } catch (e2) {
+        _logger.error('清理占位符失败: $e2', module: '批量空间');
       }
-      _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
     }
   }
 
@@ -1024,25 +1154,55 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final assetsJson = prefs.getString('asset_library_data');
-      if (assetsJson == null || assetsJson.isEmpty) return null;
+      if (assetsJson == null || assetsJson.isEmpty) {
+        _logger.warning('素材库数据为空，无法查找: $imagePath', module: '批量空间');
+        return null;
+      }
       
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+      // ✅ 规范化路径用于比较（Windows 路径大小写不敏感，分隔符可能不同）
+      final normalizedInput = imagePath.replaceAll('\\', '/').toLowerCase();
+      // 提取文件名用于回退匹配
+      final inputFileName = normalizedInput.split('/').last;
+      
+      String? fallbackMatch;  // 文件名匹配的回退结果
+      
       for (final entry in data.values) {
         final stylesList = entry as List;
         for (final styleData in stylesList) {
           final assets = (styleData['assets'] as List?) ?? [];
           for (final assetData in assets) {
             final asset = assetData as Map<String, dynamic>;
-            if (asset['path'] == imagePath) {
+            final assetPath = (asset['path'] as String?) ?? '';
+            final normalizedAsset = assetPath.replaceAll('\\', '/').toLowerCase();
+            
+            // 策略1：完整路径匹配（规范化后）
+            if (normalizedAsset == normalizedInput || assetPath == imagePath) {
               final name = asset['name'] as String? ?? '';
-              // 检查名称是否是用户自定义的（不是默认文件名）
               if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
                 return name;
               }
               return null;
             }
+            
+            // 策略2：文件名匹配（回退）
+            if (fallbackMatch == null) {
+              final assetFileName = normalizedAsset.split('/').last;
+              if (assetFileName == inputFileName && assetFileName.isNotEmpty) {
+                final name = asset['name'] as String? ?? '';
+                if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
+                  fallbackMatch = name;
+                }
+              }
+            }
           }
         }
+      }
+      
+      // 完整路径未匹配，使用文件名回退
+      if (fallbackMatch != null) {
+        _logger.info('素材库查找: 使用文件名回退匹配 "$fallbackMatch" for $imagePath', module: '批量空间');
+        return fallbackMatch;
       }
     } catch (e) {
       _logger.error('查找素材名称失败: $e', module: '批量空间');

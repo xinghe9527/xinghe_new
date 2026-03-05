@@ -188,6 +188,11 @@ _vidu_auto_instance = None
 _vidu_auto_lock = None
 _vidu_poll_lock = None  # Vidu 轮询锁（因为没有 history_id，poll 必须串行）
 
+# ✅ 持久线程池：确保所有 Playwright 操作在同一个线程上执行
+# Playwright 的 page 对象绑定创建线程，submit 和 poll 必须在同一线程
+import concurrent.futures
+_vidu_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='vidu_playwright')
+
 def _get_vidu_lock():
     """延迟创建 Vidu 浏览器锁（保护 submit 阶段）"""
     global _vidu_auto_lock
@@ -214,6 +219,7 @@ async def execute_vidu_automation(
     model: Optional[str] = None,
     reference_file: Optional[str] = None,
     character_name: Optional[str] = None,
+    max_wait: int = 900,
 ):
     """
     后台异步执行 Vidu 自动化（并发模式）
@@ -224,12 +230,13 @@ async def execute_vidu_automation(
     try:
         task_manager.update_task(task_id, status=TaskStatus.RUNNING)
         
-        print(f"\n{'='*60}")
-        print(f"  🚀 开始执行 Vidu 任务: {task_id}")
-        print(f"  📝 提示词: {prompt}")
+        print(f"\n{'='*60}", flush=True)
+        print(f"  🚀 开始执行 Vidu 任务: {task_id}", flush=True)
+        print(f"  📝 提示词: {prompt}", flush=True)
         if save_path:
-            print(f"  📁 保存路径: {save_path}")
-        print(f"{'='*60}\n")
+            print(f"  📁 保存路径: {save_path}", flush=True)
+        print(f"  tool_type: {tool_type}, model: {model}", flush=True)
+        print(f"{'='*60}\n", flush=True)
         
         if save_path is None:
             downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
@@ -242,55 +249,87 @@ async def execute_vidu_automation(
         # 阶段1：提交生成（需要浏览器锁）
         # ============================================================
         lock = _get_vidu_lock()
-        print(f"   🔒 [{task_id}] 等待 Vidu 浏览器锁（提交阶段）...")
+        print(f"   🔒 [{task_id}] 等待 Vidu 浏览器锁（提交阶段）...", flush=True)
         
         async with lock:
-            print(f"   🔓 [{task_id}] 获取到 Vidu 浏览器锁")
+            print(f"   🔓 [{task_id}] 获取到 Vidu 浏览器锁", flush=True)
             
             def _run_submit():
                 from auto_vidu_v2 import ViduAutomation
                 
                 global _vidu_auto_instance
                 
-                if _vidu_auto_instance is None or not _vidu_auto_instance._started:
-                    _vidu_auto_instance = ViduAutomation()
-                    if not _vidu_auto_instance.start():
-                        raise Exception("无法启动 Vidu 浏览器，请先登录")
-                
-                auto = _vidu_auto_instance
-                
-                if not auto.check_login():
-                    raise Exception("Vidu 未登录，请先运行: python open_browser_for_login.py vidu")
-                
-                # 只提交生成，不等待结果
-                submit_result = auto.submit_generate(
-                    prompt=prompt,
-                    tool_type=tool_type or 'text2video',
-                    model=model,
-                    aspect_ratio=aspect_ratio,
-                    resolution=resolution,
-                    duration=duration,
-                    reference_file=reference_file,
-                    character_name=character_name,
-                )
-                
-                return submit_result
+                # ✅ 自动恢复：最多重试2次（第一次检测到浏览器死亡，重建后重试）
+                for attempt in range(2):
+                    try:
+                        if _vidu_auto_instance is None or not _vidu_auto_instance._started:
+                            _vidu_auto_instance = ViduAutomation()
+                            if not _vidu_auto_instance.start():
+                                raise Exception("无法启动 Vidu 浏览器，请先登录")
+                        
+                        auto = _vidu_auto_instance
+                        
+                        if not auto.check_login():
+                            raise Exception("Vidu 未登录，请先运行: python open_browser_for_login.py vidu")
+                        
+                        # 只提交生成，不等待结果
+                        submit_result = auto.submit_generate(
+                            prompt=prompt,
+                            tool_type=tool_type or 'text2video',
+                            model=model,
+                            aspect_ratio=aspect_ratio,
+                            resolution=resolution,
+                            duration=duration,
+                            reference_file=reference_file,
+                            character_name=character_name,
+                        )
+                        
+                        return submit_result
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        # ✅ 检测浏览器已关闭/线程已死的错误，自动重建实例
+                        if any(keyword in error_msg for keyword in [
+                            'cannot switch to a different thread',
+                            'browser has been closed',
+                            'Target page, context or browser has been closed',
+                            'Connection refused',
+                            'not connected',
+                            'target closed',
+                            'Session closed',
+                        ]):
+                            print(f"   ⚠️  检测到浏览器已断开（尝试 {attempt + 1}/2）: {error_msg[:80]}")
+                            print(f"   🔄 自动重建浏览器实例...")
+                            # 安全清理旧实例
+                            try:
+                                if _vidu_auto_instance is not None:
+                                    _vidu_auto_instance.stop()
+                            except:
+                                pass
+                            _vidu_auto_instance = None
+                            
+                            if attempt == 0:
+                                continue  # 重试
+                            else:
+                                raise Exception(f"浏览器重建后仍然失败: {error_msg}")
+                        else:
+                            raise  # 其他错误直接抛出
             
             loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                submit_result = await loop.run_in_executor(pool, _run_submit)
+            # ✅ 使用全局持久线程池，确保 Playwright 操作在固定线程上
+            submit_result = await loop.run_in_executor(_vidu_thread_pool, _run_submit)
         
-        print(f"   🔒 [{task_id}] Vidu 浏览器锁已释放（提交完成）")
+        print(f"   🔒 [{task_id}] Vidu 浏览器锁已释放（提交完成）", flush=True)
         
         if not submit_result.get('success'):
             error_message = submit_result.get('error', '提交失败')
             task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
-            print(f"❌ Vidu 任务提交失败: {task_id}\n错误: {error_message}")
+            print(f"❌ Vidu 任务提交失败: {task_id}\n错误: {error_message}", flush=True)
             return
         
         task_key = submit_result.get('task_key', '')
         initial_video_count = submit_result.get('initial_video_count', 0)
-        print(f"   ✅ [{task_id}] 提交成功，task_key={task_key}")
+        print(f"   ✅ [{task_id}] 提交成功，task_key={task_key}", flush=True)
         
         # ============================================================
         # 阶段2：轮询结果（Vidu 需要 poll 锁，因为无法按任务 ID 区分）
@@ -299,10 +338,10 @@ async def execute_vidu_automation(
         # 但 poll 锁和 submit 锁是分开的，submit 不会被 poll 阻塞。
         # ============================================================
         poll_lock = _get_vidu_poll_lock()
-        print(f"   ⏳ [{task_id}] 等待 Vidu 轮询锁...")
+        print(f"   ⏳ [{task_id}] 等待 Vidu 轮询锁...", flush=True)
         
         async with poll_lock:
-            print(f"   🔓 [{task_id}] 获取到轮询锁，开始轮询结果...")
+            print(f"   🔓 [{task_id}] 获取到轮询锁，开始轮询结果...", flush=True)
             
             def _run_poll():
                 global _vidu_auto_instance
@@ -313,14 +352,14 @@ async def execute_vidu_automation(
                 result = auto.poll_result(
                     task_key=task_key,
                     initial_video_count=initial_video_count,
-                    max_wait=600,
+                    max_wait=max_wait,
                     save_path=save_path,
                 )
                 return result
             
             loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                result = await loop.run_in_executor(pool, _run_poll)
+            # ✅ 使用全局持久线程池（与 submit 同一线程，避免 Playwright 线程错误）
+            result = await loop.run_in_executor(_vidu_thread_pool, _run_poll)
         
         print(f"   🔒 [{task_id}] Vidu 轮询锁已释放")
         
@@ -337,7 +376,7 @@ async def execute_vidu_automation(
                 },
                 message="Vidu 视频生成成功",
             )
-            print(f"✅ Vidu 任务成功: {task_id}")
+            print(f"✅ Vidu 任务成功: {task_id}", flush=True)
         else:
             error_message = result.get('error', '未知错误')
             task_manager.update_task(
@@ -345,15 +384,18 @@ async def execute_vidu_automation(
                 status=TaskStatus.FAILED,
                 error=error_message,
             )
-            print(f"❌ Vidu 任务失败: {task_id}\n错误: {error_message}")
+            print(f"❌ Vidu 任务失败: {task_id}\n错误: {error_message}", flush=True)
     
     except asyncio.CancelledError:
         task_manager.update_task(task_id, status=TaskStatus.CANCELLED, error="任务被用户取消")
-        print(f"⚠️  Vidu 任务取消: {task_id}")
+        print(f"⚠️  Vidu 任务取消: {task_id}", flush=True)
     except Exception as e:
         error_message = f"执行异常: {str(e)}"
         task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
-        print(f"❌ Vidu 任务异常: {task_id}\n{error_message}")
+        import traceback
+        print(f"❌ Vidu 任务异常: {task_id}\n{error_message}", flush=True)
+        traceback.print_exc()
+        import sys; sys.stdout.flush(); sys.stderr.flush()
     finally:
         task_manager.current_process = None
 
@@ -365,6 +407,8 @@ async def execute_vidu_automation(
 # 即梦自动化单例（所有任务共享同一个浏览器连接）
 _jimeng_auto_instance = None
 _jimeng_auto_lock = asyncio.Lock() if 'asyncio' in dir() else None
+# ✅ 即梦也使用持久线程池
+_jimeng_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='jimeng_playwright')
 
 def _get_jimeng_lock():
     """延迟创建锁（避免在模块加载时创建）"""
@@ -391,8 +435,8 @@ async def _get_jimeng_auto():
         return None
     
     loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        _jimeng_auto_instance = await loop.run_in_executor(pool, _start_jimeng)
+    # ✅ 使用持久线程池
+    _jimeng_auto_instance = await loop.run_in_executor(_jimeng_thread_pool, _start_jimeng)
     
     return _jimeng_auto_instance
 
@@ -447,35 +491,67 @@ async def execute_jimeng_automation(
                 
                 global _jimeng_auto_instance
                 
-                if _jimeng_auto_instance is None or not _jimeng_auto_instance._started:
-                    _jimeng_auto_instance = JimengAutomation()
-                    if not _jimeng_auto_instance.start():
-                        raise Exception("无法启动即梦浏览器，请先登录")
-                
-                auto = _jimeng_auto_instance
-                
-                if not auto.check_login():
-                    raise Exception("即梦未登录，请先运行: python open_browser_for_login.py jimeng")
-                
-                dur = int(''.join(filter(str.isdigit, str(duration)))) if duration else 5
-                
-                # 只提交生成，不等待结果
-                submit_result = auto.submit_generate(
-                    prompt=prompt,
-                    model=model or 'seedance-2.0-fast',
-                    tool_type=tool_type or 'video_gen',
-                    mode=mode,
-                    aspect_ratio=aspect_ratio or '16:9',
-                    resolution=resolution or '720p',
-                    duration=dur,
-                    reference_file=reference_file,
-                )
-                
-                return submit_result
+                # ✅ 自动恢复：最多重试2次（第一次检测到浏览器死亡，重建后重试）
+                for attempt in range(2):
+                    try:
+                        if _jimeng_auto_instance is None or not _jimeng_auto_instance._started:
+                            _jimeng_auto_instance = JimengAutomation()
+                            if not _jimeng_auto_instance.start():
+                                raise Exception("无法启动即梦浏览器，请先登录")
+                        
+                        auto = _jimeng_auto_instance
+                        
+                        if not auto.check_login():
+                            raise Exception("即梦未登录，请先运行: python open_browser_for_login.py jimeng")
+                        
+                        dur = int(''.join(filter(str.isdigit, str(duration)))) if duration else 5
+                        
+                        # 只提交生成，不等待结果
+                        submit_result = auto.submit_generate(
+                            prompt=prompt,
+                            model=model or 'seedance-2.0-fast',
+                            tool_type=tool_type or 'video_gen',
+                            mode=mode,
+                            aspect_ratio=aspect_ratio or '16:9',
+                            resolution=resolution or '720p',
+                            duration=dur,
+                            reference_file=reference_file,
+                        )
+                        
+                        return submit_result
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        # ✅ 检测浏览器已关闭/线程已死的错误，自动重建实例
+                        if any(keyword in error_msg for keyword in [
+                            'cannot switch to a different thread',
+                            'browser has been closed',
+                            'Target page, context or browser has been closed',
+                            'Connection refused',
+                            'not connected',
+                            'target closed',
+                            'Session closed',
+                        ]):
+                            print(f"   ⚠️  检测到浏览器已断开（尝试 {attempt + 1}/2）: {error_msg[:80]}")
+                            print(f"   🔄 自动重建浏览器实例...")
+                            # 安全清理旧实例
+                            try:
+                                if _jimeng_auto_instance is not None:
+                                    _jimeng_auto_instance.stop()
+                            except:
+                                pass
+                            _jimeng_auto_instance = None
+                            
+                            if attempt == 0:
+                                continue  # 重试
+                            else:
+                                raise Exception(f"浏览器重建后仍然失败: {error_msg}")
+                        else:
+                            raise  # 其他错误直接抛出
             
             loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                submit_result = await loop.run_in_executor(pool, _run_submit)
+            # ✅ 使用持久线程池
+            submit_result = await loop.run_in_executor(_jimeng_thread_pool, _run_submit)
         
         print(f"   🔒 [{task_id}] 浏览器锁已释放（提交完成）")
         
@@ -507,8 +583,8 @@ async def execute_jimeng_automation(
             return result
         
         loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            result = await loop.run_in_executor(pool, _run_poll)
+        # ✅ 使用持久线程池
+        result = await loop.run_in_executor(_jimeng_thread_pool, _run_poll)
         
         if result.get('success'):
             task_manager.update_task(
@@ -703,7 +779,7 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
     )
     
     # 添加后台任务（不阻塞接口）
-    background_tasks.add_task(execute_vidu_automation, task_id, request.prompt)
+    background_tasks.add_task(execute_vidu_automation, task_id, request.prompt, max_wait=900)
     
     print(f"\n✅ 任务已受理: {task_id}")
     print(f"📝 提示词: {request.prompt}\n")
@@ -780,6 +856,11 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         reference_file = request.payload.get('referenceFile')  # ✅ 获取参考文件路径
         character_name = request.payload.get('characterName')  # ✅ 获取主体库角色名称
         
+        # ✅ 从 payload 中提取超时配置（默认 900 秒 = 15 分钟）
+        max_wait = int(request.payload.get('maxWait', 900))
+        if max_wait < 60:
+            max_wait = max_wait * 60  # 小于 60 视为分钟，转换为秒
+        
         # 添加后台任务
         background_tasks.add_task(
             execute_vidu_automation, 
@@ -793,6 +874,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
             model,
             reference_file,
             character_name,
+            max_wait,
         )
     elif request.platform == 'jimeng':
         # ✅ 即梦：UI 自动化方案

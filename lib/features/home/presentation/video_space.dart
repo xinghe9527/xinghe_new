@@ -856,11 +856,25 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   void _update(VideoTask task) => widget.onUpdate(task);
 
-  /// 显示任务菜单
-  void _showTaskMenu(BuildContext context) {
+  /// 显示任务菜单（在点击按钮旁边弹出）
+  void _showTaskMenu(BuildContext buttonContext) {
+    // 获取按钮的 RenderBox 以计算实际位置
+    final RenderBox button = buttonContext.findRenderObject() as RenderBox;
+    final RenderBox overlay = Overlay.of(buttonContext).context.findRenderObject() as RenderBox;
+    final Offset buttonPosition = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final Size buttonSize = button.size;
+    
+    // 菜单出现在按钮正下方
+    final position = RelativeRect.fromLTRB(
+      buttonPosition.dx,
+      buttonPosition.dy + buttonSize.height,
+      overlay.size.width - buttonPosition.dx - buttonSize.width,
+      0,
+    );
+    
     showMenu(
-      context: context,
-      position: const RelativeRect.fromLTRB(1000, 80, 20, 0),  // 右上角位置
+      context: buttonContext,
+      position: position,
       color: AppTheme.surfaceBackground,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       items: [
@@ -1007,7 +1021,103 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         
         _logger.success('Python API 服务连接成功', module: '视频空间');
         
-        // ✅ 并发提交所有任务
+        // ✅ Vidu 需要顺序生成（每次生成需要刷新页面），其他网页服务商可以并发
+        final isViduProvider = provider == 'vidu';
+        
+        if (isViduProvider) {
+          // ========== Vidu 顺序生成模式 ==========
+          _logger.info('Vidu 顺序生成模式：逐个生成 $batchCount 个视频', module: '视频空间');
+          
+          for (var i = 0; i < batchCount; i++) {
+            final placeholder = placeholders[i];
+            
+            try {
+              _logger.info('Vidu 顺序提交任务 ${i + 1}/$batchCount', module: '视频空间');
+              
+              // 构建 payload
+              final payload = await _buildViduPayload(
+                prefs: prefs, webModel: webModel!, webTool: webTool!, index: i,
+              );
+              
+              // 提交生成任务
+              final result = await aigcClient.submitGenerationTask(
+                platform: provider,
+                toolType: webTool,
+                payload: payload,
+              );
+              
+              _logger.success('Vidu 任务 ${i + 1} 提交成功: ${result.taskId}', module: '视频空间');
+              
+              // 立即轮询等待完成
+              _logger.info('Vidu 等待任务 ${i + 1} 完成: ${result.taskId}', module: '视频空间');
+              
+              final pollResult = await aigcClient.pollTaskStatus(
+                taskId: result.taskId,
+                interval: const Duration(seconds: 3),
+                maxAttempts: 300,
+                onProgress: (taskResult) {
+                  if (taskResult.isRunning) {
+                    _globalVideoProgress[placeholder] = 50;
+                  }
+                  if (mounted && widget.task.generatedVideos.contains(placeholder)) {
+                    setState(() {});
+                  }
+                  _logger.info('Vidu 任务 ${i + 1} 状态: ${taskResult.status}', module: '视频空间');
+                },
+              );
+              
+              if (pollResult.isSuccess) {
+                final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
+                if (videoPath == null || videoPath.isEmpty) {
+                  throw Exception('任务完成但未返回视频地址');
+                }
+                
+                _logger.success('Vidu 任务 ${i + 1} 完成: $videoPath', module: '视频空间');
+                
+                // 提取首帧
+                if (!videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+                  try {
+                    final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                    final ffmpeg = FFmpegService();
+                    await ffmpeg.extractFrame(videoPath: videoPath, outputPath: thumbnailPath);
+                  } catch (e) {
+                    _logger.warning('提取首帧失败: $e', module: '视频空间');
+                  }
+                }
+                
+                // 替换占位符
+                final currentVideos = List<String>.from(widget.task.generatedVideos);
+                final placeholderIndex = currentVideos.indexOf(placeholder);
+                if (placeholderIndex != -1) {
+                  currentVideos[placeholderIndex] = videoPath;
+                  _globalVideoProgress.remove(placeholder);
+                  _update(widget.task.copyWith(generatedVideos: currentVideos));
+                  if (mounted) setState(() {});
+                }
+              } else {
+                throw Exception(pollResult.error ?? '生成失败');
+              }
+            } catch (e) {
+              _logger.error('Vidu 任务 ${i + 1} 失败: $e', module: '视频空间');
+              
+              // 标记为失败
+              final currentVideos = List<String>.from(widget.task.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+                _globalVideoProgress.remove(placeholder);
+                _update(widget.task.copyWith(generatedVideos: currentVideos));
+                if (mounted) setState(() {});
+              }
+            }
+          }
+          
+          _logger.success('Vidu 顺序生成全部完成', module: '视频空间');
+          aigcClient.dispose();
+          return;
+        }
+        
+        // ========== 非 Vidu 网页服务商：并发提交 ==========
         _logger.info('开始并发提交 $batchCount 个视频任务', module: '视频空间');
         
         final submitFutures = List.generate(batchCount, (i) async {
@@ -1070,8 +1180,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                   _logger.info('参考生视频：素材库主体「${assetNames.join(", ")}」', module: '视频空间');
                 }
                 
-                // 普通文件：只取第一个作为参考文件上传
-                if (normalFiles.isNotEmpty && assetNames.isEmpty) {
+                // 普通文件：只取第一个作为参考文件上传（即使已有素材库主体也上传）
+                if (normalFiles.isNotEmpty) {
                   payload['referenceFile'] = normalFiles.first;
                   _logger.info('参考生视频：上传参考文件 ${normalFiles.first}', module: '视频空间');
                 }
@@ -1128,7 +1238,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             final result = await aigcClient.pollTaskStatus(
               taskId: taskId,
               interval: const Duration(seconds: 3),
-              maxAttempts: 200,  // 最多 10 分钟
+              maxAttempts: 300,  // 最多 15 分钟（与后端 max_wait=900 匹配）
               onProgress: (taskResult) {
                 // 更新进度（网页服务商暂时没有精确进度，显示为运行中）
                 if (taskResult.isRunning) {
@@ -2268,6 +2378,71 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     );
   }
 
+  /// 构建 Vidu 网页服务商的 payload（供顺序生成模式使用）
+  Future<Map<String, dynamic>> _buildViduPayload({
+    required SharedPreferences prefs,
+    required String webModel,
+    required String webTool,
+    required int index,
+  }) async {
+    final payload = <String, dynamic>{
+      'prompt': widget.task.prompt,
+      'model': webModel,
+    };
+    
+    // 保存路径
+    final savePath = prefs.getString('video_save_path');
+    if (savePath != null && savePath.isNotEmpty) {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'video_${timestamp}_${widget.task.id}_$index.mp4';
+      final fullPath = path.join(savePath, fileName);
+      payload['savePath'] = fullPath;
+    }
+    
+    // 图生视频
+    if (webTool == 'img2video') {
+      if (widget.task.referenceImages == null || widget.task.referenceImages!.isEmpty) {
+        throw Exception('图生视频需要提供参考图片');
+      }
+      payload['imageUrl'] = widget.task.referenceImages!.first;
+    }
+    
+    // 参考生视频
+    if (webTool == 'ref2video') {
+      if (widget.task.referenceImages != null && widget.task.referenceImages!.isNotEmpty) {
+        final List<String> assetNames = [];
+        final List<String> normalFiles = [];
+        
+        for (final refPath in widget.task.referenceImages!) {
+          final assetName = await _findAssetNameByPath(refPath);
+          if (assetName != null && assetName.isNotEmpty) {
+            assetNames.add(assetName);
+          } else {
+            normalFiles.add(refPath);
+          }
+        }
+        
+        if (assetNames.isNotEmpty) {
+          payload['characterName'] = assetNames.join(',');
+        }
+        if (normalFiles.isNotEmpty) {
+          payload['referenceFile'] = normalFiles.first;
+        }
+      } else {
+        if (widget.task.characterName.isNotEmpty) {
+          payload['characterName'] = widget.task.characterName;
+        }
+      }
+    }
+    
+    // 视频参数
+    payload['aspectRatio'] = widget.task.ratio;
+    payload['resolution'] = widget.task.quality;
+    payload['duration'] = widget.task.seconds;
+    
+    return payload;
+  }
+
   /// 根据图片路径在素材库中查找素材名称
   /// 如果找到，说明这张图来自素材库，返回用户自定义的名称
   Future<String?> _findAssetNameByPath(String imagePath) async {
@@ -2277,23 +2452,48 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       if (assetsJson == null || assetsJson.isEmpty) return null;
       
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+      // ✅ 规范化路径用于比较（Windows 路径大小写不敏感，分隔符可能不同）
+      final normalizedInput = imagePath.replaceAll('\\', '/').toLowerCase();
+      // 提取文件名用于回退匹配
+      final inputFileName = normalizedInput.split('/').last;
+      
+      String? fallbackMatch;  // 文件名匹配的回退结果
+      
       for (final entry in data.values) {
         final stylesList = entry as List;
         for (final styleData in stylesList) {
           final assets = (styleData['assets'] as List?) ?? [];
           for (final assetData in assets) {
             final asset = assetData as Map<String, dynamic>;
-            if (asset['path'] == imagePath) {
+            final assetPath = (asset['path'] as String?) ?? '';
+            final normalizedAsset = assetPath.replaceAll('\\', '/').toLowerCase();
+            
+            // 策略1：完整路径匹配（规范化后）
+            if (normalizedAsset == normalizedInput || assetPath == imagePath) {
               final name = asset['name'] as String? ?? '';
-              // 检查名称是否是用户自定义的（不是默认文件名）
-              // 如果名称不包含扩展名且不是随机ID格式，认为是自定义名称
               if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
                 return name;
               }
               return null;
             }
+            
+            // 策略2：文件名匹配（回退）
+            if (fallbackMatch == null) {
+              final assetFileName = normalizedAsset.split('/').last;
+              if (assetFileName == inputFileName && assetFileName.isNotEmpty) {
+                final name = asset['name'] as String? ?? '';
+                if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
+                  fallbackMatch = name;
+                }
+              }
+            }
           }
         }
+      }
+      
+      if (fallbackMatch != null) {
+        _logger.info('素材库查找: 使用文件名回退匹配 "$fallbackMatch" for $imagePath', module: '视频空间');
+        return fallbackMatch;
       }
     } catch (e) {
       _logger.error('查找素材名称失败: $e', module: '视频空间');
@@ -2771,23 +2971,25 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           right: 6,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => _showTaskMenu(context),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceBackground.withOpacity(0.95),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: AppTheme.dividerColor),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+            child: Builder(
+              builder: (buttonContext) => GestureDetector(
+                onTap: () => _showTaskMenu(buttonContext),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceBackground.withOpacity(0.95),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AppTheme.dividerColor),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
                 ),
-                child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
               ),
             ),
           ),

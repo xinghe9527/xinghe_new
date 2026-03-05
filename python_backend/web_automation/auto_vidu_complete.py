@@ -221,89 +221,97 @@ def select_character_from_library(page, character_names):
     Returns:
         int: 成功选择的主体数量
     """
+    import sys as _sys
+    def _print(msg):
+        """确保输出立即刷新"""
+        print(msg, flush=True)
+    
     if isinstance(character_names, str):
         character_names = [character_names]
     
-    print(f"\n🎭 开始从主体库选择角色: {character_names}")
+    _print(f"\n🎭 开始从主体库选择角色: {character_names}")
     selected_count = 0
     
+    # 记录主体库面板是否已打开（优化多主体选择流程）
+    library_panel_open = False
+    
     for idx, char_name in enumerate(character_names):
-        print(f"\n{'─'*40}")
-        print(f"🎭 选择主体 [{idx+1}/{len(character_names)}]: {char_name}")
+        _print(f"\n{'─'*40}")
+        _print(f"🎭 选择主体 [{idx+1}/{len(character_names)}]: {char_name}")
+        
+        # 每次迭代前截图（特别是第二个及之后的主体）
+        if idx > 0:
+            page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_before_char{idx+1}_{char_name}_{int(time.time())}.png'))
+            _print(f"📸 已截图保存选择第{idx+1}个主体前的页面状态")
         
         try:
-            # ========== 第1步：点击「上传图片/主体」区域 ==========
-            # 页面有两个上传区域：
-            #   - "上传视频 / 主体"（上面）
-            #   - "上传图片 / 主体"（下面）
-            # 主体库在"上传图片/主体"的弹出菜单里
-            print("🔍 第1步：点击「上传图片/主体」区域...")
-            
-            # 用 JS 获取"上传图片/主体"区域的坐标，然后用真实鼠标点击
-            upload_info = page.evaluate("""
-                () => {
-                    // 查找所有包含"上传图片"的元素
-                    const allEls = document.querySelectorAll('div, span');
-                    const candidates = [];
-                    
-                    for (const el of allEls) {
-                        const text = el.textContent.trim();
-                        // 精确匹配"上传图片"相关文本
-                        if (text.includes('上传图片') && text.includes('主体') && text.length < 60) {
-                            const rect = el.getBoundingClientRect();
-                            // 必须在左侧面板（x < 500）且可见
-                            if (rect.left < 500 && rect.width > 30 && rect.height > 15 && rect.width < 500) {
-                                candidates.push({
-                                    text: text.substring(0, 50),
-                                    x: Math.round(rect.left + rect.width / 2),
-                                    y: Math.round(rect.top + rect.height / 2),
-                                    w: Math.round(rect.width),
-                                    h: Math.round(rect.height),
-                                });
+            # ========== 判断主体库面板是否已打开 ==========
+            # 如果是第二个及之后的主体，先检查面板是否还开着
+            panel_already_open = False
+            if idx > 0 and library_panel_open:
+                # 检查右侧面板是否仍然可见（搜索框在 x > 300 区域）
+                panel_check = page.evaluate("""
+                    () => {
+                        const inputs = document.querySelectorAll('input');
+                        for (const inp of inputs) {
+                            const rect = inp.getBoundingClientRect();
+                            if (rect.left > 300 && rect.width > 50 && rect.height > 20 && rect.width < 500) {
+                                const placeholder = inp.placeholder || '';
+                                if (placeholder.includes('搜索') || placeholder.includes('查找') || placeholder.includes('名称') || placeholder.includes('主体') || inp.type === 'search') {
+                                    return { open: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                                }
                             }
                         }
+                        // 备用：检查右侧面板是否有主体卡片（图片 + 名字）
+                        const cards = document.querySelectorAll('img');
+                        let rightPanelCards = 0;
+                        for (const img of cards) {
+                            const rect = img.getBoundingClientRect();
+                            if (rect.left > 300 && rect.width > 50 && rect.width < 400 && rect.height > 50) {
+                                rightPanelCards++;
+                            }
+                        }
+                        if (rightPanelCards >= 2) {
+                            return { open: true, x: 0, y: 0 };
+                        }
+                        return { open: false };
                     }
-                    
-                    if (candidates.length === 0) return { found: false, candidates: [] };
-                    
-                    // 选文本最短的（最精确匹配）
-                    candidates.sort((a, b) => a.text.length - b.text.length);
-                    return { found: true, ...candidates[0], allCandidates: candidates };
-                }
-            """)
+                """)
+                
+                if panel_check and panel_check.get('open'):
+                    panel_already_open = True
+                    _print(f"✅ 主体库面板仍然打开，直接搜索下一个主体")
             
-            if not upload_info or not upload_info.get('found'):
-                print(f"❌ 未找到「上传图片/主体」区域，跳过「{char_name}」")
-                continue
-            
-            # 用真实鼠标点击
-            ux, uy = upload_info['x'], upload_info['y']
-            print(f"📍 找到上传区域: '{upload_info.get('text', '')}' ({ux}, {uy})")
-            page.mouse.click(ux, uy)
-            print("✅ 已点击上传区域")
-            time.sleep(1.5)  # 等待弹出菜单出现
-            
-            # 截图看弹出菜单
-            page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_after_upload_click_{int(time.time())}.png'))
-            
-            # ========== 第2步：点击「+ 主体库」==========
-            # 弹出菜单中有"+ 图片"和"+ 主体库"两个选项
-            print("🔍 第2步：点击「+ 主体库」...")
-            
-            # 用 JS 获取"主体库"按钮的坐标
-            lib_info = page.evaluate("""
-                () => {
-                    const allEls = document.querySelectorAll('div, span, button, a, li');
-                    const candidates = [];
-                    
-                    for (const el of allEls) {
-                        const text = el.textContent.trim();
-                        // 匹配包含"主体库"的元素
-                        if (text.includes('主体库') && text.length < 30) {
+            # ========== 策略D: 已选过主体且面板已关闭时，直接查找「主体库」按钮 ==========
+            # Vidu 选过第一个主体后，页面不再显示"上传图片/主体"，而是显示独立的
+            # "视频"/"主体库" 按钮组。直接点击「主体库」可一步打开面板，跳过 Step1+Step2
+            if idx > 0 and not panel_already_open:
+                _print("⚠️  主体库面板已关闭，尝试策略D: 直接查找「主体库」按钮...")
+                strategy_d_info = page.evaluate("""
+                    () => {
+                        const allEls = document.querySelectorAll('div, span, button');
+                        const candidates = [];
+                        for (const el of allEls) {
+                            const text = el.textContent.trim();
+                            // 精确匹配"主体库"（排除"视频主体库"等容器文本）
+                            if (text !== '主体库') continue;
                             const rect = el.getBoundingClientRect();
-                            if (rect.width === 0 || rect.height === 0) continue;
-                            // 弹出菜单应该在左侧面板区域
-                            if (rect.left > 600) continue;
+                            if (rect.left > 500 || rect.width === 0 || rect.height === 0) continue;
+                            if (rect.width > 120 || rect.height > 50) continue;
+                            
+                            // 检查父级上下文
+                            let parentText = '';
+                            let parent = el.parentElement;
+                            for (let i = 0; i < 5 && parent; i++) {
+                                parentText += (parent.textContent || '') + ' ';
+                                parent = parent.parentElement;
+                            }
+                            
+                            // 判断所属区域：
+                            // - "图片"区域（包含已选角色，显示静态主体）→ 优先选择
+                            // - "视频"区域（空位，仅显示动态主体）→ 次选
+                            const isVideoSection = parentText.includes('视频') && !parentText.includes('图片');
+                            const isImageSection = parentText.includes('图片');
                             
                             candidates.push({
                                 text: text,
@@ -311,89 +319,284 @@ def select_character_from_library(page, character_names):
                                 y: Math.round(rect.top + rect.height / 2),
                                 w: Math.round(rect.width),
                                 h: Math.round(rect.height),
+                                isVideoSection: isVideoSection,
+                                isImageSection: isImageSection,
                                 tag: el.tagName.toLowerCase(),
+                                parentSnippet: parentText.substring(0, 60),
                             });
                         }
+                        if (candidates.length === 0) return { found: false };
+                        // 优先选"图片"区域的按钮（显示静态主体/所有主体），
+                        // 其次选"视频"区域，最后按y坐标选最下方的（更可能是图片区）
+                        candidates.sort((a, b) => {
+                            if (a.isImageSection !== b.isImageSection) return a.isImageSection ? -1 : 1;
+                            if (a.isVideoSection !== b.isVideoSection) return a.isVideoSection ? 1 : -1;
+                            return b.y - a.y;  // 选最下方的
+                        });
+                        return { found: true, ...candidates[0], allCandidates: candidates };
                     }
-                    
-                    if (candidates.length === 0) return { found: false, candidates: [] };
-                    
-                    // 选文本最短的（最精确匹配"主体库"或"+ 主体库"）
-                    candidates.sort((a, b) => a.text.length - b.text.length);
-                    return { found: true, ...candidates[0], allCandidates: candidates };
-                }
-            """)
+                """)
+                if strategy_d_info and strategy_d_info.get('found'):
+                    sx, sy = strategy_d_info['x'], strategy_d_info['y']
+                    all_cands = strategy_d_info.get('allCandidates', [])
+                    _print(f"✅ 策略D: 找到 {len(all_cands)} 个「主体库」按钮")
+                    for ci, c in enumerate(all_cands):
+                        _print(f"   [{ci}] ({c.get('x')}, {c.get('y')}) image={c.get('isImageSection')} video={c.get('isVideoSection')} parent={c.get('parentSnippet', '')[:40]}")
+                    _print(f"✅ 策略D选择: ({sx}, {sy}) image={strategy_d_info.get('isImageSection')} video={strategy_d_info.get('isVideoSection')}")
+                    page.mouse.click(sx, sy)
+                    _print("✅ 已点击「主体库」按钮，等待面板打开...")
+                    time.sleep(2.5)
+                    panel_already_open = True  # 面板已打开，跳过 Step1+Step2
+                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_strategy_d_clicked_{int(time.time())}.png'))
+                else:
+                    _print("⚠️  策略D未找到「主体库」按钮，将使用常规 Step1+Step2 流程")
             
-            if not lib_info or not lib_info.get('found'):
-                # 可能弹出菜单没出现，尝试再次点击上传区域
-                print("⚠️  未找到「主体库」按钮，尝试重新点击上传区域...")
-                page.mouse.click(ux, uy)
-                time.sleep(2)
+            if not panel_already_open:
+                # ========== 第1步：点击「上传图片/主体」区域或「+」按钮 ==========
+                # 第一次选择时，点击"上传图片/主体"文字区域
+                # 已选过主体后，可能需要找"+"按钮或新的上传入口
+                _print("🔍 第1步：打开上传/主体入口...")
                 
-                # 再次查找
+                # 策略A: 查找原始的"上传图片/主体"文字区域
+                upload_info = page.evaluate("""
+                    () => {
+                        const allEls = document.querySelectorAll('div, span');
+                        const candidates = [];
+                        
+                        for (const el of allEls) {
+                            const text = el.textContent.trim();
+                            if (text.includes('上传图片') && text.includes('主体') && text.length < 60) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.left < 500 && rect.width > 30 && rect.height > 15 && rect.width < 500) {
+                                    candidates.push({
+                                        text: text.substring(0, 50),
+                                        x: Math.round(rect.left + rect.width / 2),
+                                        y: Math.round(rect.top + rect.height / 2),
+                                        w: Math.round(rect.width),
+                                        h: Math.round(rect.height),
+                                    });
+                                }
+                            }
+                        }
+                        
+                        if (candidates.length === 0) return { found: false, candidates: [] };
+                        candidates.sort((a, b) => a.text.length - b.text.length);
+                        return { found: true, ...candidates[0], allCandidates: candidates };
+                    }
+                """)
+                
+                # 策略B: 如果原始文字区域没找到（已选主体后UI变化），查找"+"按钮
+                if not upload_info or not upload_info.get('found'):
+                    _print("⚠️  未找到原始「上传图片/主体」文字，尝试查找添加按钮...")
+                    upload_info = page.evaluate("""
+                        () => {
+                            const allEls = document.querySelectorAll('div, span, button, svg, a, i');
+                            const candidates = [];
+                            
+                            for (const el of allEls) {
+                                const rect = el.getBoundingClientRect();
+                                // 必须在左侧面板
+                                if (rect.left > 500 || rect.width === 0 || rect.height === 0) continue;
+                                
+                                const text = (el.textContent || '').trim();
+                                const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                                const title = (el.getAttribute('title') || '').toLowerCase();
+                                const className = (el.className || '').toString().toLowerCase();
+                                
+                                // 查找"+"按钮、"添加"按钮、"添加主体"按钮
+                                let isAddBtn = false;
+                                
+                                // 检查文本内容
+                                if (text === '+' || text === '＋' || text.includes('添加') || text.includes('新增')) {
+                                    isAddBtn = true;
+                                }
+                                // 检查 aria-label 或 title
+                                if (ariaLabel.includes('add') || ariaLabel.includes('添加') || title.includes('add') || title.includes('添加')) {
+                                    isAddBtn = true;
+                                }
+                                // 检查 class 名（常见命名）
+                                if (className.includes('add') || className.includes('plus')) {
+                                    isAddBtn = true;
+                                }
+                                // 检查 SVG 图标是否是 "+" 形状（有 line 或 path 元素）
+                                if (el.tagName.toLowerCase() === 'svg' && el.querySelector('line, path')) {
+                                    const lines = el.querySelectorAll('line');
+                                    if (lines.length === 2) isAddBtn = true;  // "+" 通常由两条线组成
+                                }
+                                
+                                if (isAddBtn && rect.width < 200 && rect.height < 200) {
+                                    candidates.push({
+                                        text: text.substring(0, 30) || '[图标]',
+                                        x: Math.round(rect.left + rect.width / 2),
+                                        y: Math.round(rect.top + rect.height / 2),
+                                        w: Math.round(rect.width),
+                                        h: Math.round(rect.height),
+                                        tag: el.tagName.toLowerCase(),
+                                    });
+                                }
+                            }
+                            
+                            // 策略C: 查找空的虚线框区域（通常用于添加更多内容）
+                            const dashBoxes = document.querySelectorAll('[style*="dashed"], [class*="dashed"], [class*="upload"], [class*="add-more"]');
+                            for (const el of dashBoxes) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.left < 500 && rect.width > 30 && rect.height > 30 && rect.width < 300 && rect.height < 300) {
+                                    candidates.push({
+                                        text: (el.textContent || '').trim().substring(0, 30) || '[虚线框]',
+                                        x: Math.round(rect.left + rect.width / 2),
+                                        y: Math.round(rect.top + rect.height / 2),
+                                        w: Math.round(rect.width),
+                                        h: Math.round(rect.height),
+                                        tag: el.tagName.toLowerCase(),
+                                    });
+                                }
+                            }
+                            
+                            if (candidates.length === 0) return { found: false, candidates: [] };
+                            // 优先选小尺寸的（更可能是按钮而非容器）
+                            candidates.sort((a, b) => (a.w * a.h) - (b.w * b.h));
+                            return { found: true, ...candidates[0], allCandidates: candidates };
+                        }
+                    """)
+                
+                if not upload_info or not upload_info.get('found'):
+                    _print(f"❌ 未找到上传入口或添加按钮，跳过「{char_name}」")
+                    # 打印调试信息
+                    debug_texts = page.evaluate("""
+                        () => {
+                            const results = [];
+                            const allEls = document.querySelectorAll('div, span, button, a, svg');
+                            for (const el of allEls) {
+                                const text = (el.textContent || '').trim();
+                                if (text.length < 30) {
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.left < 500 && rect.width > 0 && rect.height > 0 && rect.height < 100) {
+                                        if (text.includes('主体') || text.includes('图片') || text.includes('上传') || text.includes('添加') || text === '+') {
+                                            results.push({ text: text || '[空]', x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height), tag: el.tagName });
+                                        }
+                                    }
+                                }
+                            }
+                            return results;
+                        }
+                    """)
+                    _print("📋 页面上相关元素:")
+                    for dt in (debug_texts or []):
+                        _print(f"   '{dt.get('text')}' tag={dt.get('tag')} x={dt.get('x')} y={dt.get('y')} w={dt.get('w')} h={dt.get('h')}")
+                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_upload_entry_{char_name}_{int(time.time())}.png'))
+                    continue
+                
+                # 用真实鼠标点击
+                ux, uy = upload_info['x'], upload_info['y']
+                _print(f"📍 找到入口: '{upload_info.get('text', '')}' ({ux}, {uy})")
+                page.mouse.click(ux, uy)
+                _print("✅ 已点击入口")
+                time.sleep(1.5)
+                
+                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_after_upload_click_{int(time.time())}.png'))
+                
+                # ========== 第2步：点击「+ 主体库」==========
+                _print("🔍 第2步：点击「+ 主体库」...")
+                
                 lib_info = page.evaluate("""
                     () => {
                         const allEls = document.querySelectorAll('div, span, button, a, li');
                         const candidates = [];
+                        
                         for (const el of allEls) {
                             const text = el.textContent.trim();
                             if (text.includes('主体库') && text.length < 30) {
                                 const rect = el.getBoundingClientRect();
                                 if (rect.width === 0 || rect.height === 0) continue;
                                 if (rect.left > 600) continue;
+                                
                                 candidates.push({
                                     text: text,
                                     x: Math.round(rect.left + rect.width / 2),
                                     y: Math.round(rect.top + rect.height / 2),
                                     w: Math.round(rect.width),
                                     h: Math.round(rect.height),
+                                    tag: el.tagName.toLowerCase(),
                                 });
                             }
                         }
-                        if (candidates.length === 0) return { found: false };
+                        
+                        if (candidates.length === 0) return { found: false, candidates: [] };
                         candidates.sort((a, b) => a.text.length - b.text.length);
-                        return { found: true, ...candidates[0] };
+                        return { found: true, ...candidates[0], allCandidates: candidates };
                     }
                 """)
-            
-            if not lib_info or not lib_info.get('found'):
-                print(f"❌ 未找到「主体库」按钮，跳过「{char_name}」")
-                # 打印页面上所有可见文本帮助调试
-                debug_texts = page.evaluate("""
-                    () => {
-                        const results = [];
-                        const allEls = document.querySelectorAll('div, span, button, a');
-                        for (const el of allEls) {
-                            const text = el.textContent.trim();
-                            if (text.length > 0 && text.length < 30) {
-                                const rect = el.getBoundingClientRect();
-                                if (rect.left < 500 && rect.width > 0 && rect.height > 0 && rect.height < 60) {
-                                    if (text.includes('主体') || text.includes('图片') || text.includes('上传')) {
-                                        results.push({ text: text, x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) });
+                
+                if not lib_info or not lib_info.get('found'):
+                    _print("⚠️  未找到「主体库」按钮，尝试重新点击入口...")
+                    page.mouse.click(ux, uy)
+                    time.sleep(2)
+                    
+                    lib_info = page.evaluate("""
+                        () => {
+                            const allEls = document.querySelectorAll('div, span, button, a, li');
+                            const candidates = [];
+                            for (const el of allEls) {
+                                const text = el.textContent.trim();
+                                if (text.includes('主体库') && text.length < 30) {
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.width === 0 || rect.height === 0) continue;
+                                    if (rect.left > 600) continue;
+                                    candidates.push({
+                                        text: text,
+                                        x: Math.round(rect.left + rect.width / 2),
+                                        y: Math.round(rect.top + rect.height / 2),
+                                        w: Math.round(rect.width),
+                                        h: Math.round(rect.height),
+                                    });
+                                }
+                            }
+                            if (candidates.length === 0) return { found: false };
+                            candidates.sort((a, b) => a.text.length - b.text.length);
+                            return { found: true, ...candidates[0] };
+                        }
+                    """)
+                
+                if not lib_info or not lib_info.get('found'):
+                    _print(f"❌ 未找到「主体库」按钮，跳过「{char_name}」")
+                    debug_texts = page.evaluate("""
+                        () => {
+                            const results = [];
+                            const allEls = document.querySelectorAll('div, span, button, a');
+                            for (const el of allEls) {
+                                const text = el.textContent.trim();
+                                if (text.length > 0 && text.length < 30) {
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.left < 500 && rect.width > 0 && rect.height > 0 && rect.height < 60) {
+                                        if (text.includes('主体') || text.includes('图片') || text.includes('上传')) {
+                                            results.push({ text: text, x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) });
+                                        }
                                     }
                                 }
                             }
+                            return results;
                         }
-                        return results;
-                    }
-                """)
-                print("📋 页面上相关文本元素:")
-                for dt in (debug_texts or []):
-                    print(f"   '{dt.get('text')}' x={dt.get('x')} y={dt.get('y')} w={dt.get('w')} h={dt.get('h')}")
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_lib_btn_{int(time.time())}.png'))
-                continue
+                    """)
+                    _print("📋 页面上相关文本元素:")
+                    for dt in (debug_texts or []):
+                        _print(f"   '{dt.get('text')}' x={dt.get('x')} y={dt.get('y')} w={dt.get('w')} h={dt.get('h')}")
+                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_lib_btn_{int(time.time())}.png'))
+                    continue
+                
+                # 用真实鼠标点击"主体库"
+                lx, ly = lib_info['x'], lib_info['y']
+                _print(f"📍 找到主体库按钮: '{lib_info.get('text', '')}' ({lx}, {ly})")
+                page.mouse.click(lx, ly)
+                _print("✅ 已点击「主体库」")
+                
+                # 等待主体库面板加载
+                time.sleep(2.5)
             
-            # 用真实鼠标点击"主体库"
-            lx, ly = lib_info['x'], lib_info['y']
-            print(f"📍 找到主体库按钮: '{lib_info.get('text', '')}' ({lx}, {ly})")
-            page.mouse.click(lx, ly)
-            print("✅ 已点击「主体库」")
-            
-            # 等待主体库面板加载
-            time.sleep(2.5)
+            # 标记面板已打开
+            library_panel_open = True
             
             # ========== 第3步：在搜索框输入角色名 ==========
-            print(f"🔍 第3步：搜索「{char_name}」...")
+            _print(f"🔍 第3步：搜索「{char_name}」...")
             
             search_used = False
             
@@ -434,7 +637,7 @@ def select_character_from_library(page, character_names):
             
             if search_box_info and search_box_info.get('found'):
                 sx, sy = search_box_info['x'], search_box_info['y']
-                print(f"📍 找到搜索框: ({sx}, {sy}) placeholder='{search_box_info.get('placeholder', '')}' 共{search_box_info.get('total', 0)}个候选")
+                _print(f"📍 找到搜索框: ({sx}, {sy}) placeholder='{search_box_info.get('placeholder', '')}' 共{search_box_info.get('total', 0)}个候选")
                 
                 # 用真实鼠标点击搜索框，确保获得焦点
                 page.mouse.click(sx, sy)
@@ -454,7 +657,7 @@ def select_character_from_library(page, character_names):
                 page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_search_typed_{char_name}_{int(time.time())}.png'))
                 
                 # ✅ 关键：按 Enter 确认搜索
-                print(f"⏎ 按 Enter 确认搜索...")
+                _print(f"⏎ 按 Enter 确认搜索...")
                 page.keyboard.press('Enter')
                 time.sleep(2.5)  # 等待搜索结果加载
                 
@@ -462,10 +665,10 @@ def select_character_from_library(page, character_names):
                 page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_search_result_{char_name}_{int(time.time())}.png'))
                 
                 search_used = True
-                print(f"✅ 已输入并确认搜索: {char_name}")
+                _print(f"✅ 已输入并确认搜索: {char_name}")
             else:
                 # 备用方案：用 Playwright locator 查找
-                print("⚠️  JS 未找到搜索框，尝试 locator 方式...")
+                _print("⚠️  JS 未找到搜索框，尝试 locator 方式...")
                 search_selectors = [
                     'input[placeholder*="搜索"]:visible',
                     'input[placeholder*="主体"]:visible',
@@ -496,7 +699,7 @@ def select_character_from_library(page, character_names):
                                 page.keyboard.press('Enter')
                                 time.sleep(2.5)
                                 search_used = True
-                                print(f"✅ 已搜索并确认（备用方案）: {char_name}")
+                                _print(f"✅ 已搜索并确认（备用方案）: {char_name}")
                                 break
                             except:
                                 continue
@@ -506,12 +709,12 @@ def select_character_from_library(page, character_names):
                         continue
             
             if not search_used:
-                print("❌ 未找到搜索框，无法搜索主体名称，跳过此主体以避免选错")
+                _print("❌ 未找到搜索框，无法搜索主体名称，跳过此主体以避免选错")
                 page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_search_box_{int(time.time())}.png'))
                 continue
             
             # ========== 第4步：验证搜索结果并点击匹配的主体卡片 ==========
-            print(f"🔍 第4步：点击「{char_name}」的主体卡片...")
+            _print(f"🔍 第4步：点击「{char_name}」的主体卡片...")
             
             time.sleep(1)
             
@@ -544,11 +747,11 @@ def select_character_from_library(page, character_names):
             
             if verify_info:
                 card_names = verify_info.get('cardNames', [])
-                print(f"📋 搜索后面板中的主体: {card_names} (共{verify_info.get('count', 0)}个)")
+                _print(f"📋 搜索后面板中的主体: {card_names} (共{verify_info.get('count', 0)}个)")
                 
                 # 如果搜索后仍有很多不相关的卡片，说明搜索可能没生效
                 if len(card_names) > 3 and char_name not in card_names:
-                    print(f"⚠️  搜索可能未生效（{len(card_names)}个结果且无精确匹配），尝试重新搜索...")
+                    _print(f"⚠️  搜索可能未生效（{len(card_names)}个结果且无精确匹配），尝试重新搜索...")
                     # 重新点击搜索框并输入
                     if search_box_info and search_box_info.get('found'):
                         page.mouse.click(search_box_info['x'], search_box_info['y'])
@@ -561,7 +764,7 @@ def select_character_from_library(page, character_names):
                         time.sleep(0.8)
                         page.keyboard.press('Enter')
                         time.sleep(3)
-                        print("🔄 已重新搜索并确认")
+                        _print("🔄 已重新搜索并确认")
                         page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_research_{char_name}_{int(time.time())}.png'))
             
             # 用 JS 获取卡片位置信息（不点击），然后用 Playwright 真实鼠标点击
@@ -633,10 +836,10 @@ def select_character_from_library(page, character_names):
             if card_info and card_info.get('found'):
                 cx = card_info['x']
                 cy = card_info['y']
-                print(f"📍 找到卡片图片: x={cx} y={cy} w={card_info['w']} h={card_info['h']} text='{card_info.get('text', '')}'")
+                _print(f"📍 找到卡片图片: x={cx} y={cy} w={card_info['w']} h={card_info['h']} text='{card_info.get('text', '')}'")
                 
                 # 用 Playwright 真实鼠标点击卡片图片中心
-                print(f"🖱️  用真实鼠标点击卡片 ({cx}, {cy})...")
+                _print(f"🖱️  用真实鼠标点击卡片 ({cx}, {cy})...")
                 page.mouse.click(cx, cy)
                 time.sleep(2)  # 等待占位符出现在文本框
                 
@@ -659,11 +862,11 @@ def select_character_from_library(page, character_names):
                 """)
                 
                 if has_placeholder and has_placeholder.get('hasPlaceholder'):
-                    print(f"✅ 主体「{char_name}」选择成功，文本框已出现占位符")
-                    print(f"   img={has_placeholder.get('imgCount', 0)} chip={has_placeholder.get('chipCount', 0)}")
+                    _print(f"✅ 主体「{char_name}」选择成功，文本框已出现占位符")
+                    _print(f"   img={has_placeholder.get('imgCount', 0)} chip={has_placeholder.get('chipCount', 0)}")
                     selected_count += 1
                 else:
-                    print(f"⚠️  点击了卡片但文本框未出现占位符，尝试双击...")
+                    _print(f"⚠️  点击了卡片但文本框未出现占位符，尝试双击...")
                     # 尝试双击
                     page.mouse.dblclick(cx, cy)
                     time.sleep(2)
@@ -680,24 +883,45 @@ def select_character_from_library(page, character_names):
                     """)
                     
                     if has_placeholder2 and has_placeholder2.get('hasPlaceholder'):
-                        print(f"✅ 双击后主体「{char_name}」选择成功")
+                        _print(f"✅ 双击后主体「{char_name}」选择成功")
                         selected_count += 1
                     else:
-                        print(f"⚠️  主体「{char_name}」可能未成功选择（无占位符），但继续")
+                        _print(f"⚠️  主体「{char_name}」可能未成功选择（无占位符），但继续")
                         # 仍然计数，因为可能是验证逻辑不准确
                         selected_count += 1
                 
                 page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_char_selected_{char_name}_{int(time.time())}.png'))
+                
+                # 检查选择后面板是否仍然打开（影响下一个主体的选择流程）
+                time.sleep(0.5)
+                post_select_panel = page.evaluate("""
+                    () => {
+                        const inputs = document.querySelectorAll('input');
+                        for (const inp of inputs) {
+                            const rect = inp.getBoundingClientRect();
+                            if (rect.left > 300 && rect.width > 50 && rect.height > 20) {
+                                return { open: true };
+                            }
+                        }
+                        return { open: false };
+                    }
+                """)
+                library_panel_open = post_select_panel and post_select_panel.get('open', False)
+                if library_panel_open:
+                    _print(f"📌 主体库面板仍然打开，下一个主体可直接搜索")
+                else:
+                    _print(f"📌 主体库面板已关闭，下一个主体需重新打开")
             else:
-                print(f"❌ 未找到主体「{char_name}」的卡片")
+                _print(f"❌ 未找到主体「{char_name}」的卡片")
                 # 输出调试信息
                 all_candidates = card_info.get('allCandidates', []) if card_info else []
                 for c in all_candidates:
-                    print(f"   候选: x={c.get('x')} y={c.get('y')} text='{c.get('text')}'")
+                    _print(f"   候选: x={c.get('x')} y={c.get('y')} text='{c.get('text')}'")
                 page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_char_not_found_{char_name}_{int(time.time())}.png'))
         
         except Exception as e:
-            print(f"❌ 选择「{char_name}」异常: {str(e)[:120]}")
+            _print(f"❌ 选择「{char_name}」异常: {str(e)[:120]}")
+            library_panel_open = False  # 异常时假设面板已关闭
             page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_char_error_{int(time.time())}.png'))
     
     # 选择完所有主体后，关闭右侧主体库面板（如果还开着）
@@ -709,7 +933,7 @@ def select_character_from_library(page, character_names):
         except:
             pass
     
-    print(f"\n🎭 主体选择完成: 成功 {selected_count}/{len(character_names)}")
+    _print(f"\n🎭 主体选择完成: 成功 {selected_count}/{len(character_names)}")
     return selected_count
 
 def human_like_mouse_move(page, element):
@@ -775,76 +999,48 @@ def check_login_status(page):
 
 
 def close_popups_and_blockers(page):
-    """自动清障：关闭所有弹窗和遮挡物"""
-    print("\n🧹 开始清障：检测并关闭弹窗...")
+    """自动清障：关闭所有弹窗和遮挡物（快速版本，总耗时 <5s）"""
+    print("\n🧹 开始清障：检测并关闭弹窗...", flush=True)
     
-    # 弹窗关闭按钮的选择器
+    # 精简的弹窗关闭按钮选择器（仅保留 Vidu 常见的）
     close_selectors = [
         'button:has-text("关闭")',
-        'button:has-text("Close")',
-        'button:has-text("×")',
-        'button:has-text("✕")',
-        'button:has-text("X")',
         'button:has-text("知道了")',
         'button:has-text("我知道了")',
         'button:has-text("稍后")',
-        'button:has-text("取消")',
         'button:has-text("跳过")',
-        'button:has-text("不再提示")',
         'div:has-text("免费获得积分") button',
-        'div:has-text("任务") button:has-text("关闭")',
         'div:has-text("每日任务") button',
+        '[aria-label="关闭"]',
+        '[aria-label="Close"]',
         '.close-button',
         '.close-btn',
         '.modal-close',
-        '.popup-close',
-        '.dialog-close',
-        'button.close',
-        '.icon-close',
-        '[aria-label="关闭"]',
-        '[aria-label="Close"]',
-        '[data-testid="close-button"]',
-        '[data-testid="modal-close"]',
-        'button[title="关闭"]',
-        'button[title="Close"]',
-        '.mask',
-        '.overlay',
-        '.backdrop',
     ]
     
     closed_count = 0
-    max_attempts = 3
     
-    for attempt in range(max_attempts):
-        found_blocker = False
-        
-        for selector in close_selectors:
-            try:
-                elements = page.locator(selector).all()
-                
-                for element in elements:
-                    try:
-                        if element.is_visible(timeout=500):
-                            print(f"  🎯 发现遮挡物: {selector}")
-                            element.click(timeout=1000)
-                            closed_count += 1
-                            found_blocker = True
-                            print(f"  ✅ 已关闭遮挡物 #{closed_count}")
-                            time.sleep(0.3)
-                    except:
-                        continue
-            except:
-                continue
-        
-        if not found_blocker:
-            break
-        
-        time.sleep(0.5)
+    # 只尝试 1 次（快速扫描）
+    for selector in close_selectors:
+        try:
+            elements = page.locator(selector).all()
+            for element in elements:
+                try:
+                    if element.is_visible():
+                        print(f"  🎯 发现遮挡物: {selector}", flush=True)
+                        element.click(timeout=2000)
+                        closed_count += 1
+                        print(f"  ✅ 已关闭遮挡物 #{closed_count}", flush=True)
+                        time.sleep(0.3)
+                except:
+                    continue
+        except:
+            continue
     
     if closed_count > 0:
-        print(f"✅ 清障完成：共关闭 {closed_count} 个遮挡物")
+        print(f"✅ 清障完成：共关闭 {closed_count} 个遮挡物", flush=True)
     else:
-        print("✅ 未发现遮挡物，页面清洁")
+        print("✅ 未发现遮挡物，页面清洁", flush=True)
     
     return closed_count
 
@@ -1194,10 +1390,11 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
             time.sleep(0.5)
             page.keyboard.press('Escape')
             time.sleep(0.5)
-            # 从 model 参数中提取关键字（如 vidu-q1 → Q1, vidu-q2 → Q2, vidu-q3 → Q3）
+            # 从 model 参数中提取关键字（如 vidu-q1 → Q1, vidu-q2-pro → Q2 Pro）
             model_lower = model.lower().strip()
             # 提取 q 后面的数字部分作为匹配关键字
             model_keyword = None
+            want_pro = 'pro' in model_lower  # 是否要求 Pro 版本
             if 'q1' in model_lower:
                 model_keyword = 'Q1'
             elif 'q2' in model_lower:
@@ -1208,7 +1405,9 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                 # 尝试直接用原始名称匹配
                 model_keyword = model.strip()
             
-            print(f"   🔑 模型关键字: {model_keyword}")
+            # 构建完整匹配标识（如 "Q2 Pro" 或 "Q2"）
+            model_full_keyword = f"{model_keyword} Pro" if want_pro else model_keyword
+            print(f"   🔑 模型关键字: {model_keyword}, Pro: {want_pro}, 完整匹配: {model_full_keyword}")
             
             # 第1步：通过"模型"标签定位同行的下拉框，然后点击打开
             # 结构：左边是"模型"标签，右边是下拉框显示 "Vidu Q2 Pro ∨"
@@ -1276,8 +1475,12 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                 current_model = model_trigger.get('text', '')
                 print(f"   📍 当前模型: '{current_model}' ({model_trigger['x']}, {model_trigger['y']})")
                 
-                # 检查当前模型是否已经是目标模型
-                if model_keyword.upper() in current_model.upper():
+                # 检查当前模型是否已经是目标模型（精确区分 Pro/非Pro）
+                current_upper = current_model.upper()
+                has_pro = 'PRO' in current_upper
+                keyword_match = model_keyword.upper() in current_upper
+                pro_match = (want_pro == has_pro)  # Pro 状态必须一致
+                if keyword_match and pro_match:
                     print(f"   ✅ 模型已经是: {current_model}")
                     params_set += 1
                 else:
@@ -1288,10 +1491,12 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                     page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_model_dropdown_{int(time.time())}.png'))
                     
                     # 第2步：在下拉选项中找到目标模型并点击
-                    # 下拉选项中会有 "Vidu Q1 Pro", "Vidu Q2 Pro" 等
+                    # 下拉选项中会有 "Vidu Q1", "Vidu Q1 Pro", "Vidu Q2", "Vidu Q2 Pro" 等
+                    want_pro_js = 'true' if want_pro else 'false'
                     option_info = page.evaluate(f"""
                         () => {{
                             const keyword = '{model_keyword}';
+                            const wantPro = {want_pro_js};
                             const allEls = document.querySelectorAll('div, span, li, button, a');
                             const candidates = [];
                             
@@ -1306,19 +1511,29 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                                 
                                 // 匹配包含目标关键字的选项
                                 if (text.toUpperCase().includes(keyword.toUpperCase()) && text.length < 40) {{
+                                    const hasPro = text.toUpperCase().includes('PRO');
                                     candidates.push({{
                                         text: text,
                                         x: Math.round(rect.left + rect.width / 2),
                                         y: Math.round(rect.top + rect.height / 2),
                                         w: Math.round(rect.width),
                                         h: Math.round(rect.height),
+                                        hasPro: hasPro,
                                     }});
                                 }}
                             }}
                             
                             if (candidates.length === 0) return {{ found: false }};
                             
-                            // 选文本最短的（最精确匹配）
+                            // ✅ 优先选择 Pro 状态匹配的选项
+                            const proMatched = candidates.filter(c => c.hasPro === wantPro);
+                            if (proMatched.length > 0) {{
+                                // 在匹配的选项中选文本最短的（最精确）
+                                proMatched.sort((a, b) => a.text.length - b.text.length);
+                                return {{ found: true, ...proMatched[0], allCandidates: candidates }};
+                            }}
+                            
+                            // 回退：没有精确匹配时，选文本最短的
                             candidates.sort((a, b) => a.text.length - b.text.length);
                             return {{ found: true, ...candidates[0], allCandidates: candidates }};
                         }}
@@ -1330,10 +1545,11 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                         page.mouse.click(option_info['x'], option_info['y'])
                         time.sleep(1.5)
                         
-                        # 验证模型是否切换成功
+                        # 验证模型是否切换成功（精确区分 Pro/非Pro）
                         verify = page.evaluate(f"""
                             () => {{
                                 const keyword = '{model_keyword}';
+                                const wantPro = {want_pro_js};
                                 const allEls = document.querySelectorAll('div, span, button');
                                 for (const el of allEls) {{
                                     const text = el.textContent.trim();
@@ -1342,7 +1558,10 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                                     if (rect.width === 0 || rect.height === 0) continue;
                                     if (rect.width > 350 || rect.height > 60) continue;
                                     if (text.includes('Vidu') && text.toUpperCase().includes(keyword.toUpperCase()) && text.length < 40) {{
-                                        return {{ verified: true, text: text }};
+                                        const hasPro = text.toUpperCase().includes('PRO');
+                                        if (hasPro === wantPro) {{
+                                            return {{ verified: true, text: text }};
+                                        }}
                                     }}
                                 }}
                                 return {{ verified: false }};

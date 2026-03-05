@@ -200,8 +200,13 @@ class ViduAutomation:
             pass
         self._started = False
     
-    def _ensure_tool_page(self, tool_type: str):
-        """确保当前在指定工具类型的页面"""
+    def _ensure_tool_page(self, tool_type: str, force_reload: bool = False):
+        """确保当前在指定工具类型的页面
+        
+        Args:
+            tool_type: 工具类型
+            force_reload: 是否强制刷新页面（多次生成时需要刷新以清空旧内容）
+        """
         target_url = VIDU_TOOL_URLS.get(tool_type, VIDU_TOOL_URLS['text2video'])
         current_url = self.page.url
         
@@ -214,9 +219,20 @@ class ViduAutomation:
         expected_key = url_key_map.get(tool_type, 'text2video')
         
         if 'vidu.cn' not in current_url or expected_key not in current_url:
-            print(f"   🌐 导航到 Vidu {tool_type} 页面...")
+            print(f"   🌐 导航到 Vidu {tool_type} 页面...", flush=True)
+            print(f"      当前URL: {current_url[:80]}", flush=True)
+            print(f"      目标URL: {target_url}", flush=True)
             self.page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            print(f"   🌐 页面已加载 (domcontentloaded)", flush=True)
             time.sleep(3)
+        elif force_reload:
+            # 已在目标页面但需要刷新（多次生成时清空旧的提示词和主体选择）
+            print(f"   🌐 已在目标页面，刷新以清空旧内容...", flush=True)
+            self.page.reload(wait_until='domcontentloaded', timeout=30000)
+            print(f"   🌐 页面已刷新", flush=True)
+            time.sleep(3)
+        else:
+            print(f"   🌐 已在目标页面: {current_url[:80]}", flush=True)
 
     
     def check_login(self) -> bool:
@@ -245,6 +261,153 @@ class ViduAutomation:
         except Exception as e:
             print(f"   ⚠️  检查登录异常: {e}")
             return True
+    
+    # ============================================================
+    # 清空之前的提示词（多次生成时必须先清空）
+    # ============================================================
+    
+    def clear_previous_prompt(self, tool_type: str = 'text2video') -> bool:
+        """
+        清空之前的提示词内容。
+        
+        Vidu 页面在生成完成后，提示词不会自动清空。
+        如果不清空就直接输入新提示词，会导致内容叠加，实际生成的还是旧内容。
+        
+        策略：
+        1. 优先点击 "一键清空" 按钮（如果存在）
+        2. 尝试点击文本框右下角的删除按钮（SVG 图标按钮）
+        3. 回退到键盘 Ctrl+A → Delete 清空
+        """
+        print("   🧹 清空之前的提示词...", flush=True)
+        
+        try:
+            # 策略1：通过 JS 查找并点击 "一键清空" 或删除按钮
+            cleared = self.page.evaluate("""
+                () => {
+                    // 方法1：查找包含 "一键清空" 文本的按钮/元素
+                    const allElements = document.querySelectorAll('button, div[role="button"], span, a');
+                    for (const el of allElements) {
+                        const text = (el.textContent || '').trim();
+                        if (text === '一键清空' || text.includes('一键清空')) {
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width > 0 && rect.height > 0) {
+                                el.click();
+                                return { method: 'clear_all_button', text: text };
+                            }
+                        }
+                    }
+                    
+                    // 方法2：查找 textarea 或输入区域附近的删除/清空按钮
+                    // 通常是一个小的 SVG 图标按钮，位于文本框右下角
+                    const textarea = document.querySelector('textarea:not([style*="display: none"])');
+                    if (textarea) {
+                        const textareaRect = textarea.getBoundingClientRect();
+                        // 查找 textarea 附近（下方或右侧）的按钮
+                        const nearbyButtons = document.querySelectorAll('button, div[role="button"], [class*="clear"], [class*="delete"], [class*="close"], [class*="remove"]');
+                        for (const btn of nearbyButtons) {
+                            const btnRect = btn.getBoundingClientRect();
+                            // 在 textarea 下方且水平范围内
+                            if (btnRect.top >= textareaRect.bottom - 40 && 
+                                btnRect.top <= textareaRect.bottom + 60 &&
+                                btnRect.left >= textareaRect.left - 20 &&
+                                btnRect.right <= textareaRect.right + 20 &&
+                                btnRect.width > 0 && btnRect.width < 80) {
+                                btn.click();
+                                return { method: 'nearby_button', x: Math.round(btnRect.left), y: Math.round(btnRect.top) };
+                            }
+                        }
+                        
+                        // 方法3：查找 textarea 容器内的 SVG 删除图标
+                        const parent = textarea.closest('div[class]') || textarea.parentElement;
+                        if (parent) {
+                            const svgBtns = parent.querySelectorAll('svg, [class*="icon"]');
+                            for (const svg of svgBtns) {
+                                const clickTarget = svg.closest('button') || svg.closest('div[role="button"]') || svg.parentElement;
+                                if (clickTarget && clickTarget !== parent) {
+                                    const svgRect = clickTarget.getBoundingClientRect();
+                                    // 只点击小尺寸的图标按钮（避免误点大按钮）
+                                    if (svgRect.width > 0 && svgRect.width < 60 && svgRect.height < 60) {
+                                        clickTarget.click();
+                                        return { method: 'svg_icon', x: Math.round(svgRect.left), y: Math.round(svgRect.top) };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 方法4：查找 ProseMirror 编辑器附近的删除按钮（ref2video）
+                    const editor = document.querySelector('div.ProseMirror[contenteditable="true"]');
+                    if (editor) {
+                        const editorRect = editor.getBoundingClientRect();
+                        const nearbyBtns = document.querySelectorAll('button, div[role="button"]');
+                        for (const btn of nearbyBtns) {
+                            const btnRect = btn.getBoundingClientRect();
+                            if (btnRect.top >= editorRect.bottom - 40 &&
+                                btnRect.top <= editorRect.bottom + 60 &&
+                                btnRect.left >= editorRect.left - 20 &&
+                                btnRect.right <= editorRect.right + 20 &&
+                                btnRect.width > 0 && btnRect.width < 80) {
+                                btn.click();
+                                return { method: 'editor_nearby_button', x: Math.round(btnRect.left), y: Math.round(btnRect.top) };
+                            }
+                        }
+                    }
+                    
+                    return null;
+                }
+            """)
+            
+            if cleared:
+                print(f"   ✅ 已清空提示词（{cleared.get('method', 'unknown')}）", flush=True)
+                time.sleep(1)
+                
+                # 如果弹出了确认对话框，点击确认
+                try:
+                    confirm_btn = self.page.locator('button:has-text("确认"):visible, button:has-text("确定"):visible, button:has-text("删除"):visible').first
+                    if confirm_btn.is_visible(timeout=2000):
+                        confirm_btn.click()
+                        print("   ✅ 已确认清空", flush=True)
+                        time.sleep(1)
+                except:
+                    pass
+                
+                return True
+            
+            # 策略2（回退）：用键盘清空
+            print("   ⚠️  未找到清空按钮，尝试键盘清空...", flush=True)
+            if tool_type == 'ref2video':
+                input_selectors = [
+                    'div.ProseMirror[contenteditable="true"]:visible',
+                    'div[contenteditable="true"]:visible',
+                ]
+            else:
+                input_selectors = [
+                    'textarea:visible',
+                ]
+            
+            for selector in input_selectors:
+                try:
+                    el = self.page.locator(selector).first
+                    if el.is_visible(timeout=3000):
+                        el.click(force=True)
+                        time.sleep(0.3)
+                        self.page.keyboard.press('Control+a')
+                        time.sleep(0.2)
+                        self.page.keyboard.press('Delete')
+                        time.sleep(0.3)
+                        self.page.keyboard.press('Backspace')
+                        time.sleep(0.3)
+                        print("   ✅ 已通过键盘清空", flush=True)
+                        return True
+                except:
+                    continue
+            
+            print("   ⚠️  清空操作未能执行，继续输入...", flush=True)
+            return False
+            
+        except Exception as e:
+            print(f"   ⚠️  清空提示词异常: {e}", flush=True)
+            return False
     
     # ============================================================
     # 输入提示词
@@ -352,9 +515,18 @@ class ViduAutomation:
         try:
             from auto_vidu_complete import select_character_from_library
             names = [n.strip() for n in character_name.split(',') if n.strip()]
-            return select_character_from_library(self.page, names)
+            print(f"   🎭 select_character: 解析后的名称列表 = {names}", flush=True)
+            # 截图记录选择前的页面状态
+            import os, time as _t
+            SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+            self.page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_before_char_select_{int(_t.time())}.png'))
+            result = select_character_from_library(self.page, names)
+            print(f"   🎭 select_character: 返回结果 = {result}", flush=True)
+            return result
         except Exception as e:
-            print(f"   ⚠️  选择角色失败: {e}")
+            import traceback
+            print(f"   ⚠️  选择角色失败: {e}", flush=True)
+            traceback.print_exc()
             return 0
 
     
@@ -469,17 +641,19 @@ class ViduAutomation:
             {'success': True, 'initial_video_count': N}
             或 {'success': False, 'error': '...'}
         """
-        print(f"\n{'='*60}")
-        print(f"  🎬 Vidu 提交生成（并发模式）")
-        print(f"{'='*60}")
-        print(f"   工具: {tool_type}")
+        print(f"\n{'='*60}", flush=True)
+        print(f"  🎬 Vidu 提交生成（并发模式）", flush=True)
+        print(f"{'='*60}", flush=True)
+        print(f"   工具: {tool_type}", flush=True)
         if model:
-            print(f"   模型: {model}")
-        print(f"   提示词: {prompt[:80]}...")
+            print(f"   模型: {model}", flush=True)
+        print(f"   提示词: {prompt[:80]}...", flush=True)
         
         try:
             # 整个 submit 过程需要页面锁（UI 操作不可并发）
+            print(f"   🔒 等待 _page_lock...", flush=True)
             with self._page_lock:
+                print(f"   🔓 获取到 _page_lock", flush=True)
                 return self._submit_generate_impl(
                     prompt=prompt, tool_type=tool_type, model=model,
                     aspect_ratio=aspect_ratio, resolution=resolution,
@@ -502,43 +676,69 @@ class ViduAutomation:
     ) -> dict:
         """submit_generate 的内部实现（调用时已持有 _page_lock）"""
         try:
-            # 1. 导航到对应页面
-            self._ensure_tool_page(tool_type)
+            # 1. 导航到对应页面（多次生成时刷新页面以清空旧内容）
+            print(f"   [STEP 1] 开始导航到 {tool_type} 页面...", flush=True)
+            self._ensure_tool_page(tool_type, force_reload=True)
+            print(f"   [STEP 1] ✅ 页面导航完成，当前URL: {self.page.url[:80]}", flush=True)
             time.sleep(2)
             
             # 等待输入框加载
+            print(f"   [STEP 2] 等待输入框加载 (tool_type={tool_type})...", flush=True)
             try:
                 if tool_type == 'ref2video':
                     self.page.wait_for_selector('div.ProseMirror[contenteditable="true"]:visible, div[contenteditable="true"]:visible', timeout=10000)
+                    print("   [STEP 2] ✅ 检测到 contenteditable 编辑器", flush=True)
                 else:
                     self.page.wait_for_selector('textarea:visible', timeout=10000)
-            except:
-                print("   ⚠️  输入框加载超时，继续尝试...")
+                    print("   [STEP 2] ✅ 检测到 textarea", flush=True)
+            except Exception as e:
+                print(f"   [STEP 2] ⚠️  输入框加载超时: {e}", flush=True)
+                print("   继续尝试...", flush=True)
             
             time.sleep(1)
             
             # 2. 关闭弹窗
             if tool_type != 'ref2video':
+                print("   [STEP 3] 🧹 准备关闭弹窗...", flush=True)
                 try:
                     from auto_vidu_complete import close_popups_and_blockers
                     close_popups_and_blockers(self.page)
-                except:
-                    pass
+                    print("   [STEP 3] ✅ 弹窗处理完成", flush=True)
+                except Exception as e:
+                    print(f"   [STEP 3] ⚠️  弹窗处理异常: {e}", flush=True)
             
             # 3. 上传参考文件（ref2video）
+            print(f"   [STEP 4] 📋 参数: tool_type={tool_type}, reference_file={reference_file}, character_name={character_name}", flush=True)
             if tool_type == 'ref2video' and reference_file:
                 if not self.upload_reference_file(reference_file):
                     print("   ⚠️  参考文件上传失败，继续...")
                 time.sleep(1)
             elif tool_type == 'ref2video' and character_name:
-                self.select_character(character_name)
+                print(f"   🎭 准备从主体库选择角色: {character_name}")
+                result_count = self.select_character(character_name)
+                print(f"   🎭 主体选择完成，成功数量: {result_count}")
                 time.sleep(1)
+            else:
+                print(f"   ℹ️ 跳过主体选择（tool_type={tool_type}, has_ref={bool(reference_file)}, has_char={bool(character_name)}）")
             
-            # 4. 输入提示词
+            # 4.5 清空之前的提示词（作为额外保险，页面刷新后通常已是干净状态）
+            # 注意：STEP 1 已通过 force_reload=True 刷新了页面，通常不需要再清空
+            # ⚠️ ref2video 模式下，主体以 chip 形式嵌入编辑器中，绝不能清空编辑器！
+            if tool_type != 'ref2video':
+                print(f"   [STEP 4.5] 🧹 检查并清空残留提示词...", flush=True)
+                self.clear_previous_prompt(tool_type)
+                print(f"   [STEP 4.5] ✅ 清空检查完成", flush=True)
+            else:
+                print(f"   [STEP 4.5] ℹ️ ref2video 模式，跳过清空（主体 chip 在编辑器中）", flush=True)
+            
+            # 5. 输入提示词
+            print(f"   [STEP 5] 📝 输入提示词...", flush=True)
             if not self.input_prompt(prompt, tool_type):
                 return {'success': False, 'error': '输入提示词失败'}
+            print(f"   [STEP 5] ✅ 提示词输入完成", flush=True)
             
             # 5. 设置视频参数
+            print(f"   [STEP 6] ⚙️ 设置视频参数...", flush=True)
             self.set_video_parameters(
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
@@ -546,13 +746,17 @@ class ViduAutomation:
                 model=model,
             )
             
+            print(f"   [STEP 6] ✅ 视频参数设置完成", flush=True)
+            
             # 6. 记录当前视频数量
             try:
                 initial_video_count = len(self.page.locator('video').all())
             except:
                 initial_video_count = 0
+            print(f"   [STEP 7] 当前视频数: {initial_video_count}", flush=True)
             
             # 7. 点击创作
+            print(f"   [STEP 8] 🖱️ 点击创作按钮...", flush=True)
             if not self.click_create():
                 return {'success': False, 'error': '点击创作按钮失败'}
             
@@ -572,7 +776,9 @@ class ViduAutomation:
                 time.sleep(2)
             
             if not generation_triggered:
-                print("   ⚠️  未检测到生成触发标识，但继续...")
+                print("   [STEP 9] ⚠️  未检测到生成触发标识，但继续...", flush=True)
+            else:
+                print("   [STEP 9] ✅ 检测到生成已触发", flush=True)
             
             # 生成任务 ID（用时间戳，因为 Vidu 没有返回 history_id）
             task_key = f"vidu_{int(time.time())}_{random.randint(1000, 9999)}"
@@ -582,10 +788,14 @@ class ViduAutomation:
                 'video_url': None,
             }
             
-            print(f"   ✅ 提交成功，task_key={task_key}, 初始视频数={initial_video_count}")
+            print(f"   ✅ 提交成功，task_key={task_key}, 初始视频数={initial_video_count}", flush=True)
             return {'success': True, 'task_key': task_key, 'initial_video_count': initial_video_count}
         
         except Exception as e:
+            import traceback
+            print(f"   ❌ _submit_generate_impl 异常: {e}", flush=True)
+            traceback.print_exc()
+            import sys; sys.stdout.flush(); sys.stderr.flush()
             return {'success': False, 'error': str(e)}
 
     
@@ -593,7 +803,7 @@ class ViduAutomation:
     # 轮询结果（不需要浏览器锁，可并发）
     # ============================================================
     
-    def poll_result(self, task_key: str = '', initial_video_count: int = 0, max_wait: int = 600, save_path: str = None) -> dict:
+    def poll_result(self, task_key: str = '', initial_video_count: int = 0, max_wait: int = 900, save_path: str = None) -> dict:
         """
         轮询生成结果。
         
@@ -605,9 +815,9 @@ class ViduAutomation:
             {'success': True, 'video_url': '...', 'video_path': '...'}
             或 {'success': False, 'error': '...'}
         """
-        print(f"\n⏳ Vidu 轮询结果（最长 {max_wait}s）...")
+        print(f"\n⏳ Vidu 轮询结果（最长 {max_wait}s）...", flush=True)
         if task_key:
-            print(f"   📍 追踪 task_key: {task_key}")
+            print(f"   📍 追踪 task_key: {task_key}", flush=True)
         
         start_time = time.time()
         poll_interval = 8
@@ -631,7 +841,9 @@ class ViduAutomation:
             
             if check_result['status'] == 'generating':
                 # 还在生成中，继续等待
-                pass
+                if elapsed > 0 and elapsed % 60 == 0:
+                    indicator = check_result.get('indicator', '')
+                    print(f"   ⏳ 已等待 {elapsed}s，仍在生成中... (匹配指标: {indicator})")
             elif check_result['status'] == 'failed':
                 return {'success': False, 'error': check_result.get('error', '生成失败')}
             elif check_result['status'] == 'done':
@@ -662,10 +874,13 @@ class ViduAutomation:
                                 return {'success': True, 'video_path': save_path, 'video_url': video_url, 'task_key': task_key}
                         return {'success': True, 'video_url': video_url, 'task_key': task_key}
                     
+                    print(f"   ⚠️  二次尝试仍未找到视频 URL")
+                    # 截图辅助调试
+                    try:
+                        self.page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_video_url_{int(time.time())}.png'))
+                    except:
+                        pass
                     return {'success': False, 'error': '未找到视频 URL'}
-            
-            if elapsed > 0 and elapsed % 30 == 0:
-                print(f"   ⏳ 已等待 {elapsed}s...")
             
             time.sleep(poll_interval)
         
@@ -683,17 +898,39 @@ class ViduAutomation:
         with self._page_lock:
             # 检查是否还在生成中
             still_generating = False
+            matched_indicator = ''
+            check_errors = 0
             for indicator in generating_indicators:
                 try:
                     el = self.page.locator(indicator).first
                     if el.is_visible(timeout=2000):
                         still_generating = True
+                        matched_indicator = indicator
                         break
-                except:
+                except Exception as e:
+                    error_msg = str(e)
+                    if 'cannot switch to a different thread' in error_msg or 'thread' in error_msg.lower():
+                        print(f"   ❌ [poll] 线程错误: {error_msg[:80]}", flush=True)
+                        return {'status': 'generating', 'indicator': f'线程错误(重试中)'}
+                    check_errors += 1
                     continue
             
+            # 如果所有检查都报错，可能是页面访问有问题，不要误判为完成
+            if not still_generating and check_errors >= len(generating_indicators):
+                print(f"   ⚠️  [poll] 所有指标检查都失败 ({check_errors}个错误)，视为仍在生成", flush=True)
+                return {'status': 'generating', 'indicator': f'检查异常({check_errors}错误)'}
+            
             if still_generating:
-                return {'status': 'generating'}
+                # 安全检查：即使生成指标仍可见，如果页面上已经出现新视频，
+                # 说明可能是其他任务/历史记录的指标文字导致误判
+                try:
+                    current_video_count = self.page.evaluate("() => document.querySelectorAll('video').length")
+                    if initial_video_count > 0 and current_video_count > initial_video_count:
+                        print(f"   🎥 检测到新视频 ({current_video_count} > {initial_video_count})，虽然仍有生成指标: {matched_indicator}")
+                        return {'status': 'done'}
+                except:
+                    pass
+                return {'status': 'generating', 'indicator': matched_indicator}
             
             # 检查失败标识
             for fail_text in ['生成失败', '任务失败']:
@@ -703,6 +940,13 @@ class ViduAutomation:
                         return {'status': 'failed', 'error': f'页面显示: {fail_text}'}
                 except:
                     continue
+            
+            # 额外验证：检查页面上的视频数量（辅助判断）
+            try:
+                video_count = self.page.evaluate("() => document.querySelectorAll('video').length")
+                print(f"   📊 生成指标消失，页面视频数量: {video_count} (初始: {initial_video_count})")
+            except:
+                pass
             
             return {'status': 'done'}
     
@@ -719,9 +963,16 @@ class ViduAutomation:
                         let sourceSrc = '';
                         const sourceEl = video.querySelector('source');
                         if (sourceEl) sourceSrc = sourceEl.src || '';
+                        
+                        // 也检查 data-src 或 poster
+                        const dataSrc = video.getAttribute('data-src') || '';
+                        const poster = video.poster || '';
+                        
                         results.push({
                             src: src,
                             sourceSrc: sourceSrc,
+                            dataSrc: dataSrc,
+                            poster: poster,
                             x: Math.round(rect.left),
                             y: Math.round(rect.top),
                             width: Math.round(rect.width),
@@ -729,15 +980,38 @@ class ViduAutomation:
                             visible: rect.width > 0 && rect.height > 0,
                         });
                     }
-                    return { total: videos.length, videos: results };
+                    
+                    // 同时查找页面中的下载链接
+                    const downloadLinks = [];
+                    const links = document.querySelectorAll('a[download], a[href*=".mp4"]');
+                    for (const link of links) {
+                        downloadLinks.push(link.href || '');
+                    }
+                    
+                    return { total: videos.length, videos: results, downloadLinks: downloadLinks };
                 }
             """)
             
             if not video_info:
+                print("   ⚠️  _get_video_url: 页面没有返回视频信息")
                 return ''
             
             total = video_info.get('total', 0)
             videos = video_info.get('videos', [])
+            download_links = video_info.get('downloadLinks', [])
+            
+            print(f"   🎥 视频元素数量: {total} (初始: {initial_video_count})")
+            for i, v in enumerate(videos):
+                src = v.get('src', '') or v.get('sourceSrc', '')
+                print(f"      [{i}] src={src[:80] if src else '(空)'} x={v.get('x')} y={v.get('y')} visible={v.get('visible')}")
+            if download_links:
+                print(f"   📥 下载链接: {download_links}")
+            
+            # 从下载链接获取
+            for dl in download_links:
+                if dl and '.mp4' in dl and 'blob:' not in dl:
+                    print(f"   ✅ 使用下载链接: {dl[:80]}")
+                    return dl
             
             # 如果有新增视频
             if total > initial_video_count and initial_video_count > 0:
@@ -758,7 +1032,80 @@ class ViduAutomation:
             content = self.page.content()
             mp4_urls = re.findall(r'https?://[^\s<>"\']+?\.mp4[^\s<>"\']*', content)
             if mp4_urls:
-                return list(dict.fromkeys(mp4_urls))[-1]
+                unique_urls = list(dict.fromkeys(mp4_urls))
+                print(f"   🔗 从页面源码找到 {len(unique_urls)} 个 mp4 URL")
+                for u in unique_urls[-3:]:
+                    print(f"      {u[:100]}")
+                return unique_urls[-1]
+            
+            # 尝试从 Performance API 获取视频请求 URL
+            try:
+                perf_urls = self.page.evaluate("""
+                    () => {
+                        const entries = performance.getEntriesByType('resource');
+                        const videoUrls = [];
+                        for (const entry of entries) {
+                            if (entry.name.includes('.mp4') || entry.name.includes('video') || entry.name.includes('media')) {
+                                videoUrls.push(entry.name);
+                            }
+                        }
+                        return videoUrls;
+                    }
+                """)
+                if perf_urls:
+                    print(f"   🔗 从 Performance API 找到 {len(perf_urls)} 个视频 URL")
+                    for u in perf_urls:
+                        print(f"      {u[:100]}")
+                    # 选最后一个 mp4 URL
+                    mp4_perf = [u for u in perf_urls if '.mp4' in u]
+                    if mp4_perf:
+                        return mp4_perf[-1]
+                    # 没有 mp4 就选最后一个视频相关 URL
+                    if perf_urls:
+                        return perf_urls[-1]
+            except Exception as e:
+                print(f"   ⚠️  Performance API 查询失败: {e}")
+            
+            # 最后尝试：如果有 blob URL 的视频，截图并返回空（让上层知道）
+            blob_videos = [v for v in videos if 'blob:' in (v.get('src', '') or v.get('sourceSrc', '')) and v.get('visible')]
+            if blob_videos:
+                print(f"   ⚠️  仅找到 blob URL 视频 ({len(blob_videos)} 个)，无法直接下载")
+                print(f"   💡 尝试从页面提取实际视频地址...")
+                # 尝试从 Vidu 页面的内部状态获取
+                try:
+                    vidu_urls = self.page.evaluate("""
+                        () => {
+                            // 查找所有包含视频 URL 的元素属性
+                            const patterns = [];
+                            const allEls = document.querySelectorAll('*');
+                            for (const el of allEls) {
+                                for (const attr of el.attributes) {
+                                    if (attr.value && typeof attr.value === 'string' && 
+                                        (attr.value.includes('.mp4') || attr.value.includes('vidu')) && 
+                                        attr.value.startsWith('http')) {
+                                        patterns.push(attr.value);
+                                    }
+                                }
+                            }
+                            // 也检查 __NEXT_DATA__ 等框架数据
+                            const nextData = document.querySelector('#__NEXT_DATA__');
+                            if (nextData) {
+                                const text = nextData.textContent || '';
+                                const urlMatches = text.match(/https?:\\/\\/[^"'\\s]+?\\.mp4[^"'\\s]*/g);
+                                if (urlMatches) patterns.push(...urlMatches);
+                            }
+                            return [...new Set(patterns)];
+                        }
+                    """)
+                    if vidu_urls:
+                        print(f"   🔗 从页面属性找到 {len(vidu_urls)} 个 URL")
+                        for u in vidu_urls:
+                            print(f"      {u[:100]}")
+                        return vidu_urls[-1]
+                except Exception as e:
+                    print(f"   ⚠️  页面属性查询失败: {e}")
+            
+            print("   ❌ 所有方法均未找到可下载的视频 URL")
             
         except Exception as e:
             print(f"   ⚠️  获取视频 URL 失败: {e}")
@@ -780,7 +1127,7 @@ class ViduAutomation:
         reference_file: str = None,
         character_name: str = None,
         save_path: str = None,
-        max_wait: int = 600,
+        max_wait: int = 900,
     ) -> dict:
         """完整的视频生成流程（串行模式，兼容旧接口）"""
         submit_result = self.submit_generate(
