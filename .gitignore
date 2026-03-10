@@ -29,3 +29,41 @@ python_backend/web_automation/logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# =========================
+# 4. Flutter 各平台专属防御 (防报错、防软链接冲突、防仓库体积膨胀)
+# =========================
+# Windows (解决你刚遇到的 OS Error 183 核心代码)
+windows/flutter/ephemeral/
+windows/flutter/generated_plugin_registrant.cc
+
+# Android (保护本地路径隐私和防构建缓存)
+android/local.properties
+android/.gradle/
+android/app/src/main/java/io/flutter/plugins/
+
+# iOS / macOS (防止成百上千的无用苹果依赖文件上传)
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+macos/Flutter/ephemeral/
+macos/Pods/
+
+# =========================
+# 5. 大型二进制文件 (超过GitHub限制)
+# =========================
+windows/ffmpeg/ffmpeg.exe
+python_backend/web_automation/dist/
+
+# =========================
+# 6. 自动化浏览器与 CDP 缓存防御 (绝对禁止上传！)
+# =========================
+python_backend/user_data/
+.jimeng_cdp_profile/
+*/.jimeng_cdp_profile/
+*.db
+*.db/CURRENT
+*.db/LOG*

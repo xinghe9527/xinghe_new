@@ -33,9 +33,18 @@ if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, io.TextIOWrapper
     except:
         pass
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
-USER_DATA_ROOT = os.path.join(PROJECT_ROOT, 'python_backend', 'user_data')
+# 浏览器 profile 统一存储在 %APPDATA%/com.example/xinghe_new/user_data/
+# 这样 Debug、Release、Inno Setup 安装后都共享同一份登录态
+_APPDATA = os.environ.get('APPDATA', os.path.expanduser('~'))
+USER_DATA_ROOT = os.path.join(_APPDATA, 'com.example', 'xinghe_new', 'user_data')
+os.makedirs(USER_DATA_ROOT, exist_ok=True)
+
+# SCRIPT_DIR 仅在非打包模式下有意义
+if getattr(sys, 'frozen', False):
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DEFAULT_CDP_PORT = 9222
 
 
@@ -115,6 +124,30 @@ def is_cdp_port_active(port: int) -> bool:
         return False
 
 
+def get_cdp_ws_url(port: int) -> Optional[str]:
+    """
+    通过 Python urllib 获取 CDP WebSocket URL。
+    
+    Playwright 1.58+ 的 Node.js 后端在发送 /json/version 请求时，
+    可能被 Edge 145+ 返回 400（HTTP header 兼容性问题）。
+    但 Python 的 urllib 可以正常获取。
+    获取到 ws:// URL 后直接传给 connect_over_cdp 即可绕过此问题。
+    """
+    import urllib.request
+    import json as _json
+    try:
+        url = f'http://127.0.0.1:{port}/json/version'
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+            ws_url = data.get('webSocketDebuggerUrl')
+            if ws_url:
+                print(f"   🔗 获取到 CDP WebSocket URL: {ws_url[:60]}...")
+                return ws_url
+    except Exception as e:
+        print(f"   ⚠️  获取 CDP WebSocket URL 失败: {e}")
+    return None
+
+
 # ============================================================
 # 浏览器管理器
 # ============================================================
@@ -153,9 +186,13 @@ class BrowserManager:
         else:
             self._launch_browser()
         
+        # 先用 Python urllib 获取 WebSocket URL，绕过 Playwright Node.js
+        # 与 Edge 145+ 的 HTTP 兼容性问题（Node.js 请求 /json/version 返回 400）
+        ws_url = get_cdp_ws_url(self.cdp_port)
+        cdp_endpoint = ws_url or f'http://127.0.0.1:{self.cdp_port}'
+        
         print(f"   🔗 通过 CDP 连接（端口 {self.cdp_port}）...")
-        self.browser = self.pw.chromium.connect_over_cdp(
-            f'http://127.0.0.1:{self.cdp_port}')
+        self.browser = self.pw.chromium.connect_over_cdp(cdp_endpoint)
         
         self.page = self._find_or_create_page(target_url)
         self._connected = True
@@ -187,6 +224,7 @@ class BrowserManager:
             f'--user-data-dir={self.profile_dir}',
             '--no-first-run',
             '--no-default-browser-check',
+            '--remote-allow-origins=*',  # Edge 145+ 需要此参数允许 CDP 连接
         ]
         
         print(f"   🚀 启动 {name}（CDP 端口 {self.cdp_port}）...")

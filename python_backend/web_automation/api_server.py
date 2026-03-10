@@ -47,8 +47,12 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 # ============================================================================
 
 # 获取项目根目录的绝对路径
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+if getattr(sys, 'frozen', False):
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    PROJECT_ROOT = SCRIPT_DIR
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
 # Python 可执行文件路径
 PYTHON_EXECUTABLE = sys.executable  # 使用当前 Python 解释器
@@ -1038,6 +1042,10 @@ def print_startup_banner():
 
 
 if __name__ == "__main__":
+    # PyInstaller --onefile 需要 freeze_support 防止多进程重复启动
+    import multiprocessing
+    multiprocessing.freeze_support()
+    
     print_startup_banner()
     
     # 启动 Uvicorn 服务器

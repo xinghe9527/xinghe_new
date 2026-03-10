@@ -11,6 +11,7 @@ import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/core/update/update_checker.dart';
 import 'package:xinghe_new/features/auth/presentation/widgets/user_header_widget.dart';
 import 'package:xinghe_new/pages/ai_canvas/ai_canvas_page.dart';
+import 'package:xinghe_new/core/auth_guard/auth_guard_wrapper.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,7 +20,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0; // 默认选中创作空间
   bool _showSettings = false; // 控制是否显示设置页面
 
@@ -37,10 +38,29 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    // 注册生命周期观察器
+    WidgetsBinding.instance.addObserver(this);
     // 延迟检查更新，确保页面加载完成
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdateChecker.checkOnStartup(context);  // ✅ 使用 UpdateChecker（包含 Referer）
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// APP 从后台切回前台时，静默同步最新用户状态
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('🔄 APP 恢复前台，触发静默同步...');
+      if (authProvider.isAuthenticated) {
+        authProvider.refreshUserInfo();
+      }
+    }
   }
 
   @override
@@ -109,9 +129,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
               Expanded(
-                child: _showSettings 
-                  ? SettingsPage(onBack: () => setState(() => _showSettings = false))
-                  : Row(
+                child: AuthGuardWrapper(
+                  authProvider: authProvider,
+                  // 使用 Stack + Offstage 保持主内容在设置页面时存活
+                  // 避免切换设置时 VideoSpace 等页面被销毁丢失状态
+                  child: Stack(
+                    children: [
+                      // 主内容（始终存活，设置打开时隐藏但不销毁）
+                      Offstage(
+                        offstage: _showSettings,
+                        child: Row(
                       children: [
                         // 2. 左侧：侧边栏
                         Container(
@@ -172,6 +199,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ],
                     ),
+                      ),
+                      // 设置页面（覆盖在主内容之上，打开时才显示）
+                      if (_showSettings)
+                        SettingsPage(onBack: () => setState(() => _showSettings = false)),
+                    ],
+                  ),
+                ),
               ),
             ],
             ),

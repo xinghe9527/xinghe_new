@@ -2481,13 +2481,13 @@ class _SettingsPageState extends State<SettingsPage> {
     List<String> providers;
     if (modelType == 'llm') {
       // LLM 模型包含 DeepSeek 和阿里云
-      providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun', 'azure', 'anthropic'];
+      providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun'];
     } else if (modelType == 'image') {
       // 图片模型：API服务商 + ComfyUI + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic', 'vidu', 'jimeng', 'keling', 'hailuo'];
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng'];
     } else if (modelType == 'video') {
       // 视频模型：API服务商 + ComfyUI + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic', 'vidu', 'jimeng', 'keling', 'hailuo'];
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng'];
     } else {
       // 其他（上传等）：只有 API 服务商
       providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic'];
@@ -3577,9 +3577,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         
                         // ✅ 直接启动系统 Edge/Chrome 浏览器
                         // 使用独立 profile 目录，登录态自动保存
-                        // ✅ 使用绝对路径，确保与 Python API 服务使用同一个 profile
-                        final currentDir = Directory.current.path;
-                        final profileDir = path.join(currentDir, 'python_backend', 'user_data', '${provider}_cdp_profile');
+                        // ✅ 使用 %APPDATA% 路径，与 Python 后端共享同一个 profile
+                        final appData = Platform.environment['APPDATA'] ?? 
+                            path.join(Platform.environment['USERPROFILE'] ?? '', 'AppData', 'Roaming');
+                        final profileDir = path.join(appData, 'com.example', 'xinghe_new', 'user_data', '${provider}_cdp_profile');
                         print('📁 浏览器 profile 目录: $profileDir');
                         
                         // CDP 端口映射（不同平台不同端口，避免冲突）

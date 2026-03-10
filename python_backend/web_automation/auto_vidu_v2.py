@@ -36,9 +36,17 @@ if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, io.TextIOWrapper
 # 常量配置
 # ============================================================
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
-USER_DATA_ROOT = os.path.join(PROJECT_ROOT, 'python_backend', 'user_data')
+# 浏览器 profile 统一存储在 %APPDATA%/com.example/xinghe_new/user_data/
+_APPDATA = os.environ.get('APPDATA', os.path.expanduser('~'))
+USER_DATA_ROOT = os.path.join(_APPDATA, 'com.example', 'xinghe_new', 'user_data')
+os.makedirs(USER_DATA_ROOT, exist_ok=True)
+
+if getattr(sys, 'frozen', False):
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    PROJECT_ROOT = SCRIPT_DIR
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 VIDU_PROFILE_DIR = os.path.join(USER_DATA_ROOT, 'vidu_profile')
 DEFAULT_DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, 'downloads')
 

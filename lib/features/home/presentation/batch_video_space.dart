@@ -181,7 +181,19 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       if (result == null || result.files.isEmpty) return;
       
       final file = File(result.files.first.path!);
-      final content = await file.readAsString(encoding: utf8);
+      
+      // 兼容多种编码：先读字节，再尝试 UTF-8 / 系统编码（GBK/ANSI）
+      final bytes = await file.readAsBytes();
+      String content;
+      try {
+        content = utf8.decode(bytes);
+      } catch (_) {
+        content = systemEncoding.decode(bytes);
+      }
+      // 去除 UTF-8 BOM 前缀
+      if (content.startsWith('\uFEFF')) {
+        content = content.substring(1);
+      }
       final lines = content.split('\n');
       
       if (lines.isEmpty) {
@@ -427,7 +439,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       }
       
       final file = File(result);
-      await file.writeAsString(lines.join('\n'), encoding: utf8);
+      // 添加 UTF-8 BOM，让 WPS/Excel 识别为 UTF-8 编码
+      await file.writeAsString('\uFEFF${lines.join('\n')}', encoding: utf8);
       
       _logger.success('成功导出 ${_tasks.length} 个任务', module: '批量空间');
       _showMessage('成功导出到 $result');
