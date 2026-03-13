@@ -13,6 +13,7 @@ class WatermarkEngineManager {
 
   Process? _engineProcess;
   bool _isRunning = false;
+  bool _isStopping = false;
   Timer? _healthCheckTimer;
   
   static const String _engineHost = '127.0.0.1';
@@ -133,6 +134,8 @@ class WatermarkEngineManager {
       return;
     }
     
+    _isStopping = true;
+    
     try {
       debugPrint('🛑 正在停止引擎...');
       
@@ -140,9 +143,18 @@ class WatermarkEngineManager {
       _healthCheckTimer?.cancel();
       _healthCheckTimer = null;
       
-      // 杀死进程
+      // 杀死进程并等待退出
       if (_engineProcess != null) {
-        _engineProcess!.kill();
+        final killed = _engineProcess!.kill();
+        if (killed) {
+          // 等待进程实际退出，最多5秒
+          try {
+            await _engineProcess!.exitCode.timeout(const Duration(seconds: 5));
+          } catch (_) {
+            // 超时则强制 SIGKILL
+            _engineProcess!.kill(ProcessSignal.sigkill);
+          }
+        }
         debugPrint('✅ 引擎进程已终止');
       }
       
@@ -151,6 +163,8 @@ class WatermarkEngineManager {
       
     } catch (e) {
       debugPrint('停止引擎时出错: $e');
+    } finally {
+      _isStopping = false;
     }
   }
   
@@ -198,9 +212,13 @@ class WatermarkEngineManager {
     _healthCheckTimer = Timer.periodic(
       const Duration(seconds: 10),
       (timer) async {
+        // 如果正在停止引擎，跳过此次检查
+        if (_isStopping || !_isRunning) return;
+        
         final isHealthy = await checkHealth();
         
-        if (!isHealthy) {
+        // 再次检查状态，避免在检查期间引擎已停止
+        if (!isHealthy && _isRunning && !_isStopping) {
           debugPrint('⚠️ 引擎健康检查失败，尝试重启...');
           _isRunning = false;
           await startEngine();

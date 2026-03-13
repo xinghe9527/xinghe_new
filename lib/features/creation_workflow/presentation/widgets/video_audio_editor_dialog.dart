@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -74,6 +75,9 @@ class _VideoAudioEditorDialogState extends State<VideoAudioEditorDialog> {
   
   // 时间轴缩放
   double _timelineZoom = 1.0;  // 1.0 = 正常，2.0 = 放大2倍
+
+  // Stream 订阅（避免泄漏）
+  final List<StreamSubscription> _streamSubscriptions = [];
 
   @override
   void initState() {
@@ -200,6 +204,10 @@ class _VideoAudioEditorDialogState extends State<VideoAudioEditorDialog> {
 
   @override
   void dispose() {
+    // 取消所有 stream 监听
+    for (final sub in _streamSubscriptions) {
+      sub.cancel();
+    }
     // 先释放音频播放器
     for (final player in _audioPlayers.values) {
       player.stop();
@@ -231,14 +239,14 @@ class _VideoAudioEditorDialogState extends State<VideoAudioEditorDialog> {
       print('[视频编辑器] 播放器创建完成');
 
       // 监听播放状态
-      _player.stream.playing.listen((playing) {
+      _streamSubscriptions.add(_player.stream.playing.listen((playing) {
         if (mounted) {
           setState(() => _isPlaying = playing);
         }
-      });
+      }));
 
       // 监听播放进度
-      _player.stream.position.listen((position) {
+      _streamSubscriptions.add(_player.stream.position.listen((position) {
         if (mounted) {
           setState(() {
             _currentPlayTime = position.inMilliseconds / 1000.0;
@@ -248,10 +256,10 @@ class _VideoAudioEditorDialogState extends State<VideoAudioEditorDialog> {
             _syncAudioPlayback();
           }
         }
-      });
+      }));
 
       // 监听时长
-      _player.stream.duration.listen((duration) {
+      _streamSubscriptions.add(_player.stream.duration.listen((duration) {
         if (mounted && duration.inMilliseconds > 0) {
           setState(() {
             _videoDuration = duration.inMilliseconds / 1000.0;
@@ -261,7 +269,7 @@ class _VideoAudioEditorDialogState extends State<VideoAudioEditorDialog> {
             }
           });
         }
-      });
+      }));
 
       // 打开视频
       await _player.open(Media(widget.videoPath));

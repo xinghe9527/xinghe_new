@@ -3,14 +3,15 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../app_constants.dart';
 
 /// 版本更新服务（使用阿里云函数计算）
 class UpdateService {
   // ✅ 阿里云函数计算公网地址
-  static const String _versionUrl = 'https://xinghe-angchuan-agxvbiyacd.cn-chengdu.fcapp.run';
+  static const String _versionUrl = AppConstants.fcBaseUrl;
   
   // ✅ 安全暗号 (Token)
-  static const String _token = 'xinghe5201314';
+  static const String _token = AppConstants.fcToken;
   
   // ✅ 固定的下载地址
   static const String _downloadUrl = 'https://xinghe-aigc.oss-cn-chengdu.aliyuncs.com/app_release/xingheAI_v1.0.1.exe';

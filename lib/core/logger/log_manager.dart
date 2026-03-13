@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'log_entry.dart';
 
@@ -11,6 +12,7 @@ class LogManager {
 
   final ValueNotifier<List<LogEntry>> logsNotifier = ValueNotifier([]);
   final int maxLogs = 500; // 最多保存500条日志
+  Timer? _saveDebounceTimer;
 
   /// 添加日志
   void log({
@@ -35,7 +37,7 @@ class LogManager {
     }
 
     logsNotifier.value = logs;
-    _saveLogs(); // 自动保存
+    _debounceSave(); // 防抖保存
   }
 
   /// 成功日志
@@ -76,6 +78,12 @@ class LogManager {
     } catch (e) {
       debugPrint('加载日志失败: $e');
     }
+  }
+
+  /// 防抖保存（2秒内多次写入只落盘一次）
+  void _debounceSave() {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(seconds: 2), _saveLogs);
   }
 
   /// 保存日志

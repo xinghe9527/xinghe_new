@@ -701,7 +701,9 @@ class YunwuService extends ApiServiceBase {
                        (error['message'] as String?) ??
                        errorMsg;
           }
-        } catch (_) {}
+        } catch (e) {
+          print('[YunwuService] 解析错误响应失败: $e');
+        }
         return ApiResponse.failure(
           errorMsg,
           statusCode: response.statusCode,
@@ -912,8 +914,8 @@ class YunwuService extends ApiServiceBase {
             } finally {
               httpClient.close(force: true);
             }
-          } catch (_) {
-            // /content 请求失败，回退使用 content URL
+          } catch (e) {
+            print('[YunwuService] /content 请求失败，回退使用 content URL: $e');
           }
           // 兜底：直接使用 content 端点 URL（可能需要 auth）
           return ApiResponse.success(

@@ -116,7 +116,6 @@ class OssConfig {
       final keySecret = utf8.decode(base64.decode(encodedKeySecret));
       
       debugPrint('[OSS配置] AccessKeyId: ${keyId.substring(0, 10)}...');
-      debugPrint('[OSS配置] 完整 AccessKeyId: $keyId');  // ✅ 临时显示完整 ID 用于调试
       debugPrint('[OSS配置] AccessKeySecret: ${keySecret.substring(0, 10)}...');
       
       // ✅ 强制清除旧配置，确保使用新的密钥

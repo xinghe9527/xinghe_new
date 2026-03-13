@@ -587,7 +587,9 @@ class IndexTTSService {
           useRandom: useRandom,
         );
         if (result != null) return result;
-      } catch (_) {}
+      } catch (e) {
+        print('[IndexTTS] WebUI(emotionVector)回退失败: $e');
+      }
     }
     // 2. 回退到 Python
     if (indexttsPath != null || await Directory('D:\\Index-TTS2_XH').exists()) {
@@ -636,7 +638,9 @@ class IndexTTSService {
           useEmotionText: useEmotionText,
         );
         if (result != null) return result;
-      } catch (_) {}
+      } catch (e) {
+        print('[IndexTTS] WebUI(emotionText)回退失败: $e');
+      }
     }
     // 2. 回退到 Python
     if (indexttsPath != null || await Directory('D:\\Index-TTS2_XH').exists()) {

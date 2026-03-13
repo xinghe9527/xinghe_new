@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:xinghe_new/main.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -59,6 +60,38 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   String _globalImageTheme = ''; // 图片全局主题
   String _globalVideoTheme = ''; // 视频全局主题
 
+  // 全局主题控制器（避免在build中临时创建导致内存泄漏）
+  final TextEditingController _globalImageThemeController = TextEditingController();
+  final TextEditingController _globalVideoThemeController = TextEditingController();
+
+  // 每行提示词控制器缓存（避免在build中临时创建导致内存泄漏）
+  final Map<int, TextEditingController> _imagePromptControllers = {};
+  final Map<int, TextEditingController> _videoPromptControllers = {};
+
+  /// 获取或创建行级提示词控制器
+  TextEditingController _getRowController(Map<int, TextEditingController> cache, int index, String text) {
+    final existing = cache[index];
+    if (existing != null) {
+      // 外部更新（如AI推理）时同步文本
+      if (existing.text != text) {
+        existing.text = text;
+      }
+      return existing;
+    }
+    final controller = TextEditingController(text: text);
+    cache[index] = controller;
+    return controller;
+  }
+
+  /// 清理无效的行级控制器
+  void _cleanupRowControllers() {
+    final validIndices = List.generate(_storyboards.length, (i) => i).toSet();
+    _imagePromptControllers.keys.where((k) => !validIndices.contains(k)).toList()
+        .forEach((k) { _imagePromptControllers.remove(k)?.dispose(); });
+    _videoPromptControllers.keys.where((k) => !validIndices.contains(k)).toList()
+        .forEach((k) { _videoPromptControllers.remove(k)?.dispose(); });
+  }
+
   // 角色、场景、物品数据（用于显示标签）
   List<AssetReference> _characters = [];
   List<AssetReference> _scenes = [];
@@ -78,6 +111,10 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   @override
   void dispose() {
     _voiceAudioPlayer?.dispose();
+    _globalImageThemeController.dispose();
+    _globalVideoThemeController.dispose();
+    _imagePromptControllers.values.forEach((c) => c.dispose());
+    _videoPromptControllers.values.forEach((c) => c.dispose());
     super.dispose();
   }
 
@@ -168,6 +205,8 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           setState(() {
             _globalImageTheme = data['globalImageTheme'] ?? '';
             _globalVideoTheme = data['globalVideoTheme'] ?? '';
+            _globalImageThemeController.text = _globalImageTheme;
+            _globalVideoThemeController.text = _globalVideoTheme;
             final list = data['storyboards'] as List<dynamic>?;
             if (list != null) {
               _storyboards = list
@@ -1174,7 +1213,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             children: [
               Expanded(
                 child: TextField(
-                  controller: TextEditingController(text: _globalImageTheme),
+                  controller: _globalImageThemeController,
                   style: const TextStyle(color: Colors.white, fontSize: 12),
                   decoration: const InputDecoration(
                     hintText: '主题风格...',
@@ -1221,7 +1260,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               child: SingleChildScrollView(
                 physics: const ClampingScrollPhysics(), // 阻止滚动冒泡
                 child: TextField(
-                  controller: TextEditingController(text: row.imagePrompt),
+                  controller: _getRowController(_imagePromptControllers, index, row.imagePrompt),
                   maxLines: null,
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                   decoration: const InputDecoration(
@@ -1498,7 +1537,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             children: [
               Expanded(
                 child: TextField(
-                  controller: TextEditingController(text: _globalVideoTheme),
+                  controller: _globalVideoThemeController,
                   style: const TextStyle(color: Colors.white, fontSize: 12),
                   decoration: const InputDecoration(
                     hintText: '主题风格...',
@@ -1545,7 +1584,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               child: SingleChildScrollView(
                 physics: const ClampingScrollPhysics(), // 阻止滚动冒泡
                 child: TextField(
-                  controller: TextEditingController(text: row.videoPrompt),
+                  controller: _getRowController(_videoPromptControllers, index, row.videoPrompt),
                   maxLines: null,
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                   decoration: const InputDecoration(
@@ -2114,6 +2153,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       if (!context.mounted) return;
 
       late BuildContext dialogContext; // ✅ 声明变量
+      StreamSubscription<bool>? completedSub;
 
       showDialog(
         context: context,
@@ -2132,12 +2172,13 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           );
         },
       ).then((_) {
-        // 对话框关闭时释放播放器
+        // 对话框关闭时释放播放器和监听器
+        completedSub?.cancel();
         player.dispose();
       });
 
       // 监听播放完成，自动关闭对话框
-      player.stream.completed.listen((completed) {
+      completedSub = player.stream.completed.listen((completed) {
         if (completed && dialogContext.mounted) {
           Navigator.of(dialogContext).pop();
         }
@@ -3752,6 +3793,7 @@ ${widget.scriptContent}
       final count = _storyboards.length;
       setState(() {
         _storyboards.clear();
+        _cleanupRowControllers();
       });
       await _saveProductionData();
 
@@ -4180,7 +4222,7 @@ ${widget.scriptContent}
           ),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   /// 执行图片提示词推理（带上下文记忆）
@@ -4383,7 +4425,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
           ),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   /// 执行视频提示词推理（带上下文记忆）
@@ -4999,6 +5041,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       // 在原来第一个的位置插入合并后的分镜
       _storyboards.insert(indices.first, mergedStoryboard);
       _selectedStoryboards.clear(); // 清空选中状态
+      _cleanupRowControllers();
     });
 
     await _saveProductionData();
@@ -5034,6 +5077,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
               Navigator.pop(context);
               setState(() {
                 _storyboards.removeAt(index);
+                _cleanupRowControllers();
               });
               _saveProductionData();
               ScaffoldMessenger.of(

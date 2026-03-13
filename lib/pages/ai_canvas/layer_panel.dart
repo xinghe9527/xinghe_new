@@ -288,7 +288,7 @@ class _LayerPanelState extends State<LayerPanel> {
         ],
       ),
     );
-    controller.dispose;
+    controller.dispose();
   }
 
   /// 拖拽重排图层

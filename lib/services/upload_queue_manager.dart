@@ -52,7 +52,7 @@ class UploadQueueManager {
   final List<UploadTask> _queue = [];
   final List<UploadTask> _completedTasks = [];  // 保存已完成的任务
   bool _isProcessing = false;
-  bool _convertLocked = false;  // ✅ 视频转码串行锁
+  final _convertQueue = <Completer<void>>[];  // 视频转码串行锁（FIFO队列）
   
   final FFmpegService _ffmpegService = FFmpegService();  // ✅ 使用现有的 FFmpegService
   final DirectOssUploadService _uploadService = DirectOssUploadService();  // ✅ 直连 OSS 上传服务
@@ -86,8 +86,7 @@ class UploadQueueManager {
       });
 
       // Step 1: 本地图片转视频（串行等待）
-      await _waitForConvertLock();  // ✅ 等待转码锁
-      _convertLocked = true;  // ✅ 获取锁
+      await _acquireConvertLock();  // ✅ 等待并获取转码锁
       
       task.status = UploadTaskStatus.converting;
       _notifyStatusChange(task);
@@ -97,7 +96,7 @@ class UploadQueueManager {
       
       videoFile = await _ffmpegService.convertImageToVideo(task.imageFile);
       
-      _convertLocked = false;  // ✅ 释放锁，下一个任务可以开始转码
+      _releaseConvertLock();  // ✅ 释放锁，下一个任务可以开始转码
       
       // ✅ 转码完成，发送通知（此时可以继续生成下一个）
       task.status = UploadTaskStatus.convertCompleted;
@@ -161,9 +160,7 @@ class UploadQueueManager {
       debugPrint('Stack Trace: $stackTrace');
       
       // ✅ 如果失败，确保释放转码锁
-      if (_convertLocked) {
-        _convertLocked = false;
-      }
+      _releaseConvertLock();
       
       // ✅ 清理临时文件
       if (videoFile != null) {
@@ -191,10 +188,23 @@ class UploadQueueManager {
     _queue.remove(task);
   }
   
-  /// ✅ 等待转码锁释放
-  Future<void> _waitForConvertLock() async {
-    while (_convertLocked) {
-      await Future.delayed(const Duration(milliseconds: 100));
+  /// ✅ 获取转码锁（FIFO队列，保证串行执行）
+  Future<void> _acquireConvertLock() async {
+    final completer = Completer<void>();
+    _convertQueue.add(completer);
+    if (_convertQueue.length > 1) {
+      // 不是队列第一个，等待前一个完成
+      await _convertQueue[_convertQueue.length - 2].future;
+    }
+  }
+
+  /// ✅ 释放转码锁
+  void _releaseConvertLock() {
+    if (_convertQueue.isNotEmpty) {
+      _convertQueue.removeAt(0);
+      if (_convertQueue.isNotEmpty) {
+        _convertQueue.first.complete();
+      }
     }
   }
 

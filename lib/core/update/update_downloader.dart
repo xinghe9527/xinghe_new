@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive.dart';
+import '../app_constants.dart';
 
 /// 更新包下载器
 class UpdateDownloader {
@@ -50,7 +51,7 @@ class UpdateDownloader {
           sendTimeout: const Duration(minutes: 10),
           headers: {
             'Referer': 'xinghe.ros',        // ✅ 防盗链 Referer
-            'x-xinghe-token': 'xinghe5201314',  // ✅ 安全暗号
+            'x-xinghe-token': AppConstants.fcToken,  // ✅ 安全暗号
           },
         ),
       );

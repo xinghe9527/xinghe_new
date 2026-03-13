@@ -9,12 +9,14 @@ import 'dart:convert';
 /// - 通过阿里云函数计算上传视频
 /// - 通过阿里云函数计算上传图片
 /// - 获取公共访问 URL
+import '../core/app_constants.dart';
+
 class AliyunOssUploadService {
   // ✅ 阿里云函数计算公网地址
-  static const String _uploadUrl = 'https://xinghe-angchuan-agxvbiyacd.cn-chengdu.fcapp.run';
+  static const String _uploadUrl = AppConstants.fcBaseUrl;
   
   // ✅ 安全暗号 (Token)
-  static const String _token = 'xinghe5201314';
+  static const String _token = AppConstants.fcToken;
   
   /// 上传视频文件到阿里云 OSS（带重试）
   /// 

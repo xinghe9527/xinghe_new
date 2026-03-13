@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:xinghe_new/main.dart';
@@ -129,10 +130,22 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   // 画笔状态
   final List<DrawingStroke> _strokes = [];
   DrawingStroke? _currentStroke;
-  DrawingStroke? _selectedStroke; // 选中的涂鸦
+  DrawingStroke? _selectedStroke; // 选中的涂鸦（单击选中）
+  final Set<DrawingStroke> _selectedStrokes = {}; // 框选的涂鸦（多选）
   Color _brushColor = Colors.black;
   double _brushSize = 3.0;
   bool _showBrushToolbar = false; // 画笔工具栏显示状态
+
+
+
+  // 网格背景状态
+  bool _showGrid = false;
+  bool _gridDots = true; // true=点阵, false=线条
+
+  // 图层面板状态
+  bool _showLayerPanel = false;
+  final Set<String> _hiddenNodeIds = {};   // 隐藏的节点ID
+  final Set<int> _hiddenStrokeIndices = {}; // 隐藏的涂鸦索引
 
   // 文本设置状态
   String _textFontFamily = 'Arial';
@@ -182,6 +195,21 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   static const Color _cardBg = Colors.white;
   static const Color _accentBlue = Color(0xFF3B82F6);
   static const Color _borderColor = Color(0xFFE5E7EB);
+
+  // 撤销/重做历史
+  final List<Map<String, dynamic>> _undoStack = [];
+  final List<Map<String, dynamic>> _redoStack = [];
+  static const int _maxUndoHistory = 50;
+  Map<String, dynamic>? _pendingUndoSnapshot; // 拖动开始时的快照
+  bool _dragDidMove = false; // 本次拖动是否实际移动了
+
+  // 对齐参考线
+  static const double _snapThreshold = 8.0; // 吸附阈值（屏幕像素）
+  List<double> _alignGuideX = []; // 垂直参考线 X 坐标（屏幕坐标）
+  List<double> _alignGuideY = []; // 水平参考线 Y 坐标（屏幕坐标）
+
+  // 画布截图 Key
+  final GlobalKey _canvasRepaintKey = GlobalKey();
 
   @override
   void initState() {
@@ -1168,14 +1196,454 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     });
   }
 
+  /// 自适应缩放：让所有内容刚好适应窗口
+  void _zoomToFit() {
+    if (_nodes.isEmpty && _strokes.isEmpty) {
+      _resetView();
+      return;
+    }
+
+    // 计算所有元素的包围盒（画布坐标）
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+
+    for (var node in _nodes) {
+      if (node.position.dx < minX) minX = node.position.dx;
+      if (node.position.dy < minY) minY = node.position.dy;
+      if (node.position.dx + node.size.width > maxX) maxX = node.position.dx + node.size.width;
+      if (node.position.dy + node.size.height > maxY) maxY = node.position.dy + node.size.height;
+    }
+    for (var stroke in _strokes) {
+      for (var point in stroke.points) {
+        if (point.dx < minX) minX = point.dx;
+        if (point.dy < minY) minY = point.dy;
+        if (point.dx > maxX) maxX = point.dx;
+        if (point.dy > maxY) maxY = point.dy;
+      }
+    }
+
+    if (minX == double.infinity) {
+      _resetView();
+      return;
+    }
+
+    final contentWidth = maxX - minX;
+    final contentHeight = maxY - minY;
+    if (contentWidth <= 0 || contentHeight <= 0) {
+      _resetView();
+      return;
+    }
+
+    final viewSize = (context.findRenderObject() as RenderBox?)?.size ?? const Size(800, 600);
+    final padding = 60.0;
+    final availableWidth = viewSize.width - padding * 2;
+    final availableHeight = viewSize.height - padding * 2;
+
+    final scaleX = availableWidth / contentWidth;
+    final scaleY = availableHeight / contentHeight;
+    final targetScale = (scaleX < scaleY ? scaleX : scaleY).clamp(0.1, 5.0);
+
+    setState(() {
+      _scale = targetScale;
+      _canvasOffset = Offset(
+        (viewSize.width - contentWidth * targetScale) / 2 - minX * targetScale,
+        (viewSize.height - contentHeight * targetScale) / 2 - minY * targetScale,
+      );
+    });
+  }
+
   void _selectNode(String? nodeId) {
     setState(() {
       _selectedNodeId = nodeId;
     });
   }
 
+  // ==================== 撤销/重做系统 ====================
+
+  /// 创建当前画布状态快照
+  Map<String, dynamic> _createSnapshot() {
+    return {
+      'nodes': _nodes.map((node) => {
+        'id': node.id,
+        'type': node.type.toString(),
+        'position': {'dx': node.position.dx, 'dy': node.position.dy},
+        'size': {'width': node.size.width, 'height': node.size.height},
+        'data': Map<String, dynamic>.from(node.data.map((key, value) {
+          if (value is String || value is num || value is bool || value == null) {
+            return MapEntry(key, value);
+          }
+          if (value is Color) {
+            return MapEntry(key, value.toARGB32());
+          }
+          if (value is List) {
+            return MapEntry(key, value);
+          }
+          return MapEntry(key, value.toString());
+        })),
+      }).toList(),
+      'strokes': _strokes.map((stroke) => {
+        'points': stroke.points.map((p) => {'dx': p.dx, 'dy': p.dy}).toList(),
+        'color': stroke.color.value,
+        'strokeWidth': stroke.strokeWidth,
+      }).toList(),
+    };
+  }
+
+  /// 记录当前状态到撤销栈（在变更前调用）
+  void _pushUndo() {
+    _undoStack.add(_createSnapshot());
+    if (_undoStack.length > _maxUndoHistory) {
+      _undoStack.removeAt(0);
+    }
+    _redoStack.clear();
+  }
+
+  /// 拖动开始时暂存快照
+  void _startTrackingForUndo() {
+    _pendingUndoSnapshot = _createSnapshot();
+    _dragDidMove = false;
+  }
+
+  /// 拖动结束后提交快照（仅在实际移动时）
+  void _commitPendingUndo() {
+    if (_pendingUndoSnapshot != null && _dragDidMove) {
+      _undoStack.add(_pendingUndoSnapshot!);
+      if (_undoStack.length > _maxUndoHistory) {
+        _undoStack.removeAt(0);
+      }
+      _redoStack.clear();
+    }
+    _pendingUndoSnapshot = null;
+    _dragDidMove = false;
+  }
+
+  /// 撤销
+  void _undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_createSnapshot());
+    _restoreSnapshot(_undoStack.removeLast());
+  }
+
+  /// 重做
+  void _redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_createSnapshot());
+    _restoreSnapshot(_redoStack.removeLast());
+  }
+
+  /// 从快照恢复画布状态
+  void _restoreSnapshot(Map<String, dynamic> snapshot) {
+    // 清理被移除节点的视频播放器
+    final restoredNodeIds = <String>{};
+    for (final nodeData in (snapshot['nodes'] as List)) {
+      restoredNodeIds.add((nodeData as Map<String, dynamic>)['id'] as String);
+    }
+    for (final nodeId in _nodes.map((n) => n.id).toSet().difference(restoredNodeIds)) {
+      _videoPlayers[nodeId]?.dispose();
+      _videoPlayers.remove(nodeId);
+      _videoControllers.remove(nodeId);
+    }
+
+    setState(() {
+      // 恢复节点
+      _nodes.clear();
+      for (final nodeData in (snapshot['nodes'] as List)) {
+        final node = nodeData as Map<String, dynamic>;
+        final typeStr = node['type'] as String;
+        final type = NodeType.values.firstWhere(
+          (t) => t.toString() == typeStr,
+          orElse: () => NodeType.text,
+        );
+        final position = node['position'] as Map<String, dynamic>;
+        final size = node['size'] as Map<String, dynamic>;
+        _nodes.add(CanvasNode(
+          id: node['id'] as String,
+          type: type,
+          position: Offset(position['dx'] as double, position['dy'] as double),
+          size: Size(size['width'] as double, size['height'] as double),
+          data: Map<String, dynamic>.from(node['data'] as Map),
+        ));
+      }
+
+      // 恢复笔画
+      _strokes.clear();
+      for (final strokeData in (snapshot['strokes'] as List)) {
+        final stroke = strokeData as Map<String, dynamic>;
+        final points = (stroke['points'] as List)
+            .map((p) => Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble()))
+            .toList();
+        _strokes.add(DrawingStroke(
+          points: points,
+          color: Color(stroke['color'] as int),
+          strokeWidth: (stroke['strokeWidth'] as num).toDouble(),
+        ));
+      }
+
+      // 清除选择状态
+      _selectedNodeId = null;
+      _selectedNodeIds.clear();
+      _selectedStroke = null;
+      _selectedStrokes.clear();
+      _draggingNode = null;
+      _draggingStroke = null;
+    });
+    _saveCanvasData();
+  }
+
+  bool get _canUndo => _undoStack.isNotEmpty;
+  bool get _canRedo => _redoStack.isNotEmpty;
+
+  // ==================== 对齐参考线系统 ====================
+
+  /// 计算拖动节点的吸附位置和参考线
+  /// 返回吸附后的 delta 修正值（画布坐标）
+  Offset _calcSnapAndGuides(CanvasNode dragNode, Offset proposedPosition) {
+    _alignGuideX.clear();
+    _alignGuideY.clear();
+
+    final dragRect = Rect.fromLTWH(
+      proposedPosition.dx,
+      proposedPosition.dy,
+      dragNode.size.width,
+      dragNode.size.height,
+    );
+    final dragCX = dragRect.left + dragRect.width / 2;
+    final dragCY = dragRect.top + dragRect.height / 2;
+
+    // 收集所有目标边缘（排除被拖拽的节点和其他选中节点）
+    final movingIds = <String>{dragNode.id, ..._selectedNodeIds};
+    final threshold = _snapThreshold / _scale;
+
+    double snapDx = 0;
+    double snapDy = 0;
+    double bestDistX = threshold + 1;
+    double bestDistY = threshold + 1;
+
+    for (var other in _nodes) {
+      if (movingIds.contains(other.id)) continue;
+
+      final oRect = Rect.fromLTWH(
+        other.position.dx, other.position.dy,
+        other.size.width, other.size.height,
+      );
+      final oCX = oRect.left + oRect.width / 2;
+      final oCY = oRect.top + oRect.height / 2;
+
+      // X 轴对齐检测：左-左、右-右、中-中、左-右、右-左
+      final xPairs = [
+        [dragRect.left, oRect.left],
+        [dragRect.right, oRect.right],
+        [dragCX, oCX],
+        [dragRect.left, oRect.right],
+        [dragRect.right, oRect.left],
+      ];
+      for (var pair in xPairs) {
+        final dist = (pair[0] - pair[1]).abs();
+        if (dist < threshold && dist < bestDistX) {
+          bestDistX = dist;
+          snapDx = pair[1] - pair[0];
+          _alignGuideX = [pair[1] * _scale + _canvasOffset.dx];
+        }
+      }
+
+      // Y 轴对齐检测：上-上、下-下、中-中、上-下、下-上
+      final yPairs = [
+        [dragRect.top, oRect.top],
+        [dragRect.bottom, oRect.bottom],
+        [dragCY, oCY],
+        [dragRect.top, oRect.bottom],
+        [dragRect.bottom, oRect.top],
+      ];
+      for (var pair in yPairs) {
+        final dist = (pair[0] - pair[1]).abs();
+        if (dist < threshold && dist < bestDistY) {
+          bestDistY = dist;
+          snapDy = pair[1] - pair[0];
+          _alignGuideY = [pair[1] * _scale + _canvasOffset.dy];
+        }
+      }
+    }
+
+    return Offset(snapDx, snapDy);
+  }
+
+  // ==================== 复制/粘贴系统 ====================
+
+  List<Map<String, dynamic>>? _clipboardNodes;
+  List<Map<String, dynamic>>? _clipboardStrokes;
+
+
+  /// 复制选中元素到剪贴板
+  void _copySelected() {
+    final nodesToCopy = <Map<String, dynamic>>[];
+    final strokesToCopy = <Map<String, dynamic>>[];
+
+    // 复制选中节点
+    final selectedIds = <String>{};
+    if (_selectedNodeId != null) selectedIds.add(_selectedNodeId!);
+    selectedIds.addAll(_selectedNodeIds);
+
+    for (var node in _nodes) {
+      if (selectedIds.contains(node.id)) {
+        nodesToCopy.add({
+          'type': node.type.toString(),
+          'position': {'dx': node.position.dx, 'dy': node.position.dy},
+          'size': {'width': node.size.width, 'height': node.size.height},
+          'data': Map<String, dynamic>.from(node.data.map((key, value) {
+            if (value is String || value is num || value is bool || value == null) {
+              return MapEntry(key, value);
+            }
+            if (value is Color) {
+              return MapEntry(key, value.toARGB32());
+            }
+            if (value is List) {
+              return MapEntry(key, value);
+            }
+            return MapEntry(key, value.toString());
+          })),
+        });
+      }
+    }
+
+    // 复制选中笔画
+    if (_selectedStroke != null && _selectedStrokes.isEmpty) {
+      strokesToCopy.add({
+        'points': _selectedStroke!.points.map((p) => {'dx': p.dx, 'dy': p.dy}).toList(),
+        'color': _selectedStroke!.color.value,
+        'strokeWidth': _selectedStroke!.strokeWidth,
+      });
+    }
+    for (var stroke in _selectedStrokes) {
+      strokesToCopy.add({
+        'points': stroke.points.map((p) => {'dx': p.dx, 'dy': p.dy}).toList(),
+        'color': stroke.color.value,
+        'strokeWidth': stroke.strokeWidth,
+      });
+    }
+
+    if (nodesToCopy.isNotEmpty || strokesToCopy.isNotEmpty) {
+      _clipboardNodes = nodesToCopy;
+      _clipboardStrokes = strokesToCopy;
+    }
+  }
+
+  /// 粘贴剪贴板内容（偏移 30px 避免重叠）
+  void _pasteFromClipboard() {
+    if ((_clipboardNodes == null || _clipboardNodes!.isEmpty) &&
+        (_clipboardStrokes == null || _clipboardStrokes!.isEmpty)) return;
+
+    _pushUndo();
+    const offset = 30.0;
+
+    setState(() {
+      _selectedNodeIds.clear();
+      _selectedNodeId = null;
+      _selectedStroke = null;
+      _selectedStrokes.clear();
+
+      // 粘贴节点
+      if (_clipboardNodes != null) {
+        for (var nodeData in _clipboardNodes!) {
+          final position = nodeData['position'] as Map<String, dynamic>;
+          final size = nodeData['size'] as Map<String, dynamic>;
+          final typeStr = nodeData['type'] as String;
+          final type = NodeType.values.firstWhere(
+            (t) => t.toString() == typeStr,
+            orElse: () => NodeType.text,
+          );
+          final newId = DateTime.now().millisecondsSinceEpoch.toString() +
+              '_${_nodes.length}';
+          final newNode = CanvasNode(
+            id: newId,
+            type: type,
+            position: Offset(
+              (position['dx'] as double) + offset,
+              (position['dy'] as double) + offset,
+            ),
+            size: Size(size['width'] as double, size['height'] as double),
+            data: Map<String, dynamic>.from(nodeData['data'] as Map),
+          );
+          _nodes.add(newNode);
+          _selectedNodeIds.add(newId);
+        }
+      }
+
+      // 粘贴笔画
+      if (_clipboardStrokes != null) {
+        for (var strokeData in _clipboardStrokes!) {
+          final points = (strokeData['points'] as List)
+              .map((p) => Offset(
+                    (p['dx'] as num).toDouble() + offset,
+                    (p['dy'] as num).toDouble() + offset,
+                  ))
+              .toList();
+          final newStroke = DrawingStroke(
+            points: points,
+            color: Color(strokeData['color'] as int),
+            strokeWidth: (strokeData['strokeWidth'] as num).toDouble(),
+          );
+          _strokes.add(newStroke);
+          _selectedStrokes.add(newStroke);
+        }
+      }
+    });
+
+    _saveCanvasData();
+  }
+
+  /// 快速复制（复制+粘贴一步完成）
+  void _duplicate() {
+    _copySelected();
+    _pasteFromClipboard();
+  }
+
+  // ==================== 分组系统 ====================
+
+  /// 将选中的节点分组
+  void _groupSelected() {
+    if (_selectedNodeIds.length < 2) return;
+    _pushUndo();
+    final groupId = 'g_${DateTime.now().millisecondsSinceEpoch}';
+    setState(() {
+      for (var node in _nodes) {
+        if (_selectedNodeIds.contains(node.id)) {
+          node.data['groupId'] = groupId;
+        }
+      }
+    });
+    _saveCanvasData();
+  }
+
+  /// 取消选中节点的分组
+  void _ungroupSelected() {
+    _pushUndo();
+    final selectedIds = {..._selectedNodeIds};
+    if (_selectedNodeId != null) selectedIds.add(_selectedNodeId!);
+    setState(() {
+      for (var node in _nodes) {
+        if (selectedIds.contains(node.id)) {
+          node.data.remove('groupId');
+        }
+      }
+    });
+    _saveCanvasData();
+  }
+
+  /// 自动扩展选择到同一组的所有节点
+  void _expandSelectionToGroup(String nodeId) {
+    final node = _nodes.firstWhere((n) => n.id == nodeId);
+    final groupId = node.data['groupId'] as String?;
+    if (groupId == null) return;
+    for (var other in _nodes) {
+      if (other.data['groupId'] == groupId) {
+        _selectedNodeIds.add(other.id);
+      }
+    }
+  }
+
   /// 删除选中的元素（节点和涂鸦）
   void _deleteSelectedElements() {
+    _pushUndo();
     setState(() {
       // 删除选中的节点
       if (_selectedNodeId != null) {
@@ -1229,6 +1697,15 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
         debugPrint('删除涂鸦');
       }
+
+      // 删除框选的多条涂鸦
+      if (_selectedStrokes.isNotEmpty) {
+        final count = _selectedStrokes.length;
+        _strokes.removeWhere((s) => _selectedStrokes.contains(s));
+        _selectedStrokes.clear();
+
+        debugPrint('删除多条涂鸦: $count');
+      }
     });
 
     // 自动保存
@@ -1246,6 +1723,45 @@ class _AiCanvasPageState extends State<AiCanvasPage>
               onKeyEvent: (node, event) {
                 // 监听键盘事件
                 if (event is KeyDownEvent) {
+                  final isCtrl = HardwareKeyboard.instance.isControlPressed;
+                  final isShift = HardwareKeyboard.instance.isShiftPressed;
+
+                  // Ctrl+Z: 撤销
+                  if (isCtrl && !isShift && event.logicalKey == LogicalKeyboardKey.keyZ) {
+                    _undo();
+                    return KeyEventResult.handled;
+                  }
+                  // Ctrl+Shift+Z 或 Ctrl+Y: 重做
+                  if ((isCtrl && isShift && event.logicalKey == LogicalKeyboardKey.keyZ) ||
+                      (isCtrl && event.logicalKey == LogicalKeyboardKey.keyY)) {
+                    _redo();
+                    return KeyEventResult.handled;
+                  }
+                  // Ctrl+C: 复制
+                  if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyC) {
+                    _copySelected();
+                    return KeyEventResult.handled;
+                  }
+                  // Ctrl+V: 粘贴
+                  if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyV) {
+                    _pasteFromClipboard();
+                    return KeyEventResult.handled;
+                  }
+                  // Ctrl+D: 快速复制
+                  if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyD) {
+                    _duplicate();
+                    return KeyEventResult.handled;
+                  }
+                  // Ctrl+G: 分组
+                  if (isCtrl && !isShift && event.logicalKey == LogicalKeyboardKey.keyG) {
+                    _groupSelected();
+                    return KeyEventResult.handled;
+                  }
+                  // Ctrl+Shift+G: 取消分组
+                  if (isCtrl && isShift && event.logicalKey == LogicalKeyboardKey.keyG) {
+                    _ungroupSelected();
+                    return KeyEventResult.handled;
+                  }
                   // 删除键：Delete 或 Backspace
                   if (event.logicalKey == LogicalKeyboardKey.delete ||
                       event.logicalKey == LogicalKeyboardKey.backspace) {
@@ -1267,7 +1783,13 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                             child: Stack(
                               children: [
                                 // 画布区域
-                                Listener(
+                                MouseRegion(
+                                  cursor: _currentTool == CanvasTool.draw
+                                      ? SystemMouseCursors.precise
+                                      : _currentTool == CanvasTool.pan
+                                          ? SystemMouseCursors.grab
+                                          : SystemMouseCursors.basic,
+                                  child: Listener(
                                   onPointerDown: (event) {
                                     // 检测中键按下
                                     if (event.buttons == 4) {
@@ -1403,6 +1925,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                         _selectNode(null);
                                         _selectedNodeIds.clear(); // 清除多选状态
                                         _selectedStroke = null;
+                                        _selectedStrokes.clear(); // 清除多涂鸦选中
                                       }
                                     },
                                     onPanStart: (details) {
@@ -1482,10 +2005,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                             details.localPosition,
                                             stroke,
                                           )) {
+                                            _startTrackingForUndo();
                                             setState(() {
-                                              _selectedStroke = stroke;
                                               _draggingStroke = stroke;
-                                              // 记录拖动开始时的画布坐标
                                               _draggingStrokeOffset = Offset(
                                                 (details.localPosition.dx -
                                                         _canvasOffset.dx) /
@@ -1494,7 +2016,17 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                                         _canvasOffset.dy) /
                                                     _scale,
                                               );
-                                              _selectNode(null);
+                                              _lastPanPosition = details.localPosition;
+                                              if (_selectedStrokes.contains(stroke)) {
+                                                // 点击的是已框选的笔画，保留多选状态
+                                                _selectedStroke = stroke;
+                                              } else {
+                                                // 单选该笔画，清除其他选择
+                                                _selectedStroke = stroke;
+                                                _selectedNodeIds.clear();
+                                                _selectedStrokes.clear();
+                                                _selectNode(null);
+                                              }
                                             });
                                             return;
                                           }
@@ -1519,8 +2051,10 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                               nodeRect,
                                             );
                                             if (handle != null) {
+                                              _startTrackingForUndo();
                                               _resizingNode = node;
                                               _resizeHandle = handle;
+                                              _lastPanPosition = details.localPosition;
                                               return;
                                             }
                                           }
@@ -1532,23 +2066,31 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                             if (_selectedNodeIds.contains(
                                               node.id,
                                             )) {
+                                              _startTrackingForUndo();
                                               _draggingNode = node;
                                               _draggingOffset =
                                                   details.localPosition -
                                                   nodeRect.topLeft;
-                                              // 不改变选中状态，保持多选
-                                              _selectedStroke = null;
+                                              _lastPanPosition = details.localPosition;
+                                              // 保留多选状态（包括笔画选择）
                                               return;
                                             }
 
                                             // 否则，单选该节点
+                                            _startTrackingForUndo();
                                             _draggingNode = node;
                                             _draggingOffset =
                                                 details.localPosition -
                                                 nodeRect.topLeft;
                                             _selectNode(node.id);
-                                            _selectedNodeIds.clear(); // 清除多选状态
+                                            _selectedNodeIds.clear();
                                             _selectedStroke = null;
+                                            _selectedStrokes.clear();
+                                            // 自动扩展到同组节点
+                                            if (node.data['groupId'] != null) {
+                                              _selectedNodeIds.add(node.id);
+                                              _expandSelectionToGroup(node.id);
+                                            }
                                             return;
                                           }
                                         }
@@ -1624,6 +2166,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
                                         if (_resizingNode != null &&
                                             _resizeHandle != null) {
+                                          _dragDidMove = true;
                                           // 调整大小
                                           final delta =
                                               (details.localPosition -
@@ -1879,6 +2422,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                           }
                                         } else if (_draggingStroke != null &&
                                             _draggingStrokeOffset != null) {
+                                          _dragDidMove = true;
                                           // 拖动涂鸦
                                           final currentCanvasPoint = Offset(
                                             (details.localPosition.dx -
@@ -1892,19 +2436,40 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                               currentCanvasPoint -
                                               _draggingStrokeOffset!;
 
-                                          // 更新涂鸦所有点的位置
-                                          for (
-                                            int i = 0;
-                                            i < _draggingStroke!.points.length;
-                                            i++
-                                          ) {
-                                            _draggingStroke!.points[i] += delta;
+                                          // 移动所有选中的笔画（包括当前拖动的）
+                                          if (_selectedStrokes.isNotEmpty) {
+                                            for (var stroke in _selectedStrokes) {
+                                              for (int i = 0; i < stroke.points.length; i++) {
+                                                stroke.points[i] += delta;
+                                              }
+                                            }
+                                            // 如果拖动的笔画不在选中集合中也要移动
+                                            if (!_selectedStrokes.contains(_draggingStroke!)) {
+                                              for (int i = 0; i < _draggingStroke!.points.length; i++) {
+                                                _draggingStroke!.points[i] += delta;
+                                              }
+                                            }
+                                          } else {
+                                            // 单条笔画移动
+                                            for (int i = 0; i < _draggingStroke!.points.length; i++) {
+                                              _draggingStroke!.points[i] += delta;
+                                            }
+                                          }
+
+                                          // 同时移动所有选中的节点
+                                          if (_selectedNodeIds.isNotEmpty) {
+                                            for (var node in _nodes) {
+                                              if (_selectedNodeIds.contains(node.id)) {
+                                                node.position += delta;
+                                              }
+                                            }
                                           }
 
                                           _draggingStrokeOffset =
                                               currentCanvasPoint;
                                         } else if (_draggingNode != null &&
                                             _lastPanPosition != null) {
+                                          _dragDidMove = true;
                                           // 计算移动增量
                                           final delta =
                                               (details.localPosition -
@@ -1915,16 +2480,33 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
                                           // 如果有多个选中的节点，批量移动
                                           if (_selectedNodeIds.isNotEmpty) {
+                                            // 对齐吸附（基于拖拽的节点）
+                                            final proposed = _draggingNode!.position + delta;
+                                            final snap = _calcSnapAndGuides(_draggingNode!, proposed);
+                                            final snappedDelta = delta + snap;
+
                                             for (var node in _nodes) {
                                               if (_selectedNodeIds.contains(
                                                 node.id,
                                               )) {
-                                                node.position += delta;
+                                                node.position += snappedDelta;
+                                              }
+                                            }
+                                            // 确保拖拽节点不在选中集合中时也被移动
+                                            if (!_selectedNodeIds.contains(_draggingNode!.id)) {
+                                              _draggingNode!.position += snappedDelta;
+                                            }
+                                            // 同时移动所有选中的笔画
+                                            for (var stroke in _selectedStrokes) {
+                                              for (int i = 0; i < stroke.points.length; i++) {
+                                                stroke.points[i] += snappedDelta;
                                               }
                                             }
                                           } else {
-                                            // 单个节点移动
-                                            _draggingNode!.position += delta;
+                                            // 单个节点移动 + 对齐吸附
+                                            final proposed = _draggingNode!.position + delta;
+                                            final snap = _calcSnapAndGuides(_draggingNode!, proposed);
+                                            _draggingNode!.position = proposed + snap;
                                           }
                                         }
                                       });
@@ -1934,6 +2516,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                       if (_isCreatingTextBox &&
                                           _textBoxStart != null &&
                                           _textBoxEnd != null) {
+                                        _pushUndo();
                                         final rect = Rect.fromPoints(
                                           _textBoxStart!,
                                           _textBoxEnd!,
@@ -1988,6 +2571,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                       if (_isCreatingImageBox &&
                                           _imageBoxStart != null &&
                                           _imageBoxEnd != null) {
+                                        _pushUndo();
                                         final rect = Rect.fromPoints(
                                           _imageBoxStart!,
                                           _imageBoxEnd!,
@@ -2041,6 +2625,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                       if (_isCreatingVideoBox &&
                                           _videoBoxStart != null &&
                                           _videoBoxEnd != null) {
+                                        _pushUndo();
                                         final rect = Rect.fromPoints(
                                           _videoBoxStart!,
                                           _videoBoxEnd!,
@@ -2093,6 +2678,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                       // 画笔工具：完成绘制
                                       if (_currentTool == CanvasTool.draw &&
                                           _currentStroke != null) {
+                                        _pushUndo();
                                         setState(() {
                                           _strokes.add(_currentStroke!);
                                           _currentStroke = null;
@@ -2127,35 +2713,45 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                           }
                                         }
 
-                                        // 选中涂鸦 - 需要将涂鸦的画布坐标转换为屏幕坐标
+                                        // 选中涂鸦 - 使用包围盒 overlaps 与节点一致
+                                        _selectedStrokes.clear();
                                         for (var stroke in _strokes) {
-                                          bool strokeInSelection = false;
+                                          if (stroke.points.isEmpty) continue;
+                                          // 计算笔画的包围盒（画布坐标转屏幕坐标）
+                                          double minX = double.infinity,
+                                              minY = double.infinity,
+                                              maxX = double.negativeInfinity,
+                                              maxY = double.negativeInfinity;
                                           for (var point in stroke.points) {
-                                            // 将画布坐标转换为屏幕坐标
-                                            final screenPoint = Offset(
-                                              point.dx * _scale +
-                                                  _canvasOffset.dx,
-                                              point.dy * _scale +
-                                                  _canvasOffset.dy,
-                                            );
-                                            if (selectionRect.contains(
-                                              screenPoint,
-                                            )) {
-                                              strokeInSelection = true;
-                                              break;
-                                            }
+                                            final sx = point.dx * _scale + _canvasOffset.dx;
+                                            final sy = point.dy * _scale + _canvasOffset.dy;
+                                            if (sx < minX) minX = sx;
+                                            if (sy < minY) minY = sy;
+                                            if (sx > maxX) maxX = sx;
+                                            if (sy > maxY) maxY = sy;
                                           }
-
-                                          if (strokeInSelection) {
-                                            _selectedStroke = stroke;
-                                            break;
+                                          // 扩大包围盒以包含笔画宽度
+                                          final halfWidth = stroke.strokeWidth * _scale / 2;
+                                          final strokeRect = Rect.fromLTRB(
+                                            minX - halfWidth,
+                                            minY - halfWidth,
+                                            maxX + halfWidth,
+                                            maxY + halfWidth,
+                                          );
+                                          if (selectionRect.overlaps(strokeRect)) {
+                                            _selectedStrokes.add(stroke);
                                           }
+                                        }
+                                        // 如果只选中一条涂鸦，也设置单选变量以兼容编辑功能
+                                        if (_selectedStrokes.length == 1) {
+                                          _selectedStroke = _selectedStrokes.first;
                                         }
 
                                         setState(() {
                                           _selectionStart = null;
                                           _selectionEnd = null;
-                                          if (_selectedNodeIds.isNotEmpty) {
+                                          // 仅单选时设置_selectedNodeId，避免弹出编辑面板
+                                          if (_selectedNodeIds.length == 1 && _selectedStrokes.isEmpty) {
                                             _selectedNodeId =
                                                 _selectedNodeIds.first;
                                           }
@@ -2163,6 +2759,12 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                         return;
                                       }
 
+                                      _commitPendingUndo();
+                                      if (_dragDidMove) {
+                                        _saveCanvasData();
+                                      }
+                                      _alignGuideX.clear();
+                                      _alignGuideY.clear();
                                       _draggingNode = null;
                                       _draggingOffset = null;
                                       _draggingStroke = null;
@@ -2171,24 +2773,48 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                       _resizingNode = null;
                                       _resizeHandle = null;
                                     },
-                                    child: Container(
+                                    child: RepaintBoundary(
+                                      key: _canvasRepaintKey,
+                                      child: Container(
                                       color: _bgColor,
                                       child: Stack(
                                         children: [
+                                          // 网格背景
+                                          if (_showGrid)
+                                            CustomPaint(
+                                              painter: _GridPainter(
+                                                canvasOffset: _canvasOffset,
+                                                scale: _scale,
+                                                isDots: _gridDots,
+                                              ),
+                                              child: Container(),
+                                            ),
+
                                           // 绘制涂鸦
                                           CustomPaint(
                                             painter: DrawingPainter(
-                                              strokes: _strokes,
+                                              strokes: _strokes.where((s) => !_hiddenStrokeIndices.contains(_strokes.indexOf(s))).toList(),
                                               currentStroke: _currentStroke,
                                               selectedStroke: _selectedStroke,
+                                              selectedStrokes: _selectedStrokes,
                                               canvasOffset: _canvasOffset,
                                               scale: _scale,
                                             ),
                                             child: Container(),
                                           ),
 
+                                          // 对齐参考线绘制
+                                          if (_alignGuideX.isNotEmpty || _alignGuideY.isNotEmpty)
+                                            CustomPaint(
+                                              painter: _AlignGuidePainter(
+                                                guideX: _alignGuideX,
+                                                guideY: _alignGuideY,
+                                              ),
+                                              child: Container(),
+                                            ),
+
                                           // 渲染节点
-                                          ..._nodes.map((node) {
+                                          ..._nodes.where((n) => !_hiddenNodeIds.contains(n.id)).map((node) {
                                             final screenPos = Offset(
                                               node.position.dx * _scale +
                                                   _canvasOffset.dx,
@@ -2256,10 +2882,10 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                         ],
                                       ),
                                     ),
+                                    ),
                                   ),
                                 ),
-
-                                // 左侧工具栏
+                                ),
                                 Positioned(
                                   left: 16,
                                   top: 16,
@@ -2284,6 +2910,13 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                     child: _buildTextToolbar(),
                                   ),
 
+                                // 迷你地图
+                                Positioned(
+                                  right: 16,
+                                  bottom: 56,
+                                  child: _buildMinimap(),
+                                ),
+
                                 // 右下角缩放控制
                                 Positioned(
                                   right: 16,
@@ -2291,8 +2924,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                   child: _buildZoomControls(),
                                 ),
 
-                                // 底部编辑面板（仅图片和视频需要，且不是仅显示节点）
-                                if (_selectedNodeId != null)
+                                // 底部编辑面板（仅图片和视频需要，且不是仅显示节点，且不在多选模式下）
+                                if (_selectedNodeId != null && _selectedNodeIds.isEmpty)
                                   () {
                                     final node = _nodes.firstWhere(
                                       (n) => n.id == _selectedNodeId,
@@ -2360,6 +2993,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                 });
                               },
                             ),
+                          // 图层面板
+                          if (_showLayerPanel)
+                            _buildLayerPanel(),
                         ],
                       ),
                     ),
@@ -2471,6 +3107,76 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           const SizedBox(height: 8),
           // AI Agent 按钮
           _buildAgentButton(),
+          const SizedBox(height: 8),
+          // 分隔线
+          Container(width: 32, height: 1, color: _borderColor),
+          const SizedBox(height: 8),
+          // 撤销按钮
+          Tooltip(
+            message: "撤销 (Ctrl+Z)",
+            child: InkWell(
+              onTap: _canUndo ? _undo : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.undo,
+                  size: 20,
+                  color: _canUndo ? Colors.grey[700] : Colors.grey[300],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // 重做按钮
+          Tooltip(
+            message: "重做 (Ctrl+Y)",
+            child: InkWell(
+              onTap: _canRedo ? _redo : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.redo,
+                  size: 20,
+                  color: _canRedo ? Colors.grey[700] : Colors.grey[300],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // 分隔线
+          Container(width: 32, height: 1, color: _borderColor),
+          const SizedBox(height: 4),
+          // 图层面板切换按钮
+          Tooltip(
+            message: "图层面板",
+            child: InkWell(
+              onTap: () => setState(() => _showLayerPanel = !_showLayerPanel),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: _showLayerPanel ? _accentBlue.withValues(alpha: 0.1) : null,
+                ),
+                child: Icon(
+                  Icons.layers,
+                  size: 20,
+                  color: _showLayerPanel ? _accentBlue : Colors.grey[700],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -2991,10 +3697,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             } else if (tool == CanvasTool.text) {
               // 文本工具：切换工具和工具栏显示
               if (_currentTool == CanvasTool.text) {
-                // 如果已经是文本工具，只切换工具栏显示
                 _showTextToolbar = !_showTextToolbar;
               } else {
-                // 切换到文本工具，显示工具栏
                 _currentTool = tool;
                 _showTextToolbar = true;
                 _showBrushToolbar = false;
@@ -3008,6 +3712,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
               if (tool != CanvasTool.select) {
                 _selectNode(null);
                 _selectedStroke = null;
+                _selectedStrokes.clear();
               }
             }
           });
@@ -3197,6 +3902,318 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     );
   }
 
+  // ==================== 图层面板 ====================
+
+  /// 构建图层面板
+  Widget _buildLayerPanel() {
+    // 收集所有图层项
+    final List<_LayerEntry> entries = [];
+
+    // 节点图层
+    for (final node in _nodes) {
+      IconData icon;
+      String name;
+      switch (node.type) {
+        case NodeType.image:
+          icon = Icons.image_outlined;
+          name = node.data['name'] as String? ?? '图片';
+        case NodeType.video:
+          icon = Icons.videocam_outlined;
+          name = node.data['name'] as String? ?? '视频';
+        case NodeType.text:
+          icon = Icons.text_fields;
+          name = (node.data['text'] as String?)?.substring(0, (node.data['text'] as String?)!.length.clamp(0, 12)) ?? '文本';
+      }
+      entries.add(_LayerEntry(
+        kind: _LayerKind.node,
+        id: node.id,
+        name: name,
+        icon: icon,
+        isSelected: _selectedNodeId == node.id || _selectedNodeIds.contains(node.id),
+        isHidden: _hiddenNodeIds.contains(node.id),
+      ));
+    }
+
+    // 涂鸦图层
+    for (int i = 0; i < _strokes.length; i++) {
+      entries.add(_LayerEntry(
+        kind: _LayerKind.stroke,
+        id: 'stroke_$i',
+        index: i,
+        name: '涂鸦 ${i + 1}',
+        icon: Icons.brush,
+        isSelected: _selectedStroke == _strokes[i] || _selectedStrokes.contains(_strokes[i]),
+        isHidden: _hiddenStrokeIndices.contains(i),
+      ));
+    }
+
+    return Container(
+      width: 220,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(left: BorderSide(color: _borderColor)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(-2, 0),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // 标题栏
+          Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: _borderColor)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.layers, size: 16, color: Colors.grey[600]),
+                const SizedBox(width: 6),
+                Text(
+                  '图层',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${entries.length}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: () => setState(() => _showLayerPanel = false),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 14, color: Colors.grey[500]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // 图层列表
+          Expanded(
+            child: entries.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.layers_clear, size: 32, color: Colors.grey[400]),
+                        const SizedBox(height: 8),
+                        Text('暂无图层', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: entries.length,
+                    itemBuilder: (context, index) {
+                      final entry = entries[entries.length - 1 - index]; // 倒序，最后添加的在上面
+                      return _buildLayerItem(entry);
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 构建单个图层项
+  Widget _buildLayerItem(_LayerEntry entry) {
+    return InkWell(
+      onTap: () {
+        setState(() {
+          // 点击选中对应元素
+          _selectedNodeId = null;
+          _selectedNodeIds.clear();
+          _selectedStroke = null;
+          _selectedStrokes.clear();
+
+          switch (entry.kind) {
+            case _LayerKind.node:
+              _selectedNodeId = entry.id;
+            case _LayerKind.stroke:
+              _selectedStroke = _strokes[entry.index!];
+          }
+        });
+      },
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: entry.isSelected ? _accentBlue.withValues(alpha: 0.08) : Colors.transparent,
+          border: Border(
+            bottom: BorderSide(color: _borderColor.withValues(alpha: 0.5)),
+            left: entry.isSelected
+                ? BorderSide(color: _accentBlue, width: 3)
+                : BorderSide.none,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              entry.icon,
+              size: 14,
+              color: entry.isHidden
+                  ? Colors.grey[300]
+                  : (entry.isSelected ? _accentBlue : Colors.grey[600]),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                entry.name,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: entry.isHidden ? Colors.grey[400] : Colors.grey[800],
+                  fontWeight: entry.isSelected ? FontWeight.w600 : FontWeight.normal,
+                  decoration: entry.isHidden ? TextDecoration.lineThrough : null,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+            // 可见性切换
+            InkWell(
+              onTap: () {
+                setState(() {
+                  switch (entry.kind) {
+                    case _LayerKind.node:
+                      if (_hiddenNodeIds.contains(entry.id)) {
+                        _hiddenNodeIds.remove(entry.id);
+                      } else {
+                        _hiddenNodeIds.add(entry.id);
+                      }
+                    case _LayerKind.stroke:
+                      if (_hiddenStrokeIndices.contains(entry.index!)) {
+                        _hiddenStrokeIndices.remove(entry.index!);
+                      } else {
+                        _hiddenStrokeIndices.add(entry.index!);
+                      }
+                  }
+                });
+              },
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(
+                  entry.isHidden ? Icons.visibility_off : Icons.visibility,
+                  size: 14,
+                  color: entry.isHidden ? Colors.grey[400] : Colors.grey[500],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 迷你地图：显示画布内容概览和当前视口
+  Widget _buildMinimap() {
+    const mapWidth = 160.0;
+    const mapHeight = 100.0;
+
+    return Container(
+      width: mapWidth,
+      height: mapHeight,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(7),
+        child: GestureDetector(
+          onTapDown: (details) => _onMinimapTap(details.localPosition, mapWidth, mapHeight),
+          onPanUpdate: (details) => _onMinimapTap(details.localPosition, mapWidth, mapHeight),
+          child: CustomPaint(
+            painter: _MinimapPainter(
+              nodes: _nodes,
+              strokes: _strokes,
+              canvasOffset: _canvasOffset,
+              scale: _scale,
+              viewportSize: MediaQuery.of(context).size,
+            ),
+            size: const Size(mapWidth, mapHeight),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 迷你地图点击/拖动：将点击位置转换为画布偏移
+  void _onMinimapTap(Offset localPos, double mapWidth, double mapHeight) {
+    // 复制 _MinimapPainter 的边界计算逻辑
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+
+    for (var node in _nodes) {
+      minX = minX < node.position.dx ? minX : node.position.dx;
+      minY = minY < node.position.dy ? minY : node.position.dy;
+      maxX = maxX > (node.position.dx + node.size.width) ? maxX : (node.position.dx + node.size.width);
+      maxY = maxY > (node.position.dy + node.size.height) ? maxY : (node.position.dy + node.size.height);
+    }
+    for (var stroke in _strokes) {
+      for (var p in stroke.points) {
+        if (p.dx < minX) minX = p.dx;
+        if (p.dy < minY) minY = p.dy;
+        if (p.dx > maxX) maxX = p.dx;
+        if (p.dy > maxY) maxY = p.dy;
+      }
+    }
+
+    final vpSize = MediaQuery.of(context).size;
+    final vpLeft = -_canvasOffset.dx / _scale;
+    final vpTop = -_canvasOffset.dy / _scale;
+    final vpRight = (vpSize.width - _canvasOffset.dx) / _scale;
+    final vpBottom = (vpSize.height - _canvasOffset.dy) / _scale;
+    if (vpLeft < minX) minX = vpLeft;
+    if (vpTop < minY) minY = vpTop;
+    if (vpRight > maxX) maxX = vpRight;
+    if (vpBottom > maxY) maxY = vpBottom;
+
+    if (minX >= maxX || minY >= maxY) return;
+
+    const padding = 50.0;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    final contentWidth = maxX - minX;
+    final contentHeight = maxY - minY;
+    final scaleX = mapWidth / contentWidth;
+    final scaleY = mapHeight / contentHeight;
+    final mapScale = scaleX < scaleY ? scaleX : scaleY;
+
+    final offsetX = (mapWidth - contentWidth * mapScale) / 2;
+    final offsetY = (mapHeight - contentHeight * mapScale) / 2;
+
+    // 小地图坐标 → 世界坐标
+    final worldX = (localPos.dx - offsetX) / mapScale + minX;
+    final worldY = (localPos.dy - offsetY) / mapScale + minY;
+
+    // 将视口中心移动到该世界坐标
+    setState(() {
+      _canvasOffset = Offset(
+        vpSize.width / 2 - worldX * _scale,
+        vpSize.height / 2 - worldY * _scale,
+      );
+    });
+  }
+
   Widget _buildZoomControls() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -3215,15 +4232,33 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // 适应窗口
+          Tooltip(
+            message: "适应窗口",
+            child: IconButton(
+              icon: const Icon(Icons.fit_screen, size: 16),
+              onPressed: _zoomToFit,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ),
+          Container(width: 1, height: 20, color: _borderColor),
           IconButton(
             icon: const Icon(Icons.remove, size: 16),
             onPressed: () => _smoothZoomTo(_scale - 0.1),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          Text(
-            "${(_scale * 100).toInt()}%",
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          // 点击回到 100%
+          GestureDetector(
+            onTap: () => _smoothZoomTo(1.0),
+            child: Tooltip(
+              message: "重置为 100%",
+              child: Text(
+                "${(_scale * 100).toInt()}%",
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.add, size: 16),
@@ -3231,6 +4266,36 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
+          Container(width: 1, height: 20, color: _borderColor),
+          // 网格开关
+          Tooltip(
+            message: _showGrid ? "隐藏网格" : "显示网格",
+            child: IconButton(
+              icon: Icon(
+                _showGrid ? Icons.grid_on : Icons.grid_off,
+                size: 16,
+                color: _showGrid ? _accentBlue : Colors.grey[600],
+              ),
+              onPressed: () => setState(() => _showGrid = !_showGrid),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ),
+          // 网格类型切换（仅在显示网格时）
+          if (_showGrid)
+            Tooltip(
+              message: _gridDots ? "切换为线条" : "切换为点阵",
+              child: IconButton(
+                icon: Icon(
+                  _gridDots ? Icons.circle : Icons.border_all,
+                  size: 14,
+                  color: Colors.grey[600],
+                ),
+                onPressed: () => setState(() => _gridDots = !_gridDots),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 32),
+              ),
+            ),
         ],
       ),
     );
@@ -4206,6 +5271,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
     return false;
   }
+
 
   // 从本地选择首帧/尾帧图片
   Future<void> _pickFrameImage(
@@ -6252,6 +7318,30 @@ enum CanvasTool {
   video, // 视频
 }
 
+/// 图层项类型
+enum _LayerKind { node, stroke }
+
+/// 图层面板的条目数据
+class _LayerEntry {
+  final _LayerKind kind;
+  final String id;
+  final int? index; // 涂鸦/形状的列表索引
+  final String name;
+  final IconData icon;
+  final bool isSelected;
+  final bool isHidden;
+
+  _LayerEntry({
+    required this.kind,
+    required this.id,
+    this.index,
+    required this.name,
+    required this.icon,
+    this.isSelected = false,
+    this.isHidden = false,
+  });
+}
+
 // 调整大小手柄
 enum ResizeHandle { topLeft, topRight, bottomLeft, bottomRight }
 
@@ -6341,6 +7431,7 @@ class DrawingPainter extends CustomPainter {
   final List<DrawingStroke> strokes;
   final DrawingStroke? currentStroke;
   final DrawingStroke? selectedStroke;
+  final Set<DrawingStroke> selectedStrokes;
   final Offset canvasOffset;
   final double scale;
 
@@ -6348,6 +7439,7 @@ class DrawingPainter extends CustomPainter {
     required this.strokes,
     this.currentStroke,
     this.selectedStroke,
+    this.selectedStrokes = const {},
     required this.canvasOffset,
     required this.scale,
   });
@@ -6356,7 +7448,7 @@ class DrawingPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // 绘制已完成的笔画
     for (var stroke in strokes) {
-      _drawStroke(canvas, stroke, stroke == selectedStroke);
+      _drawStroke(canvas, stroke, stroke == selectedStroke || selectedStrokes.contains(stroke));
     }
 
     // 绘制当前笔画
@@ -6418,6 +7510,207 @@ class DrawingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// 对齐参考线绘制器
+class _AlignGuidePainter extends CustomPainter {
+  final List<double> guideX;
+  final List<double> guideY;
+
+  _AlignGuidePainter({required this.guideX, required this.guideY});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFFF6B6B)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    for (var x in guideX) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (var y in guideY) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AlignGuidePainter oldDelegate) {
+    return guideX != oldDelegate.guideX || guideY != oldDelegate.guideY;
+  }
+}
+
+/// 网格背景绘制器
+class _GridPainter extends CustomPainter {
+  final Offset canvasOffset;
+  final double scale;
+  final bool isDots;
+
+  _GridPainter({
+    required this.canvasOffset,
+    required this.scale,
+    required this.isDots,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const gridSize = 40.0; // 基础网格大小
+    final step = gridSize * scale;
+    if (step < 5) return; // 太小不画
+
+    final paint = Paint()
+      ..color = const Color(0xFFDEE2E6)
+      ..strokeWidth = 0.5;
+
+    // 计算偏移后的起始位置
+    final startX = canvasOffset.dx % step;
+    final startY = canvasOffset.dy % step;
+
+    if (isDots) {
+      paint.style = PaintingStyle.fill;
+      for (double x = startX; x < size.width; x += step) {
+        for (double y = startY; y < size.height; y += step) {
+          canvas.drawCircle(Offset(x, y), 1.2, paint);
+        }
+      }
+    } else {
+      paint.style = PaintingStyle.stroke;
+      for (double x = startX; x < size.width; x += step) {
+        canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      }
+      for (double y = startY; y < size.height; y += step) {
+        canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _GridPainter oldDelegate) {
+    return canvasOffset != oldDelegate.canvasOffset ||
+        scale != oldDelegate.scale ||
+        isDots != oldDelegate.isDots;
+  }
+}
+
+class _MinimapPainter extends CustomPainter {
+  final List<CanvasNode> nodes;
+  final List<DrawingStroke> strokes;
+  final Offset canvasOffset;
+  final double scale;
+  final Size viewportSize;
+
+  _MinimapPainter({
+    required this.nodes,
+    required this.strokes,
+    required this.canvasOffset,
+    required this.scale,
+    required this.viewportSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 计算画布内容的边界
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+
+    for (var node in nodes) {
+      minX = minX < node.position.dx ? minX : node.position.dx;
+      minY = minY < node.position.dy ? minY : node.position.dy;
+      maxX = maxX > (node.position.dx + node.size.width) ? maxX : (node.position.dx + node.size.width);
+      maxY = maxY > (node.position.dy + node.size.height) ? maxY : (node.position.dy + node.size.height);
+    }
+    for (var stroke in strokes) {
+      for (var p in stroke.points) {
+        if (p.dx < minX) minX = p.dx;
+        if (p.dy < minY) minY = p.dy;
+        if (p.dx > maxX) maxX = p.dx;
+        if (p.dy > maxY) maxY = p.dy;
+      }
+    }
+
+    // 包含当前视口范围
+    final vpLeft = -canvasOffset.dx / scale;
+    final vpTop = -canvasOffset.dy / scale;
+    final vpRight = (viewportSize.width - canvasOffset.dx) / scale;
+    final vpBottom = (viewportSize.height - canvasOffset.dy) / scale;
+    if (vpLeft < minX) minX = vpLeft;
+    if (vpTop < minY) minY = vpTop;
+    if (vpRight > maxX) maxX = vpRight;
+    if (vpBottom > maxY) maxY = vpBottom;
+
+    if (minX >= maxX || minY >= maxY) return;
+
+    // 增加边距
+    final padding = 50.0;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    final contentWidth = maxX - minX;
+    final contentHeight = maxY - minY;
+    final scaleX = size.width / contentWidth;
+    final scaleY = size.height / contentHeight;
+    final mapScale = scaleX < scaleY ? scaleX : scaleY;
+
+    final offsetX = (size.width - contentWidth * mapScale) / 2;
+    final offsetY = (size.height - contentHeight * mapScale) / 2;
+
+    Offset toMap(double x, double y) => Offset(
+      (x - minX) * mapScale + offsetX,
+      (y - minY) * mapScale + offsetY,
+    );
+
+    // 背景
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..color = const Color(0xFFF8F9FA));
+
+    // 绘制节点
+    final nodePaint = Paint()
+      ..color = const Color(0xFFADB5BD)
+      ..style = PaintingStyle.fill;
+    for (var node in nodes) {
+      final tl = toMap(node.position.dx, node.position.dy);
+      final br = toMap(
+        node.position.dx + node.size.width,
+        node.position.dy + node.size.height,
+      );
+      canvas.drawRect(Rect.fromPoints(tl, br), nodePaint);
+    }
+
+    // 绘制笔画 (简化为点)
+    final strokePaint = Paint()
+      ..color = const Color(0xFF868E96)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    for (var stroke in strokes) {
+      if (stroke.points.length < 2) continue;
+      final path = Path();
+      final first = toMap(stroke.points.first.dx, stroke.points.first.dy);
+      path.moveTo(first.dx, first.dy);
+      for (var i = 1; i < stroke.points.length; i++) {
+        final p = toMap(stroke.points[i].dx, stroke.points[i].dy);
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(path, strokePaint);
+    }
+
+    // 绘制视口框
+    final vpTL = toMap(vpLeft, vpTop);
+    final vpBR = toMap(vpRight, vpBottom);
+    final vpPaint = Paint()
+      ..color = const Color(0xFF3B82F6).withValues(alpha: 0.3)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(Rect.fromPoints(vpTL, vpBR), vpPaint);
+    final vpBorderPaint = Paint()
+      ..color = const Color(0xFF3B82F6)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    canvas.drawRect(Rect.fromPoints(vpTL, vpBR), vpBorderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MinimapPainter oldDelegate) => true;
 }
 
 // 框选矩形绘制器

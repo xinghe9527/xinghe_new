@@ -574,7 +574,6 @@ class FFmpegService {
       final result = await Process.run(
         ffmpegPath,
         args,
-        runInShell: true,
       );
       
       // 从 stderr 中解析时长（FFmpeg 输出信息在 stderr）
@@ -652,7 +651,6 @@ Future<_FFmpegResult> _runFFmpegProcess(_FFmpegParams params) async {
     final result = await Process.run(
       params.command,
       params.args,
-      runInShell: true,
     );
     
     return _FFmpegResult(

@@ -19,6 +19,7 @@ enum CanvasTool {
   video,   // 视频
 }
 
+
 /// 调整大小手柄
 enum ResizeHandle {
   topLeft,
@@ -230,3 +231,4 @@ class DrawingStroke {
     );
   }
 }
+

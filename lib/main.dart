@@ -184,18 +184,24 @@ class PythonBackendManager {
       debugPrint('🛑 立即杀掉 Python 后端 (PID: $pid)');
       try {
         _process!.kill(ProcessSignal.sigkill);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ kill进程失败: $e');
+      }
       if (Platform.isWindows) {
         try {
           Process.runSync('taskkill', ['/F', '/T', '/PID', '$pid']);
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('⚠️ taskkill PID失败: $e');
+        }
       }
     }
     // 按进程名杀掉所有 api_server.exe（包括 PyInstaller 子进程和上次残留的）
     if (Platform.isWindows) {
       try {
         Process.runSync('taskkill', ['/F', '/IM', 'api_server.exe']);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ taskkill api_server失败: $e');
+      }
     }
     _process = null;
     _isRunning = false;
