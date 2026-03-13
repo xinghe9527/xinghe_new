@@ -21,7 +21,9 @@ import 'package:path/path.dart' as path;
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
-import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart'; // ✅ 导入拖动组件
+import 'package:xinghe_new/pages/ai_canvas/agent_chat_panel.dart';
+import 'package:xinghe_new/pages/ai_canvas/canvas_agent_service.dart';
 
 /// GeekNow 图片模型列表（与设置界面保持一致）
 class GeekNowImageModels {
@@ -56,9 +58,10 @@ class GeekNowVideoModels {
 /// Yunwu（云雾）图片模型列表
 class YunwuImageModels {
   static const List<String> models = [
+    'gemini-3.1-flash-image-preview',
+    'gemini-2.5-flash-image',
     'gemini-2.5-flash-image-preview',
     'gemini-3-pro-image-preview',
-    'gemini-3-pro-image-preview-lite',
   ];
 }
 
@@ -66,15 +69,11 @@ class YunwuImageModels {
 class YunwuVideoModels {
   static const List<String> models = [
     // Sora 系列
-    'sora-2', 'sora-2-all', 'sora-2-pro',
-    // VEO2 系列
-    'veo2', 'veo2-fast', 'veo2-fast-frames', 'veo2-fast-components',
-    'veo2-pro', 'veo2-pro-components',
-    // VEO3 系列
-    'veo3', 'veo3-fast', 'veo3-fast-frames', 'veo3-frames',
-    'veo3-pro', 'veo3-pro-frames',
-    // VEO3.1 系列
-    'veo3.1', 'veo3.1-fast', 'veo3.1-pro', 'veo3.1-components',
+    'sora-2-all',
+    // VEO3.1 4K 系列（OpenAI视频格式）
+    'veo_3_1-4K', 'veo_3_1-fast-4K',
+    // Grok 视频系列（xAI）
+    'grok-video-3', 'grok-video-3-10s', 'grok-video-3-15s',
   ];
 }
 
@@ -85,17 +84,18 @@ class AiCanvasPage extends StatefulWidget {
   State<AiCanvasPage> createState() => _AiCanvasPageState();
 }
 
-class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMixin {
+class _AiCanvasPageState extends State<AiCanvasPage>
+    with TickerProviderStateMixin {
   // 画布偏移和缩放
   Offset _canvasOffset = Offset.zero;
   double _scale = 1.0;
-  
+
   // 节点列表
   final List<CanvasNode> _nodes = [];
-  
+
   // 显示设置页面
   bool _showSettings = false;
-  
+
   // 拖动状态
   Offset? _lastPanPosition;
   CanvasNode? _draggingNode;
@@ -103,37 +103,37 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
   bool _isMiddleButtonPressed = false; // 中键按下状态
   DrawingStroke? _draggingStroke; // 拖动的涂鸦
   Offset? _draggingStrokeOffset; // 涂鸦拖动偏移
-  
+
   // 选中的节点
   String? _selectedNodeId;
   final Set<String> _selectedNodeIds = {};
-  
+
   // 当前工具
   CanvasTool _currentTool = CanvasTool.select;
-  
+
   // 调整大小状态
   CanvasNode? _resizingNode;
   ResizeHandle? _resizeHandle;
-  
+
   // 框选状态
   Offset? _selectionStart;
   Offset? _selectionEnd;
-  
+
   // 文本框创建状态
   Offset? _textBoxStart;
   Offset? _textBoxEnd;
   bool _isCreatingTextBox = false;
-  
+
   // 图片框创建状态
   Offset? _imageBoxStart;
   Offset? _imageBoxEnd;
   bool _isCreatingImageBox = false;
-  
+
   // 视频框创建状态
   Offset? _videoBoxStart;
   Offset? _videoBoxEnd;
   bool _isCreatingVideoBox = false;
-  
+
   // 画笔状态
   final List<DrawingStroke> _strokes = [];
   DrawingStroke? _currentStroke;
@@ -141,7 +141,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
   Color _brushColor = Colors.black;
   double _brushSize = 3.0;
   bool _showBrushToolbar = false; // 画笔工具栏显示状态
-  
+
   // 文本设置状态
   String _textFontFamily = 'Arial';
   double _textFontSize = 16.0;
@@ -150,33 +150,36 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
   bool _textItalic = false;
   bool _textUnderline = false;
   bool _showTextToolbar = false; // 文本工具栏显示状态
-  
+
   // 动画控制器
   late AnimationController _scaleAnimationController;
   late Animation<double> _scaleAnimation;
-  
+
   // 缩放焦点（用于以鼠标为中心缩放）
   Offset? _zoomFocalPoint;
   double? _zoomStartScale;
   Offset? _zoomStartOffset;
-  
+
   // 从画布选择状态
   bool _isSelectingFromCanvas = false;
   CanvasNode? _targetNodeForImage; // 目标节点（用于接收选择的图片）
-  
+
+  // Agent 面板状态
+  bool _showAgentPanel = false;
+
   // 视频播放器控制器映射（使用 media_kit）
   final Map<String, Player> _videoPlayers = {};
   final Map<String, VideoController> _videoControllers = {};
-  
+
   // API 服务商和模型
   String _imageProvider = 'geeknow';
   String _videoProvider = 'geeknow';
   List<String> _availableImageModels = GeekNowImageModels.models;
   List<String> _availableVideoModels = GeekNowVideoModels.models;
-  
+
   // ComfyUI 工作流
   List<Map<String, dynamic>> _comfyUIWorkflows = [];
-  
+
   // API 服务
   final SecureStorageManager _storage = SecureStorageManager();
   final LogManager _logger = LogManager();
@@ -191,31 +194,39 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
   @override
   void initState() {
     super.initState();
-    
+
     _scaleAnimationController = AnimationController(
       duration: const Duration(milliseconds: 200),
       vsync: this,
     );
-    
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.0).animate(
-      CurvedAnimation(parent: _scaleAnimationController, curve: Curves.easeOut),
-    )..addListener(() {
-      setState(() {
-        final currentScale = _scaleAnimation.value;
-        
-        // 如果有焦点，以焦点为中心缩放
-        if (_zoomFocalPoint != null && _zoomStartScale != null && _zoomStartOffset != null) {
-          final scaleChange = currentScale / _zoomStartScale!;
-          _canvasOffset = _zoomFocalPoint! - (_zoomFocalPoint! - _zoomStartOffset!) * scaleChange;
-        }
-        
-        _scale = currentScale;
-      });
-    });
-    
+
+    _scaleAnimation =
+        Tween<double>(begin: 1.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: _scaleAnimationController,
+            curve: Curves.easeOut,
+          ),
+        )..addListener(() {
+          setState(() {
+            final currentScale = _scaleAnimation.value;
+
+            // 如果有焦点，以焦点为中心缩放
+            if (_zoomFocalPoint != null &&
+                _zoomStartScale != null &&
+                _zoomStartOffset != null) {
+              final scaleChange = currentScale / _zoomStartScale!;
+              _canvasOffset =
+                  _zoomFocalPoint! -
+                  (_zoomFocalPoint! - _zoomStartOffset!) * scaleChange;
+            }
+
+            _scale = currentScale;
+          });
+        });
+
     // 加载 API 服务商配置
     _loadImageProvider();
-    
+
     // 加载保存的画布数据
     _loadCanvasData();
   }
@@ -224,7 +235,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
   void dispose() {
     // 保存画布数据
     _saveCanvasData();
-    
+
     _scaleAnimationController.dispose();
     // 清理所有视频播放器
     for (var player in _videoPlayers.values) {
@@ -234,27 +245,29 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     _videoControllers.clear();
     super.dispose();
   }
-  
+
   /// 从设置加载图片和视频服务商，并更新可用模型列表
   Future<void> _loadImageProvider() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final imageProvider = prefs.getString('image_provider') ?? 'geeknow';
       final videoProvider = prefs.getString('video_provider') ?? 'geeknow';
-      
+
       // 加载 ComfyUI 工作流
       final workflowsJson = prefs.getString('comfyui_workflows');
       List<Map<String, dynamic>> workflows = [];
       if (workflowsJson != null && workflowsJson.isNotEmpty) {
         try {
           workflows = List<Map<String, dynamic>>.from(
-            (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+            (jsonDecode(workflowsJson) as List).map(
+              (w) => Map<String, dynamic>.from(w as Map),
+            ),
           );
         } catch (e) {
           debugPrint('解析 ComfyUI 工作流失败: $e');
         }
       }
-      
+
       if (mounted) {
         setState(() {
           _imageProvider = imageProvider;
@@ -268,7 +281,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       debugPrint('加载服务商配置失败: $e');
     }
   }
-  
+
   /// 根据服务商和类型获取可用模型列表
   List<String> _getModelsForProvider(String provider, String modelType) {
     // ComfyUI 特殊处理：返回工作流列表
@@ -281,17 +294,17 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         final type = w['type'] ?? 'image';
         return type == modelType;
       }).toList();
-      
+
       if (filteredWorkflows.isEmpty) {
         return ['无${modelType == 'image' ? '图片' : '视频'}工作流'];
       }
-      
+
       // 返回工作流名称或ID
       return filteredWorkflows.map((w) {
         return (w['name'] ?? w['id'] ?? '未命名工作流') as String;
       }).toList();
     }
-    
+
     if (modelType == 'image') {
       // 图片模型
       switch (provider.toLowerCase()) {
@@ -301,23 +314,20 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           return YunwuImageModels.models;
         case 'openai':
           return ['gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2'];
-        case 'gemini':
-        case 'gemini-image':
-          return ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image', 'gemini-pro-vision'];
-        case 'gemini-3-pro-image':
-        case 'gemini-pro-image':
-          return ['gemini-3-pro-image-preview', 'gemini-3-pro-image-preview-lite'];
-        case 'midjourney':
-        case 'mj':
-          return ['midjourney-v6', 'midjourney-v5.2', 'midjourney-niji'];
-        case 'deepseek':
-          return []; // DeepSeek 不支持图片生成
-        case 'aliyun':
-        case 'qwen':
-        case 'tongyi':
-          return ['qwen-vl-plus', 'qwen-vl-max'];
+        case 'vidu':
+          return ['vidu-image-1'];
+        case 'jimeng':
+          return [
+            'jimeng-image-5.0-lite',
+            'jimeng-image-4.6',
+            'jimeng-image-4.5',
+            'jimeng-image-4.1',
+            'jimeng-image-4.0',
+            'jimeng-image-3.1',
+            'jimeng-image-3.0',
+          ];
         default:
-          return ['DALL-E 3', 'Midjourney', 'Stable Diffusion'];
+          return [];
       }
     } else {
       // 视频模型
@@ -326,19 +336,25 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           return GeekNowVideoModels.models;
         case 'yunwu':
           return YunwuVideoModels.models;
-        case 'veo':
-        case 'veo-video':
-          return ['veo-2', 'veo-1'];
-        case 'runway':
-          return ['gen-3', 'gen-2'];
-        case 'pika':
-          return ['pika-1.0', 'pika-1.5'];
+        case 'openai':
+          return ['sora-2', 'sora-turbo'];
+        case 'vidu':
+          return ['vidu-q3', 'vidu-q2', 'vidu-q1', 'vidu-2.0'];
+        case 'jimeng':
+          return [
+            'seedance-2.0-fast',
+            'seedance-2.0',
+            'jimeng-video-3.5-pro',
+            'jimeng-video-3.0-pro',
+            'jimeng-video-3.0-fast',
+            'jimeng-video-3.0',
+          ];
         default:
-          return ['Sora', 'Runway', 'Pika'];
+          return [];
       }
     }
   }
-  
+
   /// 根据名称获取 ComfyUI 工作流的完整信息
   Map<String, dynamic>? _getWorkflowByName(String name) {
     try {
@@ -350,26 +366,91 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       return null;
     }
   }
-  
+
+  /// 从节点数据中安全地提取 Color 值
+  Color _getColorFromData(dynamic value, Color fallback) {
+    if (value == null) return fallback;
+    if (value is Color) return value;
+    if (value is int) return Color(value);
+    if (value is String) {
+      // 尝试解析 "Color(0xff000000)" 格式
+      final match = RegExp(r'Color\(0x([0-9a-fA-F]+)\)').firstMatch(value);
+      if (match != null) {
+        final hex = int.tryParse(match.group(1)!, radix: 16);
+        if (hex != null) return Color(hex);
+      }
+      // 尝试解析纯数字
+      final intVal = int.tryParse(value);
+      if (intVal != null) return Color(intVal);
+    }
+    return fallback;
+  }
+
+  /// 获取服务商显示名称（与设置页面保持一致）
+  String _getProviderDisplayName(String provider) {
+    const displayNames = {
+      'openai': 'OpenAI',
+      'geeknow': 'GeekNow',
+      'yunwu': 'Yunwu',
+      'comfyui': 'ComfyUI',
+      'vidu': 'Vidu',
+      'jimeng': '即梦',
+      'deepseek': 'DeepSeek',
+      'aliyun': '阿里云',
+    };
+    return displayNames[provider.toLowerCase()] ?? provider;
+  }
+
+  /// 获取图片服务商列表（与设置页面保持一致）
+  List<Map<String, String>> _getImageProviderList() {
+    return [
+      {'key': 'openai', 'name': 'OpenAI'},
+      {'key': 'geeknow', 'name': 'GeekNow'},
+      {'key': 'yunwu', 'name': 'Yunwu（云雾）'},
+      {'key': 'comfyui', 'name': 'ComfyUI（本地）'},
+      {'key': 'vidu', 'name': 'Vidu（网页服务商）'},
+      {'key': 'jimeng', 'name': '即梦（网页服务商）'},
+    ];
+  }
+
+  /// 获取视频服务商列表（与设置页面保持一致）
+  List<Map<String, String>> _getVideoProviderList() {
+    return [
+      {'key': 'openai', 'name': 'OpenAI'},
+      {'key': 'geeknow', 'name': 'GeekNow'},
+      {'key': 'yunwu', 'name': 'Yunwu（云雾）'},
+      {'key': 'comfyui', 'name': 'ComfyUI（本地）'},
+      {'key': 'vidu', 'name': 'Vidu（网页服务商）'},
+      {'key': 'jimeng', 'name': '即梦（网页服务商）'},
+    ];
+  }
+
   /// 获取模型的简写名称（用于按钮显示）
   String _getShortModelName(String fullName, String provider) {
     // 非 ComfyUI 服务商，直接返回原名称
     if (provider.toLowerCase() != 'comfyui') {
       return fullName;
     }
-    
+
     // ComfyUI 工作流名称简写规则
     // 如果名称长度小于等于 20 个字符，直接显示
     if (fullName.length <= 20) {
       return fullName;
     }
-    
+
     // 尝试智能简写
     // 1. 如果包含 .json 后缀，去掉后缀
     String shortName = fullName.replaceAll('.json', '');
-    
+
     // 2. 如果包含常见前缀（video-、image-、workflow-等），保留前缀+部分内容
-    final prefixes = ['video-', 'image-', 'workflow-', 'video_', 'image_', 'workflow_'];
+    final prefixes = [
+      'video-',
+      'image-',
+      'workflow-',
+      'video_',
+      'image_',
+      'workflow_',
+    ];
     for (final prefix in prefixes) {
       if (shortName.toLowerCase().startsWith(prefix)) {
         final remaining = shortName.substring(prefix.length);
@@ -380,40 +461,59 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         return shortName;
       }
     }
-    
+
     // 3. 默认简写：前15个字符 + ...
     return '${shortName.substring(0, 15)}...';
   }
-  
+
   /// 保存画布数据到本地
   Future<void> _saveCanvasData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // 准备保存的数据
       final canvasData = {
         'offset': {'dx': _canvasOffset.dx, 'dy': _canvasOffset.dy},
         'scale': _scale,
-        'nodes': _nodes.map((node) => {
-          'id': node.id,
-          'type': node.type.toString(),
-          'position': {'dx': node.position.dx, 'dy': node.position.dy},
-          'size': {'width': node.size.width, 'height': node.size.height},
-          'data': node.data.map((key, value) {
-            // 只保存可序列化的数据
-            if (value is String || value is num || value is bool || value == null) {
-              return MapEntry(key, value);
-            }
-            return MapEntry(key, value.toString());
-          }),
-        }).toList(),
-        'strokes': _strokes.map((stroke) => {
-          'points': stroke.points.map((p) => {'dx': p.dx, 'dy': p.dy}).toList(),
-          'color': stroke.color.value,
-          'strokeWidth': stroke.strokeWidth,
-        }).toList(),
+        'nodes': _nodes
+            .map(
+              (node) => {
+                'id': node.id,
+                'type': node.type.toString(),
+                'position': {'dx': node.position.dx, 'dy': node.position.dy},
+                'size': {'width': node.size.width, 'height': node.size.height},
+                'data': node.data.map((key, value) {
+                  // 只保存可序列化的数据
+                  if (value is String ||
+                      value is num ||
+                      value is bool ||
+                      value == null) {
+                    return MapEntry(key, value);
+                  }
+                  if (value is Color) {
+                    return MapEntry(key, value.toARGB32());
+                  }
+                  if (value is List) {
+                    return MapEntry(key, value);
+                  }
+                  return MapEntry(key, value.toString());
+                }),
+              },
+            )
+            .toList(),
+        'strokes': _strokes
+            .map(
+              (stroke) => {
+                'points': stroke.points
+                    .map((p) => {'dx': p.dx, 'dy': p.dy})
+                    .toList(),
+                'color': stroke.color.value,
+                'strokeWidth': stroke.strokeWidth,
+              },
+            )
+            .toList(),
       };
-      
+
       // 保存到 SharedPreferences
       await prefs.setString('canvas_data', jsonEncode(canvasData));
       debugPrint('✅ 画布数据已保存');
@@ -421,31 +521,31 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       debugPrint('❌ 保存画布数据失败: $e');
     }
   }
-  
+
   /// 从本地加载画布数据
   Future<void> _loadCanvasData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final canvasDataJson = prefs.getString('canvas_data');
-      
+
       if (canvasDataJson == null || canvasDataJson.isEmpty) {
         debugPrint('没有保存的画布数据');
         return;
       }
-      
+
       final canvasData = jsonDecode(canvasDataJson) as Map<String, dynamic>;
-      
+
       // 恢复画布偏移和缩放
       final offset = canvasData['offset'] as Map<String, dynamic>?;
       if (offset != null) {
         _canvasOffset = Offset(offset['dx'] as double, offset['dy'] as double);
       }
-      
+
       final scale = canvasData['scale'] as double?;
       if (scale != null) {
         _scale = scale;
       }
-      
+
       // 恢复节点
       final nodes = canvasData['nodes'] as List<dynamic>?;
       if (nodes != null) {
@@ -457,21 +557,26 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             (t) => t.toString() == typeStr,
             orElse: () => NodeType.text,
           );
-          
+
           final position = node['position'] as Map<String, dynamic>;
           final size = node['size'] as Map<String, dynamic>;
           final data = Map<String, dynamic>.from(node['data'] as Map);
-          
-          _nodes.add(CanvasNode(
-            id: node['id'] as String,
-            type: type,
-            position: Offset(position['dx'] as double, position['dy'] as double),
-            size: Size(size['width'] as double, size['height'] as double),
-            data: data,
-          ));
+
+          _nodes.add(
+            CanvasNode(
+              id: node['id'] as String,
+              type: type,
+              position: Offset(
+                position['dx'] as double,
+                position['dy'] as double,
+              ),
+              size: Size(size['width'] as double, size['height'] as double),
+              data: data,
+            ),
+          );
         }
       }
-      
+
       // 恢复涂鸦
       final strokes = canvasData['strokes'] as List<dynamic>?;
       if (strokes != null) {
@@ -479,23 +584,30 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         for (final strokeData in strokes) {
           final stroke = strokeData as Map<String, dynamic>;
           final points = (stroke['points'] as List<dynamic>)
-              .map((p) => Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble()))
+              .map(
+                (p) => Offset(
+                  (p['dx'] as num).toDouble(),
+                  (p['dy'] as num).toDouble(),
+                ),
+              )
               .toList();
           final color = Color(stroke['color'] as int);
           final strokeWidth = (stroke['strokeWidth'] as num).toDouble();
-          
-          _strokes.add(DrawingStroke(
-            points: points,
-            color: color,
-            strokeWidth: strokeWidth,
-          ));
+
+          _strokes.add(
+            DrawingStroke(
+              points: points,
+              color: color,
+              strokeWidth: strokeWidth,
+            ),
+          );
         }
       }
-      
+
       if (mounted) {
         setState(() {});
       }
-      
+
       debugPrint('✅ 画布数据已加载');
       debugPrint('- 节点数量: ${_nodes.length}');
       debugPrint('- 涂鸦数量: ${_strokes.length}');
@@ -503,7 +615,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       debugPrint('❌ 加载画布数据失败: $e');
     }
   }
-  
+
   /// 自动保存的 setState 包装方法
   void _setStateAndSave(VoidCallback fn) {
     setState(fn);
@@ -512,55 +624,82 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       _saveCanvasData();
     });
   }
-  
+
   /// 生成图片或视频内容
   Future<void> _generateContent(CanvasNode node) async {
     final isImage = node.type == NodeType.image;
-    final provider = isImage ? _imageProvider : _videoProvider;
-    final model = node.data['model'] ?? (isImage ? _availableImageModels.first : _availableVideoModels.first);
+    final provider =
+        node.data['provider'] as String? ??
+        (isImage ? _imageProvider : _videoProvider);
+    final defaultModels = _getModelsForProvider(
+      provider,
+      isImage ? 'image' : 'video',
+    );
+    final model =
+        node.data['model'] ??
+        (defaultModels.isNotEmpty ? defaultModels.first : '');
     final prompt = node.data['prompt'] ?? '';
-    
+
     if (prompt.trim().isEmpty) {
       _showMessage('请输入提示词');
       return;
     }
-    
+
     debugPrint('========== 开始生成 ==========');
     debugPrint('服务商: $provider');
     debugPrint('模型: $model');
-    debugPrint('提示词: ${prompt.substring(0, prompt.length > 20 ? 20 : prompt.length)}');
-    
-    _logger.info('开始生成${isImage ? '图片' : '视频'}', module: 'AI画布', extra: {
-      '服务商': provider,
-      '模型': model,
-      '提示词': prompt.substring(0, prompt.length > 20 ? 20 : prompt.length),
-    });
-    
+    debugPrint(
+      '提示词: ${prompt.substring(0, prompt.length > 20 ? 20 : prompt.length)}',
+    );
+
+    _logger.info(
+      '开始生成${isImage ? '图片' : '视频'}',
+      module: 'AI画布',
+      extra: {
+        '服务商': provider,
+        '模型': model,
+        '提示词': prompt.substring(0, prompt.length > 20 ? 20 : prompt.length),
+      },
+    );
+
     try {
       // 标记为生成中
       setState(() {
         node.data['isGenerating'] = true;
       });
-      
+
       // 读取 API 配置
       final modelType = isImage ? 'image' : 'video';
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: modelType);
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: modelType);
-      
+      final baseUrl = await _storage.getBaseUrl(
+        provider: provider,
+        modelType: modelType,
+      );
+      final apiKey = await _storage.getApiKey(
+        provider: provider,
+        modelType: modelType,
+      );
+
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置 $provider API');
       }
-      
-      final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+
+      final config = ApiConfig(
+        provider: provider,
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+      );
       final apiFactory = ApiFactory();
       final service = apiFactory.createService(provider, config);
-      
+
       // 获取参考图片
-      final referenceImages = node.data['referenceImages'] as List<String>? ?? [];
-      
+      final referenceImages =
+          node.data['referenceImages'] as List<String>? ?? [];
+
       debugPrint('========== 参考图片信息 ==========');
       debugPrint('node.data 包含的键: ${node.data.keys.toList()}');
-      debugPrint('referenceImages 类型: ${node.data['referenceImages']?.runtimeType}');
+      debugPrint(
+        'referenceImages 类型: ${node.data['referenceImages']?.runtimeType}',
+      );
       debugPrint('参考图片数量: ${referenceImages.length}');
       if (referenceImages.isNotEmpty) {
         for (int i = 0; i < referenceImages.length; i++) {
@@ -570,11 +709,11 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         debugPrint('⚠️ 没有参考图片');
         debugPrint('⚠️ 检查是否正确添加了参考图片');
       }
-      
+
       // 获取首尾帧图片（视频）
       final firstFrameImage = node.data['firstFrameImage'] as String?;
       final lastFrameImage = node.data['lastFrameImage'] as String?;
-      
+
       // ✅ 将首尾帧图片添加到参考图片列表（用于传递给 API）
       final allReferenceImages = <String>[...referenceImages];
       if (firstFrameImage != null) {
@@ -585,12 +724,12 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         allReferenceImages.add(lastFrameImage); // 尾帧放在最后
         debugPrint('✅ 添加尾帧图片: $lastFrameImage');
       }
-      
+
       debugPrint('最终传递的参考图片数量: ${allReferenceImages.length}');
-      
+
       // 构建参数
       final parameters = <String, dynamic>{};
-      
+
       if (isImage) {
         // 图片生成参数
         parameters['size'] = node.data['ratio'] ?? '1:1';
@@ -607,31 +746,33 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           parameters['last_frame'] = lastFrameImage;
         }
       }
-      
+
       // 调用 API 生成
       ApiResponse<dynamic> result;
-      
+
       if (provider.toLowerCase() == 'comfyui') {
         // ComfyUI 需要传递工作流信息
         debugPrint('========== ComfyUI 工作流处理 ==========');
         debugPrint('节点类型: ${isImage ? "图片" : "视频"}');
         debugPrint('查找工作流: $model');
         debugPrint('可用工作流数量: ${_comfyUIWorkflows.length}');
-        
+
         final workflow = _getWorkflowByName(model);
-        
+
         if (workflow != null && workflow.isNotEmpty) {
           debugPrint('✅ 找到工作流: ${workflow['name'] ?? workflow['id']}');
           debugPrint('工作流ID: ${workflow['id']}');
-          
+
           // 重要：将工作流信息传递给 API
           parameters['workflow'] = workflow['workflow'];
           parameters['workflow_id'] = workflow['id'];
           parameters['workflow_name'] = workflow['name'] ?? workflow['id'];
-          
+
           debugPrint('传递参数:');
           debugPrint('  - workflow_id: ${workflow['id']}');
-          debugPrint('  - workflow_name: ${workflow['name'] ?? workflow['id']}');
+          debugPrint(
+            '  - workflow_name: ${workflow['name'] ?? workflow['id']}',
+          );
         } else {
           debugPrint('⚠️ 未找到工作流: $model');
           debugPrint('可用工作流列表:');
@@ -640,28 +781,34 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           }
           throw Exception('未找到工作流: $model');
         }
-        
+
         debugPrint('调用 API - 模型参数: $model');
-        
+
         // ✅ 根据节点类型调用不同的方法
         result = isImage
             ? await service.generateImages(
                 prompt: prompt,
                 model: model,
-                referenceImages: allReferenceImages.isNotEmpty ? allReferenceImages : null,
+                referenceImages: allReferenceImages.isNotEmpty
+                    ? allReferenceImages
+                    : null,
                 parameters: parameters,
               )
             : await service.generateVideos(
                 prompt: prompt,
                 model: model,
-                referenceImages: allReferenceImages.isNotEmpty ? allReferenceImages : null,
+                referenceImages: allReferenceImages.isNotEmpty
+                    ? allReferenceImages
+                    : null,
                 parameters: parameters,
               );
       } else if (service is OpenAIService && isImage) {
         result = await service.generateImagesByChat(
           prompt: prompt,
           model: model,
-          referenceImagePaths: allReferenceImages.isNotEmpty ? allReferenceImages : null,
+          referenceImagePaths: allReferenceImages.isNotEmpty
+              ? allReferenceImages
+              : null,
           parameters: parameters,
         );
       } else {
@@ -669,24 +816,28 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             ? await service.generateImages(
                 prompt: prompt,
                 model: model,
-                referenceImages: allReferenceImages.isNotEmpty ? allReferenceImages : null,
+                referenceImages: allReferenceImages.isNotEmpty
+                    ? allReferenceImages
+                    : null,
                 parameters: parameters,
               )
             : await service.generateVideos(
                 prompt: prompt,
                 model: model,
-                referenceImages: allReferenceImages.isNotEmpty ? allReferenceImages : null,
+                referenceImages: allReferenceImages.isNotEmpty
+                    ? allReferenceImages
+                    : null,
                 parameters: parameters,
               );
       }
-      
+
       // 处理结果
       if (result.isSuccess && result.data != null) {
         debugPrint('========== 处理生成结果 ==========');
         debugPrint('结果类型: ${result.data.runtimeType}');
-        
+
         List<String> urls = [];
-        
+
         // 处理不同的返回格式
         if (result.data is ChatImageResponse) {
           // OpenAI Chat API 格式
@@ -732,19 +883,23 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             urls = [result.data['videoUrl']];
           }
         }
-        
+
         if (urls.isNotEmpty) {
           debugPrint('准备下载第一个文件: ${urls.first}');
-          _logger.info('获取到 ${urls.length} 个URL', module: 'AI画布', extra: {'第一个URL': urls.first});
-          
+          _logger.info(
+            '获取到 ${urls.length} 个URL',
+            module: 'AI画布',
+            extra: {'第一个URL': urls.first},
+          );
+
           // 下载并保存文件
           final savedPath = await _downloadAndSaveFile(urls.first, isImage);
-          
+
           debugPrint('下载结果: ${savedPath ?? "失败"}');
-          
+
           if (savedPath != null) {
             debugPrint('✅ 准备更新节点状态');
-            
+
             // 如果是视频，先清理旧的播放器
             if (!isImage) {
               debugPrint('清理旧的视频播放器...');
@@ -761,7 +916,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               _videoPlayers.remove(node.id);
               _videoControllers.remove(node.id);
             }
-            
+
             setState(() {
               if (isImage) {
                 node.data['generatedImagePath'] = savedPath;
@@ -774,15 +929,15 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               }
               node.data['isGenerating'] = false;
             });
-            
+
             // 立即调整节点大小以匹配生成的图片
             if (isImage) {
               _adjustNodeSizeToImage(node, savedPath);
             }
-            
+
             // 自动保存
             _saveCanvasData();
-            
+
             _logger.success('生成成功', module: 'AI画布', extra: {'文件': savedPath});
             _showMessage('生成成功！');
             debugPrint('========== 生成完成 ==========');
@@ -803,66 +958,84 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       _showMessage('生成失败: $e');
     }
   }
-  
+
   /// 下载并保存文件
   Future<String?> _downloadAndSaveFile(String url, bool isImage) async {
     try {
       debugPrint('========== 下载文件 ==========');
       debugPrint('URL: $url');
       debugPrint('类型: ${isImage ? "图片" : "视频"}');
-      
+
       _logger.info('开始下载文件', module: 'AI画布', extra: {'URL': url});
-      
+
       final response = await http.get(Uri.parse(url));
-      
+
       debugPrint('HTTP 状态码: ${response.statusCode}');
       debugPrint('内容长度: ${response.bodyBytes.length} bytes');
-      
-      _logger.info('HTTP响应', module: 'AI画布', extra: {
-        '状态码': response.statusCode,
-        '内容长度': response.bodyBytes.length,
-      });
-      
+
+      _logger.info(
+        'HTTP响应',
+        module: 'AI画布',
+        extra: {'状态码': response.statusCode, '内容长度': response.bodyBytes.length},
+      );
+
       if (response.statusCode == 200) {
         final prefs = await SharedPreferences.getInstance();
         // 优先使用画布空间保存路径
         final canvasSavePath = prefs.getString('canvas_save_path') ?? '';
-        final savePath = canvasSavePath.isNotEmpty 
-            ? canvasSavePath 
-            : (prefs.getString(isImage ? 'image_save_path' : 'video_save_path') ?? '');
-        final dir = Directory(savePath.isNotEmpty ? savePath : Directory.systemTemp.path);
-        
+        final savePath = canvasSavePath.isNotEmpty
+            ? canvasSavePath
+            : (prefs.getString(
+                    isImage ? 'image_save_path' : 'video_save_path',
+                  ) ??
+                  '');
+        final dir = Directory(
+          savePath.isNotEmpty ? savePath : Directory.systemTemp.path,
+        );
+
         debugPrint('保存目录: ${dir.path}');
         debugPrint('使用画布空间保存路径: ${canvasSavePath.isNotEmpty}');
-        
+
         if (!await dir.exists()) {
           await dir.create(recursive: true);
           _logger.info('创建保存目录', module: 'AI画布', extra: {'路径': dir.path});
         }
-        
+
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         final extension = isImage ? 'png' : 'mp4';
-        final filename = 'canvas_${isImage ? 'image' : 'video'}_$timestamp.$extension';
+        final filename =
+            'canvas_${isImage ? 'image' : 'video'}_$timestamp.$extension';
         final file = File(path.join(dir.path, filename));
-        
+
         debugPrint('保存文件: ${file.path}');
-        
+
         await file.writeAsBytes(response.bodyBytes);
-        
+
         debugPrint('✅ 文件保存成功');
-        
-        _logger.success('文件保存成功', module: 'AI画布', extra: {
-          '路径': file.path,
-          '大小': '${(response.bodyBytes.length / 1024).toStringAsFixed(2)} KB',
-        });
-        
+
+        _logger.success(
+          '文件保存成功',
+          module: 'AI画布',
+          extra: {
+            '路径': file.path,
+            '大小': '${(response.bodyBytes.length / 1024).toStringAsFixed(2)} KB',
+          },
+        );
+
         return file.path;
       } else {
         debugPrint('❌ HTTP请求失败: ${response.statusCode}');
-        _logger.error('HTTP请求失败', module: 'AI画布', extra: {
-          '状态码': response.statusCode,
-          '响应': response.body.substring(0, response.body.length > 200 ? 200 : response.body.length),
-        });
+        _logger.error(
+          'HTTP请求失败',
+          module: 'AI画布',
+          extra: {
+            '状态码': response.statusCode,
+            '响应': response.body.substring(
+              0,
+              response.body.length > 200 ? 200 : response.body.length,
+            ),
+          },
+        );
       }
     } catch (e, stackTrace) {
       debugPrint('❌ 下载文件异常: $e');
@@ -871,19 +1044,16 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     }
     return null;
   }
-  
+
   /// 显示提示消息
   void _showMessage(String message) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          duration: const Duration(seconds: 2),
-        ),
+        SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
       );
     }
   }
-  
+
   /// 调整节点大小以匹配图片宽高比
   Future<void> _adjustNodeSizeToImage(CanvasNode node, String imagePath) async {
     try {
@@ -892,61 +1062,71 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         debugPrint('[调整大小] 文件不存在: $imagePath');
         return;
       }
-      
+
       // 解码图片获取尺寸
       final bytes = await file.readAsBytes();
       final image = await decodeImageFromList(bytes);
-      
+
       final imageWidth = image.width.toDouble();
       final imageHeight = image.height.toDouble();
       final aspectRatio = imageWidth / imageHeight;
-      
-      debugPrint('[调整大小] 图片尺寸: ${imageWidth.toInt()}x${imageHeight.toInt()}, 宽高比: ${aspectRatio.toStringAsFixed(2)}');
-      
+
+      debugPrint(
+        '[调整大小] 图片尺寸: ${imageWidth.toInt()}x${imageHeight.toInt()}, 宽高比: ${aspectRatio.toStringAsFixed(2)}',
+      );
+
       // 保存宽高比信息，用于后续手动调整大小时保持比例
       node.data['_imageAspectRatio'] = aspectRatio;
-      
+
       // 判断是生成的图片还是插入的图片
       final isGeneratedImage = node.data['generatedImagePath'] != null;
-      
+
       // 计算新的节点尺寸（保持宽高比，不留白）
       double finalWidth, finalHeight;
-      
+
       if (aspectRatio >= 1.0) {
         // 横图：宽度大于等于高度，以宽度为基准
-        final baseWidth = isGeneratedImage ? 270.0 : 400.0; // 生成图片缩小到约 270px（400的2/3）
+        final baseWidth = isGeneratedImage
+            ? 270.0
+            : 400.0; // 生成图片缩小到约 270px（400的2/3）
         finalWidth = baseWidth;
         finalHeight = baseWidth / aspectRatio;
-        
+
         // 限制尺寸范围
         finalWidth = finalWidth.clamp(200.0, 4000.0);
         finalHeight = finalHeight.clamp(150.0, 4000.0);
       } else {
         // 竖图：高度大于宽度，以高度为基准
-        final baseHeight = isGeneratedImage ? 270.0 : 400.0; // 生成图片缩小到约 270px（400的2/3）
+        final baseHeight = isGeneratedImage
+            ? 270.0
+            : 400.0; // 生成图片缩小到约 270px（400的2/3）
         finalHeight = baseHeight;
         finalWidth = baseHeight * aspectRatio;
-        
+
         // 限制尺寸范围
         finalHeight = finalHeight.clamp(200.0, 4000.0);
         finalWidth = finalWidth.clamp(150.0, 4000.0);
       }
-      
+
       debugPrint('[调整大小] 节点尺寸: ${finalWidth.toInt()}x${finalHeight.toInt()}');
-      
+
       if (mounted) {
         setState(() {
           node.size = Size(finalWidth, finalHeight);
           node.data['_sizeAdjusted'] = true; // 标记已调整
         });
-        
-        _logger.info('调整节点大小', module: 'AI画布', extra: {
-          '图片尺寸': '${imageWidth.toInt()}x${imageHeight.toInt()}',
-          '宽高比': aspectRatio.toStringAsFixed(2),
-          '图片方向': aspectRatio >= 1.0 ? '横图' : '竖图',
-          '节点尺寸': '${finalWidth.toInt()}x${finalHeight.toInt()}',
-          '是否生成': isGeneratedImage,
-        });
+
+        _logger.info(
+          '调整节点大小',
+          module: 'AI画布',
+          extra: {
+            '图片尺寸': '${imageWidth.toInt()}x${imageHeight.toInt()}',
+            '宽高比': aspectRatio.toStringAsFixed(2),
+            '图片方向': aspectRatio >= 1.0 ? '横图' : '竖图',
+            '节点尺寸': '${finalWidth.toInt()}x${finalHeight.toInt()}',
+            '是否生成': isGeneratedImage,
+          },
+        );
       }
     } catch (e) {
       debugPrint('[调整大小] 失败: $e');
@@ -956,31 +1136,36 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
 
   void _smoothZoomTo(double targetScale, {Offset? focalPoint}) {
     targetScale = targetScale.clamp(0.1, 5.0); // 扩大缩放范围：0.1x 到 5x
-    
+
     // 保存缩放起始状态
     _zoomStartScale = _scale;
     _zoomStartOffset = _canvasOffset;
     _zoomFocalPoint = focalPoint;
-    
-    _scaleAnimation = Tween<double>(
-      begin: _scale,
-      end: targetScale,
-    ).animate(
-      CurvedAnimation(parent: _scaleAnimationController, curve: Curves.easeOut),
-    )..addListener(() {
-      setState(() {
-        final currentScale = _scaleAnimation.value;
-        
-        // 如果有焦点，以焦点为中心缩放
-        if (_zoomFocalPoint != null && _zoomStartScale != null && _zoomStartOffset != null) {
-          final scaleChange = currentScale / _zoomStartScale!;
-          _canvasOffset = _zoomFocalPoint! - (_zoomFocalPoint! - _zoomStartOffset!) * scaleChange;
-        }
-        
-        _scale = currentScale;
-      });
-    });
-    
+
+    _scaleAnimation =
+        Tween<double>(begin: _scale, end: targetScale).animate(
+          CurvedAnimation(
+            parent: _scaleAnimationController,
+            curve: Curves.easeOut,
+          ),
+        )..addListener(() {
+          setState(() {
+            final currentScale = _scaleAnimation.value;
+
+            // 如果有焦点，以焦点为中心缩放
+            if (_zoomFocalPoint != null &&
+                _zoomStartScale != null &&
+                _zoomStartOffset != null) {
+              final scaleChange = currentScale / _zoomStartScale!;
+              _canvasOffset =
+                  _zoomFocalPoint! -
+                  (_zoomFocalPoint! - _zoomStartOffset!) * scaleChange;
+            }
+
+            _scale = currentScale;
+          });
+        });
+
     _scaleAnimationController.forward(from: 0);
   }
 
@@ -996,7 +1181,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       _selectedNodeId = nodeId;
     });
   }
-  
+
   /// 删除选中的元素（节点和涂鸦）
   void _deleteSelectedElements() {
     setState(() {
@@ -1006,30 +1191,30 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           (node) => node.id == _selectedNodeId,
           orElse: () => _nodes.first, // 不会执行到这里
         );
-        
+
         // 如果是视频节点，清理播放器
         if (nodeToRemove.type == NodeType.video) {
           _videoPlayers[nodeToRemove.id]?.dispose();
           _videoPlayers.remove(nodeToRemove.id);
           _videoControllers.remove(nodeToRemove.id);
         }
-        
+
         _nodes.removeWhere((node) => node.id == _selectedNodeId);
         _selectedNodeId = null;
-        
+
         debugPrint('删除节点');
       }
-      
+
       // 删除选中的多个节点
       if (_selectedNodeIds.isNotEmpty) {
         final count = _selectedNodeIds.length;
-        
+
         for (final nodeId in _selectedNodeIds) {
           final nodeToRemove = _nodes.firstWhere(
             (node) => node.id == nodeId,
             orElse: () => _nodes.first,
           );
-          
+
           // 如果是视频节点，清理播放器
           if (nodeToRemove.type == NodeType.video) {
             _videoPlayers[nodeToRemove.id]?.dispose();
@@ -1037,23 +1222,23 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             _videoControllers.remove(nodeToRemove.id);
           }
         }
-        
+
         _nodes.removeWhere((node) => _selectedNodeIds.contains(node.id));
         _selectedNodeIds.clear();
         _selectedNodeId = null;
-        
+
         debugPrint('删除多个节点: $count');
       }
-      
+
       // 删除选中的涂鸦
       if (_selectedStroke != null) {
         _strokes.remove(_selectedStroke);
         _selectedStroke = null;
-        
+
         debugPrint('删除涂鸦');
       }
     });
-    
+
     // 自动保存
     _saveCanvasData();
   }
@@ -1083,808 +1268,1113 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   children: [
                     _buildTitleBar(context),
                     Expanded(
-                      child: Stack(
+                      child: Row(
                         children: [
-                          // 画布区域
-                          Listener(
-                            onPointerDown: (event) {
-                              // 检测中键按下
-                              if (event.buttons == 4) {
-                                setState(() {
-                                  _isMiddleButtonPressed = true;
-                                  _lastPanPosition = event.localPosition;
-                                });
-                              }
-                            },
-                      onPointerUp: (event) {
-                        setState(() {
-                          _isMiddleButtonPressed = false;
-                        });
-                      },
-                      onPointerMove: (event) {
-                        // 中键拖动画布
-                        if (_isMiddleButtonPressed && _lastPanPosition != null) {
-                          setState(() {
-                            final delta = event.localPosition - _lastPanPosition!;
-                            _canvasOffset += delta;
-                            _lastPanPosition = event.localPosition;
-                          });
-                        }
-                      },
-                      onPointerSignal: (event) {
-                        if (event is PointerScrollEvent) {
-                          final delta = event.scrollDelta.dy;
-                          final newScale = _scale * (1 - delta / 1000);
-                          _smoothZoomTo(newScale, focalPoint: event.localPosition);
-                        }
-                      },
-                      child: GestureDetector(
-                        onDoubleTap: _resetView,
-                        onSecondaryTapDown: (details) {
-                          // 右键菜单
-                          if (_selectedStroke != null) {
-                            _showStrokeContextMenu(details.globalPosition);
-                          } else if (_selectedNodeId != null) {
-                            final node = _nodes.firstWhere((n) => n.id == _selectedNodeId);
-                            if (node.type == NodeType.text) {
-                              _showTextNodeContextMenu(details.globalPosition, node);
-                            }
-                          }
-                        },
-                        onTapDown: (details) {
-                          // 任何操作开始时，隐藏工具栏
-                          if (_showBrushToolbar || _showTextToolbar) {
-                            setState(() {
-                              _showBrushToolbar = false;
-                              _showTextToolbar = false;
-                            });
-                          }
-                          
-                          // 拖动画布工具
-                          if (_currentTool == CanvasTool.pan) {
-                            return;
-                          }
-                          
-                          // 画笔工具：开始绘制
-                          if (_currentTool == CanvasTool.draw) {
-                            setState(() {
-                              // 将屏幕坐标转换为画布坐标
-                              final canvasPoint = Offset(
-                                (details.localPosition.dx - _canvasOffset.dx) / _scale,
-                                (details.localPosition.dy - _canvasOffset.dy) / _scale,
-                              );
-                              _currentStroke = DrawingStroke(
-                                color: _brushColor,
-                                strokeWidth: _brushSize,
-                                points: [canvasPoint],
-                              );
-                            });
-                            return;
-                          }
-                          
-                          // 选择工具：检查是否点击到涂鸦
-                          if (_currentTool == CanvasTool.select) {
-                            for (var stroke in _strokes.reversed) {
-                              if (_isPointNearStroke(details.localPosition, stroke)) {
-                                setState(() {
-                                  _selectedStroke = stroke;
-                                  _selectNode(null);
-                                });
-                                return;
-                              }
-                            }
-                          }
-                          
-                          // 点击空白处取消选择
-                          bool hitNode = false;
-                          for (var node in _nodes.reversed) {
-                            final nodeRect = Rect.fromLTWH(
-                              node.position.dx * _scale + _canvasOffset.dx,
-                              node.position.dy * _scale + _canvasOffset.dy,
-                              node.size.width * _scale,
-                              node.size.height * _scale,
-                            );
-                            
-                            if (nodeRect.contains(details.localPosition)) {
-                              hitNode = true;
-                              break;
-                            }
-                          }
-                          
-                          if (!hitNode && _currentTool == CanvasTool.select) {
-                            _selectNode(null);
-                            _selectedNodeIds.clear(); // 清除多选状态
-                            _selectedStroke = null;
-                          }
-                        },
-                        onPanStart: (details) {
-                          // 任何拖动操作开始时，隐藏工具栏
-                          if (_showBrushToolbar || _showTextToolbar) {
-                            setState(() {
-                              _showBrushToolbar = false;
-                              _showTextToolbar = false;
-                            });
-                          }
-                          
-                          _lastPanPosition = details.localPosition;
-                          
-                          // 拖动画布工具
-                          if (_currentTool == CanvasTool.pan) {
-                            return;
-                          }
-                          
-                          // 画笔工具：开始绘制
-                          if (_currentTool == CanvasTool.draw) {
-                            setState(() {
-                              // 将屏幕坐标转换为画布坐标
-                              final canvasPoint = Offset(
-                                (details.localPosition.dx - _canvasOffset.dx) / _scale,
-                                (details.localPosition.dy - _canvasOffset.dy) / _scale,
-                              );
-                              _currentStroke = DrawingStroke(
-                                color: _brushColor,
-                                strokeWidth: _brushSize,
-                                points: [canvasPoint],
-                              );
-                            });
-                            return;
-                          }
-                          
-                          // 根据当前工具处理点击
-                          if (_currentTool == CanvasTool.image) {
-                            // 图片工具：开始拖动创建图片框
-                            setState(() {
-                              _isCreatingImageBox = true;
-                              _imageBoxStart = details.localPosition;
-                              _imageBoxEnd = details.localPosition;
-                            });
-                            return;
-                          } else if (_currentTool == CanvasTool.video) {
-                            // 视频工具：开始拖动创建视频框
-                            setState(() {
-                              _isCreatingVideoBox = true;
-                              _videoBoxStart = details.localPosition;
-                              _videoBoxEnd = details.localPosition;
-                            });
-                            return;
-                          } else if (_currentTool == CanvasTool.text) {
-                            // 文本工具：开始拖动创建文本框
-                            setState(() {
-                              _isCreatingTextBox = true;
-                              _textBoxStart = details.localPosition;
-                              _textBoxEnd = details.localPosition;
-                            });
-                            return;
-                          }
-                          
-                          // 选择工具
-                          if (_currentTool == CanvasTool.select) {
-                            // 检查是否点击到涂鸦
-                            for (var stroke in _strokes.reversed) {
-                              if (_isPointNearStroke(details.localPosition, stroke)) {
-                                setState(() {
-                                  _selectedStroke = stroke;
-                                  _draggingStroke = stroke;
-                                  // 记录拖动开始时的画布坐标
-                                  _draggingStrokeOffset = Offset(
-                                    (details.localPosition.dx - _canvasOffset.dx) / _scale,
-                                    (details.localPosition.dy - _canvasOffset.dy) / _scale,
-                                  );
-                                  _selectNode(null);
-                                });
-                                return;
-                              }
-                            }
-                            
-                            // 检查是否点击到节点或调整大小手柄
-                            for (var node in _nodes.reversed) {
-                              final nodeRect = Rect.fromLTWH(
-                                node.position.dx * _scale + _canvasOffset.dx,
-                                node.position.dy * _scale + _canvasOffset.dy,
-                                node.size.width * _scale,
-                                node.size.height * _scale,
-                              );
-                              
-                              // 检查是否点击调整大小手柄（只有单选时才显示调整手柄）
-                              if (_selectedNodeId == node.id && _selectedNodeIds.isEmpty) {
-                                final handle = _getResizeHandle(details.localPosition, nodeRect);
-                                if (handle != null) {
-                                  _resizingNode = node;
-                                  _resizeHandle = handle;
-                                  return;
-                                }
-                              }
-                              
-                              if (nodeRect.contains(details.localPosition)) {
-                                // 如果点击的节点在已选中的节点集合中，准备批量拖动
-                                if (_selectedNodeIds.contains(node.id)) {
-                                  _draggingNode = node;
-                                  _draggingOffset = details.localPosition - nodeRect.topLeft;
-                                  // 不改变选中状态，保持多选
-                                  _selectedStroke = null;
-                                  return;
-                                }
-                                
-                                // 否则，单选该节点
-                                _draggingNode = node;
-                                _draggingOffset = details.localPosition - nodeRect.topLeft;
-                                _selectNode(node.id);
-                                _selectedNodeIds.clear(); // 清除多选状态
-                                _selectedStroke = null;
-                                return;
-                              }
-                            }
-                            
-                            // 没有点击到节点或涂鸦，开始框选
-                            _selectionStart = details.localPosition;
-                            _selectionEnd = details.localPosition;
-                          }
-                        },
-                        onPanUpdate: (details) {
-                          // 拖动画布工具 - 在 setState 外部处理以避免影响其他逻辑
-                          if (_currentTool == CanvasTool.pan && _lastPanPosition != null) {
-                            setState(() {
-                              final delta = details.localPosition - _lastPanPosition!;
-                              _canvasOffset += delta;
-                              _lastPanPosition = details.localPosition;
-                            });
-                            return;
-                          }
-                          
-                          setState(() {
-                            // 画笔工具：继续绘制
-                            if (_currentTool == CanvasTool.draw && _currentStroke != null) {
-                              // 将屏幕坐标转换为画布坐标
-                              final canvasPoint = Offset(
-                                (details.localPosition.dx - _canvasOffset.dx) / _scale,
-                                (details.localPosition.dy - _canvasOffset.dy) / _scale,
-                              );
-                              _currentStroke!.points.add(canvasPoint);
-                              return;
-                            }
-                            
-                            // 文本工具：拖动创建文本框
-                            if (_isCreatingTextBox && _textBoxStart != null) {
-                              _textBoxEnd = details.localPosition;
-                              return;
-                            }
-                            
-                            // 图片工具：拖动创建图片框
-                            if (_isCreatingImageBox && _imageBoxStart != null) {
-                              _imageBoxEnd = details.localPosition;
-                              return;
-                            }
-                            
-                            // 视频工具：拖动创建视频框
-                            if (_isCreatingVideoBox && _videoBoxStart != null) {
-                              _videoBoxEnd = details.localPosition;
-                              return;
-                            }
-                            
-                            // 框选
-                            if (_currentTool == CanvasTool.select && _selectionStart != null && _draggingNode == null && _resizingNode == null) {
-                              _selectionEnd = details.localPosition;
-                              return;
-                            }
-                            
-                            if (_resizingNode != null && _resizeHandle != null) {
-                              // 调整大小
-                              final delta = (details.localPosition - _lastPanPosition!) / _scale;
-                              _lastPanPosition = details.localPosition;
-                              
-                              // 获取媒体路径以计算宽高比（图片或视频）
-                              String? mediaPath;
-                              if (_resizingNode!.type == NodeType.image) {
-                                mediaPath = _resizingNode!.data['generatedImagePath'] ?? _resizingNode!.data['displayImagePath'];
-                              } else if (_resizingNode!.type == NodeType.video) {
-                                mediaPath = _resizingNode!.data['generatedVideoPath'] ?? _resizingNode!.data['displayVideoPath'];
-                              }
-                              
-                              // 如果有媒体文件且有宽高比信息，按照宽高比调整；否则自由调整
-                              if (mediaPath != null && _resizingNode!.data['_imageAspectRatio'] != null) {
-                                final aspectRatio = _resizingNode!.data['_imageAspectRatio'] as double;
-                                
-                                // 计算保持宽高比的最小尺寸
-                                // 如果宽高比 >= 1（横向），最小宽度100，最小高度 = 100/宽高比
-                                // 如果宽高比 < 1（竖向），最小高度100，最小宽度 = 100*宽高比
-                                double minWidth, minHeight;
-                                if (aspectRatio >= 1.0) {
-                                  // 横图：以最小宽度为基准
-                                  minWidth = 100.0;
-                                  minHeight = minWidth / aspectRatio;
-                                } else {
-                                  // 竖图：以最小高度为基准
-                                  minHeight = 100.0;
-                                  minWidth = minHeight * aspectRatio;
-                                }
-                                
-                                // 最大尺寸同理
-                                double maxWidth, maxHeight;
-                                if (aspectRatio >= 1.0) {
-                                  // 横图：以最大宽度为基准
-                                  maxWidth = 4000.0;
-                                  maxHeight = maxWidth / aspectRatio;
-                                } else {
-                                  // 竖图：以最大高度为基准
-                                  maxHeight = 4000.0;
-                                  maxWidth = maxHeight * aspectRatio;
-                                }
-                                
-                                // 根据拖动方向计算新尺寸（保持宽高比）
-                                double newWidth, newHeight;
-                                
-                                switch (_resizeHandle!) {
-                                  case ResizeHandle.bottomRight:
-                                    // 右下角：根据宽度变化计算
-                                    newWidth = _resizingNode!.size.width + delta.dx;
-                                    break;
-                                  case ResizeHandle.topLeft:
-                                    // 左上角：根据宽度变化计算（反向）
-                                    newWidth = _resizingNode!.size.width - delta.dx;
-                                    break;
-                                  case ResizeHandle.bottomLeft:
-                                    // 左下角：根据宽度变化计算（反向）
-                                    newWidth = _resizingNode!.size.width - delta.dx;
-                                    break;
-                                  case ResizeHandle.topRight:
-                                    // 右上角：根据宽度变化计算
-                                    newWidth = _resizingNode!.size.width + delta.dx;
-                                    break;
-                                }
-                                
-                                // 限制宽度范围
-                                newWidth = newWidth.clamp(minWidth, maxWidth);
-                                
-                                // 根据宽高比计算高度（这样可以保证宽高比不变）
-                                newHeight = newWidth / aspectRatio;
-                                
-                                // 根据手柄位置调整节点位置
-                                switch (_resizeHandle!) {
-                                  case ResizeHandle.topLeft:
-                                    // 左上角：需要调整位置
-                                    final widthDiff = _resizingNode!.size.width - newWidth;
-                                    final heightDiff = _resizingNode!.size.height - newHeight;
-                                    _resizingNode!.position = Offset(
-                                      _resizingNode!.position.dx + widthDiff,
-                                      _resizingNode!.position.dy + heightDiff,
-                                    );
-                                    break;
-                                  case ResizeHandle.topRight:
-                                    // 右上角：需要调整Y位置
-                                    final heightDiff = _resizingNode!.size.height - newHeight;
-                                    _resizingNode!.position = Offset(
-                                      _resizingNode!.position.dx,
-                                      _resizingNode!.position.dy + heightDiff,
-                                    );
-                                    break;
-                                  case ResizeHandle.bottomLeft:
-                                    // 左下角：需要调整X位置
-                                    final widthDiff = _resizingNode!.size.width - newWidth;
-                                    _resizingNode!.position = Offset(
-                                      _resizingNode!.position.dx + widthDiff,
-                                      _resizingNode!.position.dy,
-                                    );
-                                    break;
-                                  case ResizeHandle.bottomRight:
-                                    // 右下角：不需要调整位置
-                                    break;
-                                }
-                                
-                                _resizingNode!.size = Size(newWidth, newHeight);
-                              } else {
-                                // 没有图片或没有宽高比信息，自由调整
-                                switch (_resizeHandle!) {
-                                  case ResizeHandle.bottomRight:
-                                    _resizingNode!.size = Size(
-                                      (_resizingNode!.size.width + delta.dx).clamp(100.0, 4000.0),
-                                      (_resizingNode!.size.height + delta.dy).clamp(80.0, 4000.0),
-                                    );
-                                    break;
-                                  case ResizeHandle.bottomLeft:
-                                    final newWidth = (_resizingNode!.size.width - delta.dx).clamp(100.0, 4000.0);
-                                    if (newWidth != _resizingNode!.size.width) {
-                                      _resizingNode!.position = Offset(
-                                        _resizingNode!.position.dx + delta.dx,
-                                        _resizingNode!.position.dy,
+                          // 画布区域（占满剩余空间）
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                // 画布区域
+                                Listener(
+                                  onPointerDown: (event) {
+                                    // 检测中键按下
+                                    if (event.buttons == 4) {
+                                      setState(() {
+                                        _isMiddleButtonPressed = true;
+                                        _lastPanPosition = event.localPosition;
+                                      });
+                                    }
+                                  },
+                                  onPointerUp: (event) {
+                                    setState(() {
+                                      _isMiddleButtonPressed = false;
+                                    });
+                                  },
+                                  onPointerMove: (event) {
+                                    // 中键拖动画布
+                                    if (_isMiddleButtonPressed &&
+                                        _lastPanPosition != null) {
+                                      setState(() {
+                                        final delta =
+                                            event.localPosition -
+                                            _lastPanPosition!;
+                                        _canvasOffset += delta;
+                                        _lastPanPosition = event.localPosition;
+                                      });
+                                    }
+                                  },
+                                  onPointerSignal: (event) {
+                                    if (event is PointerScrollEvent) {
+                                      final delta = event.scrollDelta.dy;
+                                      final newScale =
+                                          _scale * (1 - delta / 1000);
+                                      _smoothZoomTo(
+                                        newScale,
+                                        focalPoint: event.localPosition,
                                       );
                                     }
-                                    _resizingNode!.size = Size(
-                                      newWidth,
-                                      (_resizingNode!.size.height + delta.dy).clamp(80.0, 4000.0),
+                                  },
+                                  child: GestureDetector(
+                                    onDoubleTap: _resetView,
+                                    onSecondaryTapDown: (details) {
+                                      // 右键菜单
+                                      if (_selectedStroke != null) {
+                                        _showStrokeContextMenu(
+                                          details.globalPosition,
+                                        );
+                                      } else if (_selectedNodeId != null) {
+                                        final node = _nodes.firstWhere(
+                                          (n) => n.id == _selectedNodeId,
+                                        );
+                                        if (node.type == NodeType.text) {
+                                          _showTextNodeContextMenu(
+                                            details.globalPosition,
+                                            node,
+                                          );
+                                        }
+                                      }
+                                    },
+                                    onTapDown: (details) {
+                                      // 任何操作开始时，隐藏工具栏
+                                      if (_showBrushToolbar ||
+                                          _showTextToolbar) {
+                                        setState(() {
+                                          _showBrushToolbar = false;
+                                          _showTextToolbar = false;
+                                        });
+                                      }
+
+                                      // 拖动画布工具
+                                      if (_currentTool == CanvasTool.pan) {
+                                        return;
+                                      }
+
+                                      // 画笔工具：开始绘制
+                                      if (_currentTool == CanvasTool.draw) {
+                                        setState(() {
+                                          // 将屏幕坐标转换为画布坐标
+                                          final canvasPoint = Offset(
+                                            (details.localPosition.dx -
+                                                    _canvasOffset.dx) /
+                                                _scale,
+                                            (details.localPosition.dy -
+                                                    _canvasOffset.dy) /
+                                                _scale,
+                                          );
+                                          _currentStroke = DrawingStroke(
+                                            color: _brushColor,
+                                            strokeWidth: _brushSize,
+                                            points: [canvasPoint],
+                                          );
+                                        });
+                                        return;
+                                      }
+
+                                      // 选择工具：检查是否点击到涂鸦
+                                      if (_currentTool == CanvasTool.select) {
+                                        for (var stroke in _strokes.reversed) {
+                                          if (_isPointNearStroke(
+                                            details.localPosition,
+                                            stroke,
+                                          )) {
+                                            setState(() {
+                                              _selectedStroke = stroke;
+                                              _selectNode(null);
+                                            });
+                                            return;
+                                          }
+                                        }
+                                      }
+
+                                      // 点击空白处取消选择
+                                      bool hitNode = false;
+                                      for (var node in _nodes.reversed) {
+                                        final nodeRect = Rect.fromLTWH(
+                                          node.position.dx * _scale +
+                                              _canvasOffset.dx,
+                                          node.position.dy * _scale +
+                                              _canvasOffset.dy,
+                                          node.size.width * _scale,
+                                          node.size.height * _scale,
+                                        );
+
+                                        if (nodeRect.contains(
+                                          details.localPosition,
+                                        )) {
+                                          hitNode = true;
+                                          break;
+                                        }
+                                      }
+
+                                      if (!hitNode &&
+                                          _currentTool == CanvasTool.select) {
+                                        _selectNode(null);
+                                        _selectedNodeIds.clear(); // 清除多选状态
+                                        _selectedStroke = null;
+                                      }
+                                    },
+                                    onPanStart: (details) {
+                                      // 任何拖动操作开始时，隐藏工具栏
+                                      if (_showBrushToolbar ||
+                                          _showTextToolbar) {
+                                        setState(() {
+                                          _showBrushToolbar = false;
+                                          _showTextToolbar = false;
+                                        });
+                                      }
+
+                                      _lastPanPosition = details.localPosition;
+
+                                      // 拖动画布工具
+                                      if (_currentTool == CanvasTool.pan) {
+                                        return;
+                                      }
+
+                                      // 画笔工具：开始绘制
+                                      if (_currentTool == CanvasTool.draw) {
+                                        setState(() {
+                                          // 将屏幕坐标转换为画布坐标
+                                          final canvasPoint = Offset(
+                                            (details.localPosition.dx -
+                                                    _canvasOffset.dx) /
+                                                _scale,
+                                            (details.localPosition.dy -
+                                                    _canvasOffset.dy) /
+                                                _scale,
+                                          );
+                                          _currentStroke = DrawingStroke(
+                                            color: _brushColor,
+                                            strokeWidth: _brushSize,
+                                            points: [canvasPoint],
+                                          );
+                                        });
+                                        return;
+                                      }
+
+                                      // 根据当前工具处理点击
+                                      if (_currentTool == CanvasTool.image) {
+                                        // 图片工具：开始拖动创建图片框
+                                        setState(() {
+                                          _isCreatingImageBox = true;
+                                          _imageBoxStart =
+                                              details.localPosition;
+                                          _imageBoxEnd = details.localPosition;
+                                        });
+                                        return;
+                                      } else if (_currentTool ==
+                                          CanvasTool.video) {
+                                        // 视频工具：开始拖动创建视频框
+                                        setState(() {
+                                          _isCreatingVideoBox = true;
+                                          _videoBoxStart =
+                                              details.localPosition;
+                                          _videoBoxEnd = details.localPosition;
+                                        });
+                                        return;
+                                      } else if (_currentTool ==
+                                          CanvasTool.text) {
+                                        // 文本工具：开始拖动创建文本框
+                                        setState(() {
+                                          _isCreatingTextBox = true;
+                                          _textBoxStart = details.localPosition;
+                                          _textBoxEnd = details.localPosition;
+                                        });
+                                        return;
+                                      }
+
+                                      // 选择工具
+                                      if (_currentTool == CanvasTool.select) {
+                                        // 检查是否点击到涂鸦
+                                        for (var stroke in _strokes.reversed) {
+                                          if (_isPointNearStroke(
+                                            details.localPosition,
+                                            stroke,
+                                          )) {
+                                            setState(() {
+                                              _selectedStroke = stroke;
+                                              _draggingStroke = stroke;
+                                              // 记录拖动开始时的画布坐标
+                                              _draggingStrokeOffset = Offset(
+                                                (details.localPosition.dx -
+                                                        _canvasOffset.dx) /
+                                                    _scale,
+                                                (details.localPosition.dy -
+                                                        _canvasOffset.dy) /
+                                                    _scale,
+                                              );
+                                              _selectNode(null);
+                                            });
+                                            return;
+                                          }
+                                        }
+
+                                        // 检查是否点击到节点或调整大小手柄
+                                        for (var node in _nodes.reversed) {
+                                          final nodeRect = Rect.fromLTWH(
+                                            node.position.dx * _scale +
+                                                _canvasOffset.dx,
+                                            node.position.dy * _scale +
+                                                _canvasOffset.dy,
+                                            node.size.width * _scale,
+                                            node.size.height * _scale,
+                                          );
+
+                                          // 检查是否点击调整大小手柄（只有单选时才显示调整手柄）
+                                          if (_selectedNodeId == node.id &&
+                                              _selectedNodeIds.isEmpty) {
+                                            final handle = _getResizeHandle(
+                                              details.localPosition,
+                                              nodeRect,
+                                            );
+                                            if (handle != null) {
+                                              _resizingNode = node;
+                                              _resizeHandle = handle;
+                                              return;
+                                            }
+                                          }
+
+                                          if (nodeRect.contains(
+                                            details.localPosition,
+                                          )) {
+                                            // 如果点击的节点在已选中的节点集合中，准备批量拖动
+                                            if (_selectedNodeIds.contains(
+                                              node.id,
+                                            )) {
+                                              _draggingNode = node;
+                                              _draggingOffset =
+                                                  details.localPosition -
+                                                  nodeRect.topLeft;
+                                              // 不改变选中状态，保持多选
+                                              _selectedStroke = null;
+                                              return;
+                                            }
+
+                                            // 否则，单选该节点
+                                            _draggingNode = node;
+                                            _draggingOffset =
+                                                details.localPosition -
+                                                nodeRect.topLeft;
+                                            _selectNode(node.id);
+                                            _selectedNodeIds.clear(); // 清除多选状态
+                                            _selectedStroke = null;
+                                            return;
+                                          }
+                                        }
+
+                                        // 没有点击到节点或涂鸦，开始框选
+                                        _selectionStart = details.localPosition;
+                                        _selectionEnd = details.localPosition;
+                                      }
+                                    },
+                                    onPanUpdate: (details) {
+                                      // 拖动画布工具 - 在 setState 外部处理以避免影响其他逻辑
+                                      if (_currentTool == CanvasTool.pan &&
+                                          _lastPanPosition != null) {
+                                        setState(() {
+                                          final delta =
+                                              details.localPosition -
+                                              _lastPanPosition!;
+                                          _canvasOffset += delta;
+                                          _lastPanPosition =
+                                              details.localPosition;
+                                        });
+                                        return;
+                                      }
+
+                                      setState(() {
+                                        // 画笔工具：继续绘制
+                                        if (_currentTool == CanvasTool.draw &&
+                                            _currentStroke != null) {
+                                          // 将屏幕坐标转换为画布坐标
+                                          final canvasPoint = Offset(
+                                            (details.localPosition.dx -
+                                                    _canvasOffset.dx) /
+                                                _scale,
+                                            (details.localPosition.dy -
+                                                    _canvasOffset.dy) /
+                                                _scale,
+                                          );
+                                          _currentStroke!.points.add(
+                                            canvasPoint,
+                                          );
+                                          return;
+                                        }
+
+                                        // 文本工具：拖动创建文本框
+                                        if (_isCreatingTextBox &&
+                                            _textBoxStart != null) {
+                                          _textBoxEnd = details.localPosition;
+                                          return;
+                                        }
+
+                                        // 图片工具：拖动创建图片框
+                                        if (_isCreatingImageBox &&
+                                            _imageBoxStart != null) {
+                                          _imageBoxEnd = details.localPosition;
+                                          return;
+                                        }
+
+                                        // 视频工具：拖动创建视频框
+                                        if (_isCreatingVideoBox &&
+                                            _videoBoxStart != null) {
+                                          _videoBoxEnd = details.localPosition;
+                                          return;
+                                        }
+
+                                        // 框选
+                                        if (_currentTool == CanvasTool.select &&
+                                            _selectionStart != null &&
+                                            _draggingNode == null &&
+                                            _resizingNode == null) {
+                                          _selectionEnd = details.localPosition;
+                                          return;
+                                        }
+
+                                        if (_resizingNode != null &&
+                                            _resizeHandle != null) {
+                                          // 调整大小
+                                          final delta =
+                                              (details.localPosition -
+                                                  _lastPanPosition!) /
+                                              _scale;
+                                          _lastPanPosition =
+                                              details.localPosition;
+
+                                          // 获取媒体路径以计算宽高比（图片或视频）
+                                          String? mediaPath;
+                                          if (_resizingNode!.type ==
+                                              NodeType.image) {
+                                            mediaPath =
+                                                _resizingNode!
+                                                    .data['generatedImagePath'] ??
+                                                _resizingNode!
+                                                    .data['displayImagePath'];
+                                          } else if (_resizingNode!.type ==
+                                              NodeType.video) {
+                                            mediaPath =
+                                                _resizingNode!
+                                                    .data['generatedVideoPath'] ??
+                                                _resizingNode!
+                                                    .data['displayVideoPath'];
+                                          }
+
+                                          // 如果有媒体文件且有宽高比信息，按照宽高比调整；否则自由调整
+                                          if (mediaPath != null &&
+                                              _resizingNode!
+                                                      .data['_imageAspectRatio'] !=
+                                                  null) {
+                                            final aspectRatio =
+                                                _resizingNode!
+                                                        .data['_imageAspectRatio']
+                                                    as double;
+
+                                            // 计算保持宽高比的最小尺寸
+                                            // 如果宽高比 >= 1（横向），最小宽度100，最小高度 = 100/宽高比
+                                            // 如果宽高比 < 1（竖向），最小高度100，最小宽度 = 100*宽高比
+                                            double minWidth, minHeight;
+                                            if (aspectRatio >= 1.0) {
+                                              // 横图：以最小宽度为基准
+                                              minWidth = 100.0;
+                                              minHeight =
+                                                  minWidth / aspectRatio;
+                                            } else {
+                                              // 竖图：以最小高度为基准
+                                              minHeight = 100.0;
+                                              minWidth =
+                                                  minHeight * aspectRatio;
+                                            }
+
+                                            // 最大尺寸同理
+                                            double maxWidth, maxHeight;
+                                            if (aspectRatio >= 1.0) {
+                                              // 横图：以最大宽度为基准
+                                              maxWidth = 4000.0;
+                                              maxHeight =
+                                                  maxWidth / aspectRatio;
+                                            } else {
+                                              // 竖图：以最大高度为基准
+                                              maxHeight = 4000.0;
+                                              maxWidth =
+                                                  maxHeight * aspectRatio;
+                                            }
+
+                                            // 根据拖动方向计算新尺寸（保持宽高比）
+                                            double newWidth, newHeight;
+
+                                            switch (_resizeHandle!) {
+                                              case ResizeHandle.bottomRight:
+                                                // 右下角：根据宽度变化计算
+                                                newWidth =
+                                                    _resizingNode!.size.width +
+                                                    delta.dx;
+                                                break;
+                                              case ResizeHandle.topLeft:
+                                                // 左上角：根据宽度变化计算（反向）
+                                                newWidth =
+                                                    _resizingNode!.size.width -
+                                                    delta.dx;
+                                                break;
+                                              case ResizeHandle.bottomLeft:
+                                                // 左下角：根据宽度变化计算（反向）
+                                                newWidth =
+                                                    _resizingNode!.size.width -
+                                                    delta.dx;
+                                                break;
+                                              case ResizeHandle.topRight:
+                                                // 右上角：根据宽度变化计算
+                                                newWidth =
+                                                    _resizingNode!.size.width +
+                                                    delta.dx;
+                                                break;
+                                            }
+
+                                            // 限制宽度范围
+                                            newWidth = newWidth.clamp(
+                                              minWidth,
+                                              maxWidth,
+                                            );
+
+                                            // 根据宽高比计算高度（这样可以保证宽高比不变）
+                                            newHeight = newWidth / aspectRatio;
+
+                                            // 根据手柄位置调整节点位置
+                                            switch (_resizeHandle!) {
+                                              case ResizeHandle.topLeft:
+                                                // 左上角：需要调整位置
+                                                final widthDiff =
+                                                    _resizingNode!.size.width -
+                                                    newWidth;
+                                                final heightDiff =
+                                                    _resizingNode!.size.height -
+                                                    newHeight;
+                                                _resizingNode!
+                                                    .position = Offset(
+                                                  _resizingNode!.position.dx +
+                                                      widthDiff,
+                                                  _resizingNode!.position.dy +
+                                                      heightDiff,
+                                                );
+                                                break;
+                                              case ResizeHandle.topRight:
+                                                // 右上角：需要调整Y位置
+                                                final heightDiff =
+                                                    _resizingNode!.size.height -
+                                                    newHeight;
+                                                _resizingNode!
+                                                    .position = Offset(
+                                                  _resizingNode!.position.dx,
+                                                  _resizingNode!.position.dy +
+                                                      heightDiff,
+                                                );
+                                                break;
+                                              case ResizeHandle.bottomLeft:
+                                                // 左下角：需要调整X位置
+                                                final widthDiff =
+                                                    _resizingNode!.size.width -
+                                                    newWidth;
+                                                _resizingNode!
+                                                    .position = Offset(
+                                                  _resizingNode!.position.dx +
+                                                      widthDiff,
+                                                  _resizingNode!.position.dy,
+                                                );
+                                                break;
+                                              case ResizeHandle.bottomRight:
+                                                // 右下角：不需要调整位置
+                                                break;
+                                            }
+
+                                            _resizingNode!.size = Size(
+                                              newWidth,
+                                              newHeight,
+                                            );
+                                          } else {
+                                            // 没有图片或没有宽高比信息，自由调整
+                                            switch (_resizeHandle!) {
+                                              case ResizeHandle.bottomRight:
+                                                _resizingNode!.size = Size(
+                                                  (_resizingNode!.size.width +
+                                                          delta.dx)
+                                                      .clamp(100.0, 4000.0),
+                                                  (_resizingNode!.size.height +
+                                                          delta.dy)
+                                                      .clamp(80.0, 4000.0),
+                                                );
+                                                break;
+                                              case ResizeHandle.bottomLeft:
+                                                final newWidth =
+                                                    (_resizingNode!.size.width -
+                                                            delta.dx)
+                                                        .clamp(100.0, 4000.0);
+                                                if (newWidth !=
+                                                    _resizingNode!.size.width) {
+                                                  _resizingNode!
+                                                      .position = Offset(
+                                                    _resizingNode!.position.dx +
+                                                        delta.dx,
+                                                    _resizingNode!.position.dy,
+                                                  );
+                                                }
+                                                _resizingNode!.size = Size(
+                                                  newWidth,
+                                                  (_resizingNode!.size.height +
+                                                          delta.dy)
+                                                      .clamp(80.0, 4000.0),
+                                                );
+                                                break;
+                                              case ResizeHandle.topRight:
+                                                final newHeight =
+                                                    (_resizingNode!
+                                                                .size
+                                                                .height -
+                                                            delta.dy)
+                                                        .clamp(80.0, 4000.0);
+                                                if (newHeight !=
+                                                    _resizingNode!
+                                                        .size
+                                                        .height) {
+                                                  _resizingNode!
+                                                      .position = Offset(
+                                                    _resizingNode!.position.dx,
+                                                    _resizingNode!.position.dy +
+                                                        delta.dy,
+                                                  );
+                                                }
+                                                _resizingNode!.size = Size(
+                                                  (_resizingNode!.size.width +
+                                                          delta.dx)
+                                                      .clamp(100.0, 4000.0),
+                                                  newHeight,
+                                                );
+                                                break;
+                                              case ResizeHandle.topLeft:
+                                                final newWidth =
+                                                    (_resizingNode!.size.width -
+                                                            delta.dx)
+                                                        .clamp(100.0, 4000.0);
+                                                final newHeight =
+                                                    (_resizingNode!
+                                                                .size
+                                                                .height -
+                                                            delta.dy)
+                                                        .clamp(80.0, 4000.0);
+                                                if (newWidth !=
+                                                    _resizingNode!.size.width) {
+                                                  _resizingNode!
+                                                      .position = Offset(
+                                                    _resizingNode!.position.dx +
+                                                        delta.dx,
+                                                    _resizingNode!.position.dy,
+                                                  );
+                                                }
+                                                if (newHeight !=
+                                                    _resizingNode!
+                                                        .size
+                                                        .height) {
+                                                  _resizingNode!
+                                                      .position = Offset(
+                                                    _resizingNode!.position.dx,
+                                                    _resizingNode!.position.dy +
+                                                        delta.dy,
+                                                  );
+                                                }
+                                                _resizingNode!.size = Size(
+                                                  newWidth,
+                                                  newHeight,
+                                                );
+                                                break;
+                                            }
+                                          }
+                                        } else if (_draggingStroke != null &&
+                                            _draggingStrokeOffset != null) {
+                                          // 拖动涂鸦
+                                          final currentCanvasPoint = Offset(
+                                            (details.localPosition.dx -
+                                                    _canvasOffset.dx) /
+                                                _scale,
+                                            (details.localPosition.dy -
+                                                    _canvasOffset.dy) /
+                                                _scale,
+                                          );
+                                          final delta =
+                                              currentCanvasPoint -
+                                              _draggingStrokeOffset!;
+
+                                          // 更新涂鸦所有点的位置
+                                          for (
+                                            int i = 0;
+                                            i < _draggingStroke!.points.length;
+                                            i++
+                                          ) {
+                                            _draggingStroke!.points[i] += delta;
+                                          }
+
+                                          _draggingStrokeOffset =
+                                              currentCanvasPoint;
+                                        } else if (_draggingNode != null &&
+                                            _lastPanPosition != null) {
+                                          // 计算移动增量
+                                          final delta =
+                                              (details.localPosition -
+                                                  _lastPanPosition!) /
+                                              _scale;
+                                          _lastPanPosition =
+                                              details.localPosition;
+
+                                          // 如果有多个选中的节点，批量移动
+                                          if (_selectedNodeIds.isNotEmpty) {
+                                            for (var node in _nodes) {
+                                              if (_selectedNodeIds.contains(
+                                                node.id,
+                                              )) {
+                                                node.position += delta;
+                                              }
+                                            }
+                                          } else {
+                                            // 单个节点移动
+                                            _draggingNode!.position += delta;
+                                          }
+                                        }
+                                      });
+                                    },
+                                    onPanEnd: (details) {
+                                      // 文本框创建结束
+                                      if (_isCreatingTextBox &&
+                                          _textBoxStart != null &&
+                                          _textBoxEnd != null) {
+                                        final rect = Rect.fromPoints(
+                                          _textBoxStart!,
+                                          _textBoxEnd!,
+                                        );
+                                        final width = rect.width.abs().clamp(
+                                          100.0,
+                                          4000.0,
+                                        );
+                                        final height = rect.height.abs().clamp(
+                                          80.0,
+                                          4000.0,
+                                        );
+
+                                        setState(() {
+                                          final newNode = CanvasNode(
+                                            id: DateTime.now()
+                                                .millisecondsSinceEpoch
+                                                .toString(),
+                                            type: NodeType.text,
+                                            position: Offset(
+                                              (rect.left - _canvasOffset.dx) /
+                                                  _scale,
+                                              (rect.top - _canvasOffset.dy) /
+                                                  _scale,
+                                            ),
+                                            size: Size(width, height),
+                                            data: {
+                                              'fontFamily': _textFontFamily,
+                                              'fontSize': _textFontSize,
+                                              'color': _textColor,
+                                              'bold': _textBold,
+                                              'italic': _textItalic,
+                                              'underline': _textUnderline,
+                                            },
+                                          );
+                                          _nodes.add(newNode);
+                                          _selectNode(newNode.id);
+
+                                          _isCreatingTextBox = false;
+                                          _textBoxStart = null;
+                                        });
+
+                                        // 自动保存
+                                        _saveCanvasData();
+
+                                        _textBoxEnd = null;
+                                        _currentTool = CanvasTool.select;
+                                        return;
+                                      }
+
+                                      // 图片框创建结束
+                                      if (_isCreatingImageBox &&
+                                          _imageBoxStart != null &&
+                                          _imageBoxEnd != null) {
+                                        final rect = Rect.fromPoints(
+                                          _imageBoxStart!,
+                                          _imageBoxEnd!,
+                                        );
+                                        // 允许更小的尺寸，最小 100x100，最大 4000x4000
+                                        final width = rect.width.abs().clamp(
+                                          100.0,
+                                          4000.0,
+                                        );
+                                        final height = rect.height.abs().clamp(
+                                          100.0,
+                                          4000.0,
+                                        );
+
+                                        setState(() {
+                                          final newNode = CanvasNode(
+                                            id: DateTime.now()
+                                                .millisecondsSinceEpoch
+                                                .toString(),
+                                            type: NodeType.image,
+                                            position: Offset(
+                                              (rect.left - _canvasOffset.dx) /
+                                                  _scale,
+                                              (rect.top - _canvasOffset.dy) /
+                                                  _scale,
+                                            ),
+                                            size: Size(width, height),
+                                            data: {
+                                              'model':
+                                                  _availableImageModels
+                                                      .isNotEmpty
+                                                  ? _availableImageModels.first
+                                                  : 'gemini-3-pro-image-preview',
+                                            },
+                                          );
+                                          _nodes.add(newNode);
+                                          _selectNode(newNode.id);
+
+                                          _isCreatingImageBox = false;
+                                          _imageBoxStart = null;
+                                          _imageBoxEnd = null;
+                                          _currentTool = CanvasTool.select;
+                                        });
+
+                                        // 自动保存
+                                        _saveCanvasData();
+                                        return;
+                                      }
+
+                                      // 视频框创建结束
+                                      if (_isCreatingVideoBox &&
+                                          _videoBoxStart != null &&
+                                          _videoBoxEnd != null) {
+                                        final rect = Rect.fromPoints(
+                                          _videoBoxStart!,
+                                          _videoBoxEnd!,
+                                        );
+                                        // 允许更小的尺寸，最小 100x100，最大 4000x4000
+                                        final width = rect.width.abs().clamp(
+                                          100.0,
+                                          4000.0,
+                                        );
+                                        final height = rect.height.abs().clamp(
+                                          100.0,
+                                          4000.0,
+                                        );
+
+                                        setState(() {
+                                          final newNode = CanvasNode(
+                                            id: DateTime.now()
+                                                .millisecondsSinceEpoch
+                                                .toString(),
+                                            type: NodeType.video,
+                                            position: Offset(
+                                              (rect.left - _canvasOffset.dx) /
+                                                  _scale,
+                                              (rect.top - _canvasOffset.dy) /
+                                                  _scale,
+                                            ),
+                                            size: Size(width, height),
+                                            data: {
+                                              'model':
+                                                  _availableVideoModels
+                                                      .isNotEmpty
+                                                  ? _availableVideoModels.first
+                                                  : 'veo_3_1',
+                                            },
+                                          );
+                                          _nodes.add(newNode);
+                                          _selectNode(newNode.id);
+
+                                          _isCreatingVideoBox = false;
+                                          _videoBoxStart = null;
+                                          _videoBoxEnd = null;
+                                          _currentTool = CanvasTool.select;
+                                        });
+
+                                        // 自动保存
+                                        _saveCanvasData();
+                                        return;
+                                      }
+
+                                      // 画笔工具：完成绘制
+                                      if (_currentTool == CanvasTool.draw &&
+                                          _currentStroke != null) {
+                                        setState(() {
+                                          _strokes.add(_currentStroke!);
+                                          _currentStroke = null;
+                                        });
+                                        return;
+                                      }
+
+                                      // 框选结束：选中框内的节点和涂鸦
+                                      if (_selectionStart != null &&
+                                          _selectionEnd != null) {
+                                        final selectionRect = Rect.fromPoints(
+                                          _selectionStart!,
+                                          _selectionEnd!,
+                                        );
+                                        _selectedNodeIds.clear();
+
+                                        // 选中节点
+                                        for (var node in _nodes) {
+                                          final nodeRect = Rect.fromLTWH(
+                                            node.position.dx * _scale +
+                                                _canvasOffset.dx,
+                                            node.position.dy * _scale +
+                                                _canvasOffset.dy,
+                                            node.size.width * _scale,
+                                            node.size.height * _scale,
+                                          );
+
+                                          if (selectionRect.overlaps(
+                                            nodeRect,
+                                          )) {
+                                            _selectedNodeIds.add(node.id);
+                                          }
+                                        }
+
+                                        // 选中涂鸦 - 需要将涂鸦的画布坐标转换为屏幕坐标
+                                        for (var stroke in _strokes) {
+                                          bool strokeInSelection = false;
+                                          for (var point in stroke.points) {
+                                            // 将画布坐标转换为屏幕坐标
+                                            final screenPoint = Offset(
+                                              point.dx * _scale +
+                                                  _canvasOffset.dx,
+                                              point.dy * _scale +
+                                                  _canvasOffset.dy,
+                                            );
+                                            if (selectionRect.contains(
+                                              screenPoint,
+                                            )) {
+                                              strokeInSelection = true;
+                                              break;
+                                            }
+                                          }
+
+                                          if (strokeInSelection) {
+                                            _selectedStroke = stroke;
+                                            break;
+                                          }
+                                        }
+
+                                        setState(() {
+                                          _selectionStart = null;
+                                          _selectionEnd = null;
+                                          if (_selectedNodeIds.isNotEmpty) {
+                                            _selectedNodeId =
+                                                _selectedNodeIds.first;
+                                          }
+                                        });
+                                        return;
+                                      }
+
+                                      _draggingNode = null;
+                                      _draggingOffset = null;
+                                      _draggingStroke = null;
+                                      _draggingStrokeOffset = null;
+                                      _lastPanPosition = null;
+                                      _resizingNode = null;
+                                      _resizeHandle = null;
+                                    },
+                                    child: Container(
+                                      color: _bgColor,
+                                      child: Stack(
+                                        children: [
+                                          // 绘制涂鸦
+                                          CustomPaint(
+                                            painter: DrawingPainter(
+                                              strokes: _strokes,
+                                              currentStroke: _currentStroke,
+                                              selectedStroke: _selectedStroke,
+                                              canvasOffset: _canvasOffset,
+                                              scale: _scale,
+                                            ),
+                                            child: Container(),
+                                          ),
+
+                                          // 渲染节点
+                                          ..._nodes.map((node) {
+                                            final screenPos = Offset(
+                                              node.position.dx * _scale +
+                                                  _canvasOffset.dx,
+                                              node.position.dy * _scale +
+                                                  _canvasOffset.dy,
+                                            );
+
+                                            return Positioned(
+                                              left: screenPos.dx,
+                                              top: screenPos.dy,
+                                              child: Transform.scale(
+                                                scale: _scale,
+                                                alignment: Alignment.topLeft,
+                                                child: _buildNodeCard(node),
+                                              ),
+                                            );
+                                          }),
+
+                                          // 框选矩形
+                                          if (_selectionStart != null &&
+                                              _selectionEnd != null)
+                                            CustomPaint(
+                                              painter: SelectionBoxPainter(
+                                                start: _selectionStart!,
+                                                end: _selectionEnd!,
+                                              ),
+                                              child: Container(),
+                                            ),
+
+                                          // 文本框创建预览
+                                          if (_isCreatingTextBox &&
+                                              _textBoxStart != null &&
+                                              _textBoxEnd != null)
+                                            CustomPaint(
+                                              painter: SelectionBoxPainter(
+                                                start: _textBoxStart!,
+                                                end: _textBoxEnd!,
+                                              ),
+                                              child: Container(),
+                                            ),
+
+                                          // 图片框创建预览
+                                          if (_isCreatingImageBox &&
+                                              _imageBoxStart != null &&
+                                              _imageBoxEnd != null)
+                                            CustomPaint(
+                                              painter: SelectionBoxPainter(
+                                                start: _imageBoxStart!,
+                                                end: _imageBoxEnd!,
+                                              ),
+                                              child: Container(),
+                                            ),
+
+                                          // 视频框创建预览
+                                          if (_isCreatingVideoBox &&
+                                              _videoBoxStart != null &&
+                                              _videoBoxEnd != null)
+                                            CustomPaint(
+                                              painter: SelectionBoxPainter(
+                                                start: _videoBoxStart!,
+                                                end: _videoBoxEnd!,
+                                              ),
+                                              child: Container(),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+
+                                // 左侧工具栏
+                                Positioned(
+                                  left: 16,
+                                  top: 16,
+                                  child: _buildToolbar(),
+                                ),
+
+                                // 画笔工具栏（当选择画笔工具且显示状态为true时显示）
+                                if (_currentTool == CanvasTool.draw &&
+                                    _showBrushToolbar)
+                                  Positioned(
+                                    left: 88,
+                                    top: 16,
+                                    child: _buildBrushToolbar(),
+                                  ),
+
+                                // 文本工具栏（当选择文本工具且显示状态为true时显示）
+                                if (_currentTool == CanvasTool.text &&
+                                    _showTextToolbar)
+                                  Positioned(
+                                    left: 88,
+                                    top: 16,
+                                    child: _buildTextToolbar(),
+                                  ),
+
+                                // 右下角缩放控制
+                                Positioned(
+                                  right: 16,
+                                  bottom: 16,
+                                  child: _buildZoomControls(),
+                                ),
+
+                                // 底部编辑面板（仅图片和视频需要，且不是仅显示节点）
+                                if (_selectedNodeId != null)
+                                  () {
+                                    final node = _nodes.firstWhere(
+                                      (n) => n.id == _selectedNodeId,
                                     );
-                                    break;
-                                  case ResizeHandle.topRight:
-                                    final newHeight = (_resizingNode!.size.height - delta.dy).clamp(80.0, 4000.0);
-                                    if (newHeight != _resizingNode!.size.height) {
-                                      _resizingNode!.position = Offset(
-                                        _resizingNode!.position.dx,
-                                        _resizingNode!.position.dy + delta.dy,
+                                    final isDisplayOnly =
+                                        node.data['isDisplayOnly'] == true;
+
+                                    // 仅显示节点不显示编辑面板
+                                    if (isDisplayOnly) {
+                                      return const SizedBox.shrink();
+                                    }
+
+                                    if (node.type == NodeType.image ||
+                                        node.type == NodeType.video) {
+                                      // 计算节点在屏幕上的位置
+                                      final nodeScreenPos = Offset(
+                                        node.position.dx * _scale +
+                                            _canvasOffset.dx,
+                                        node.position.dy * _scale +
+                                            _canvasOffset.dy,
+                                      );
+                                      final nodeScreenSize = Size(
+                                        node.size.width * _scale,
+                                        node.size.height * _scale,
+                                      );
+
+                                      // 面板宽度
+                                      const panelWidth = 600.0;
+
+                                      // 计算居中位置
+                                      final panelLeft =
+                                          nodeScreenPos.dx +
+                                          (nodeScreenSize.width - panelWidth) /
+                                              2;
+
+                                      return Positioned(
+                                        left: panelLeft,
+                                        top:
+                                            nodeScreenPos.dy +
+                                            nodeScreenSize.height +
+                                            12,
+                                        child: _buildCompactEditPanel(node),
                                       );
                                     }
-                                    _resizingNode!.size = Size(
-                                      (_resizingNode!.size.width + delta.dx).clamp(100.0, 4000.0),
-                                      newHeight,
-                                    );
-                                    break;
-                                  case ResizeHandle.topLeft:
-                                    final newWidth = (_resizingNode!.size.width - delta.dx).clamp(100.0, 4000.0);
-                                    final newHeight = (_resizingNode!.size.height - delta.dy).clamp(80.0, 4000.0);
-                                    if (newWidth != _resizingNode!.size.width) {
-                                      _resizingNode!.position = Offset(
-                                        _resizingNode!.position.dx + delta.dx,
-                                        _resizingNode!.position.dy,
-                                      );
-                                    }
-                                    if (newHeight != _resizingNode!.size.height) {
-                                      _resizingNode!.position = Offset(
-                                        _resizingNode!.position.dx,
-                                        _resizingNode!.position.dy + delta.dy,
-                                      );
-                                    }
-                                    _resizingNode!.size = Size(newWidth, newHeight);
-                                    break;
-                                }
-                              }
-                            } else if (_draggingStroke != null && _draggingStrokeOffset != null) {
-                              // 拖动涂鸦
-                              final currentCanvasPoint = Offset(
-                                (details.localPosition.dx - _canvasOffset.dx) / _scale,
-                                (details.localPosition.dy - _canvasOffset.dy) / _scale,
-                              );
-                              final delta = currentCanvasPoint - _draggingStrokeOffset!;
-                              
-                              // 更新涂鸦所有点的位置
-                              for (int i = 0; i < _draggingStroke!.points.length; i++) {
-                                _draggingStroke!.points[i] += delta;
-                              }
-                              
-                              _draggingStrokeOffset = currentCanvasPoint;
-                            } else if (_draggingNode != null && _lastPanPosition != null) {
-                              // 计算移动增量
-                              final delta = (details.localPosition - _lastPanPosition!) / _scale;
-                              _lastPanPosition = details.localPosition;
-                              
-                              // 如果有多个选中的节点，批量移动
-                              if (_selectedNodeIds.isNotEmpty) {
-                                for (var node in _nodes) {
-                                  if (_selectedNodeIds.contains(node.id)) {
-                                    node.position += delta;
-                                  }
-                                }
-                              } else {
-                                // 单个节点移动
-                                _draggingNode!.position += delta;
-                              }
-                            }
-                          });
-                        },
-                        onPanEnd: (details) {
-                          // 文本框创建结束
-                          if (_isCreatingTextBox && _textBoxStart != null && _textBoxEnd != null) {
-                            final rect = Rect.fromPoints(_textBoxStart!, _textBoxEnd!);
-                            final width = rect.width.abs().clamp(100.0, 4000.0);
-                            final height = rect.height.abs().clamp(80.0, 4000.0);
-                            
-                            setState(() {
-                              final newNode = CanvasNode(
-                                id: DateTime.now().millisecondsSinceEpoch.toString(),
-                                type: NodeType.text,
-                                position: Offset(
-                                  (rect.left - _canvasOffset.dx) / _scale,
-                                  (rect.top - _canvasOffset.dy) / _scale,
-                                ),
-                                size: Size(width, height),
-                                data: {
-                                  'fontFamily': _textFontFamily,
-                                  'fontSize': _textFontSize,
-                                  'color': _textColor,
-                                  'bold': _textBold,
-                                  'italic': _textItalic,
-                                  'underline': _textUnderline,
-                                },
-                              );
-                              _nodes.add(newNode);
-                              _selectNode(newNode.id);
-                              
-                              _isCreatingTextBox = false;
-                              _textBoxStart = null;
-                            });
-                            
-                            // 自动保存
-                            _saveCanvasData();
-                            
-                            _textBoxEnd = null;
-                            _currentTool = CanvasTool.select;
-                            return;
-                          }
-                          
-                          // 图片框创建结束
-                          if (_isCreatingImageBox && _imageBoxStart != null && _imageBoxEnd != null) {
-                            final rect = Rect.fromPoints(_imageBoxStart!, _imageBoxEnd!);
-                            // 允许更小的尺寸，最小 100x100，最大 4000x4000
-                            final width = rect.width.abs().clamp(100.0, 4000.0);
-                            final height = rect.height.abs().clamp(100.0, 4000.0);
-                            
-                            setState(() {
-                              final newNode = CanvasNode(
-                                id: DateTime.now().millisecondsSinceEpoch.toString(),
-                                type: NodeType.image,
-                                position: Offset(
-                                  (rect.left - _canvasOffset.dx) / _scale,
-                                  (rect.top - _canvasOffset.dy) / _scale,
-                                ),
-                                size: Size(width, height),
-                                data: {
-                                  'model': _availableImageModels.isNotEmpty ? _availableImageModels.first : 'gemini-3-pro-image-preview',
-                                },
-                              );
-                              _nodes.add(newNode);
-                              _selectNode(newNode.id);
-                              
-                              _isCreatingImageBox = false;
-                              _imageBoxStart = null;
-                              _imageBoxEnd = null;
-                              _currentTool = CanvasTool.select;
-                            });
-                            
-                            // 自动保存
-                            _saveCanvasData();
-                            return;
-                          }
-                          
-                          // 视频框创建结束
-                          if (_isCreatingVideoBox && _videoBoxStart != null && _videoBoxEnd != null) {
-                            final rect = Rect.fromPoints(_videoBoxStart!, _videoBoxEnd!);
-                            // 允许更小的尺寸，最小 100x100，最大 4000x4000
-                            final width = rect.width.abs().clamp(100.0, 4000.0);
-                            final height = rect.height.abs().clamp(100.0, 4000.0);
-                            
-                            setState(() {
-                              final newNode = CanvasNode(
-                                id: DateTime.now().millisecondsSinceEpoch.toString(),
-                                type: NodeType.video,
-                                position: Offset(
-                                  (rect.left - _canvasOffset.dx) / _scale,
-                                  (rect.top - _canvasOffset.dy) / _scale,
-                                ),
-                                size: Size(width, height),
-                                data: {
-                                  'model': _availableVideoModels.isNotEmpty ? _availableVideoModels.first : 'veo_3_1',
-                                },
-                              );
-                              _nodes.add(newNode);
-                              _selectNode(newNode.id);
-                              
-                              _isCreatingVideoBox = false;
-                              _videoBoxStart = null;
-                              _videoBoxEnd = null;
-                              _currentTool = CanvasTool.select;
-                            });
-                            
-                            // 自动保存
-                            _saveCanvasData();
-                            return;
-                          }
-                          
-                          // 画笔工具：完成绘制
-                          if (_currentTool == CanvasTool.draw && _currentStroke != null) {
-                            setState(() {
-                              _strokes.add(_currentStroke!);
-                              _currentStroke = null;
-                            });
-                            return;
-                          }
-                          
-                          // 框选结束：选中框内的节点和涂鸦
-                          if (_selectionStart != null && _selectionEnd != null) {
-                            final selectionRect = Rect.fromPoints(_selectionStart!, _selectionEnd!);
-                            _selectedNodeIds.clear();
-                            
-                            // 选中节点
-                            for (var node in _nodes) {
-                              final nodeRect = Rect.fromLTWH(
-                                node.position.dx * _scale + _canvasOffset.dx,
-                                node.position.dy * _scale + _canvasOffset.dy,
-                                node.size.width * _scale,
-                                node.size.height * _scale,
-                              );
-                              
-                              if (selectionRect.overlaps(nodeRect)) {
-                                _selectedNodeIds.add(node.id);
-                              }
-                            }
-                            
-                            // 选中涂鸦 - 需要将涂鸦的画布坐标转换为屏幕坐标
-                            for (var stroke in _strokes) {
-                              bool strokeInSelection = false;
-                              for (var point in stroke.points) {
-                                // 将画布坐标转换为屏幕坐标
-                                final screenPoint = Offset(
-                                  point.dx * _scale + _canvasOffset.dx,
-                                  point.dy * _scale + _canvasOffset.dy,
-                                );
-                                if (selectionRect.contains(screenPoint)) {
-                                  strokeInSelection = true;
-                                  break;
-                                }
-                              }
-                              
-                              if (strokeInSelection) {
-                                _selectedStroke = stroke;
-                                break;
-                              }
-                            }
-                            
-                            setState(() {
-                              _selectionStart = null;
-                              _selectionEnd = null;
-                              if (_selectedNodeIds.isNotEmpty) {
-                                _selectedNodeId = _selectedNodeIds.first;
-                              }
-                            });
-                            return;
-                          }
-                          
-                          _draggingNode = null;
-                          _draggingOffset = null;
-                          _draggingStroke = null;
-                          _draggingStrokeOffset = null;
-                          _lastPanPosition = null;
-                          _resizingNode = null;
-                          _resizeHandle = null;
-                        },
-                        child: Container(
-                          color: _bgColor,
-                          child: Stack(
-                            children: [
-                              // 绘制涂鸦
-                              CustomPaint(
-                                painter: DrawingPainter(
-                                  strokes: _strokes,
-                                  currentStroke: _currentStroke,
-                                  selectedStroke: _selectedStroke,
-                                  canvasOffset: _canvasOffset,
-                                  scale: _scale,
-                                ),
-                                child: Container(),
-                              ),
-                              
-                              // 渲染节点
-                              ..._nodes.map((node) {
-                                final screenPos = Offset(
-                                  node.position.dx * _scale + _canvasOffset.dx,
-                                  node.position.dy * _scale + _canvasOffset.dy,
-                                );
-                                
-                                return Positioned(
-                                  left: screenPos.dx,
-                                  top: screenPos.dy,
-                                  child: Transform.scale(
-                                    scale: _scale,
-                                    alignment: Alignment.topLeft,
-                                    child: _buildNodeCard(node),
-                                  ),
-                                );
-                              }),
-                              
-                              // 框选矩形
-                              if (_selectionStart != null && _selectionEnd != null)
-                                CustomPaint(
-                                  painter: SelectionBoxPainter(
-                                    start: _selectionStart!,
-                                    end: _selectionEnd!,
-                                  ),
-                                  child: Container(),
-                                ),
-                              
-                              // 文本框创建预览
-                              if (_isCreatingTextBox && _textBoxStart != null && _textBoxEnd != null)
-                                CustomPaint(
-                                  painter: SelectionBoxPainter(
-                                    start: _textBoxStart!,
-                                    end: _textBoxEnd!,
-                                  ),
-                                  child: Container(),
-                                ),
-                              
-                              // 图片框创建预览
-                              if (_isCreatingImageBox && _imageBoxStart != null && _imageBoxEnd != null)
-                                CustomPaint(
-                                  painter: SelectionBoxPainter(
-                                    start: _imageBoxStart!,
-                                    end: _imageBoxEnd!,
-                                  ),
-                                  child: Container(),
-                                ),
-                              
-                              // 视频框创建预览
-                              if (_isCreatingVideoBox && _videoBoxStart != null && _videoBoxEnd != null)
-                                CustomPaint(
-                                  painter: SelectionBoxPainter(
-                                    start: _videoBoxStart!,
-                                    end: _videoBoxEnd!,
-                                  ),
-                                  child: Container(),
-                                ),
-                            ],
+                                    return const SizedBox.shrink();
+                                  }(),
+                              ],
+                            ),
                           ),
-                        ),
+                          // Agent 聊天面板
+                          if (_showAgentPanel)
+                            AgentChatPanel(
+                              currentImageModel:
+                                  _availableImageModels.isNotEmpty
+                                  ? _availableImageModels.first
+                                  : null,
+                              currentVideoModel:
+                                  _availableVideoModels.isNotEmpty
+                                  ? _availableVideoModels.first
+                                  : null,
+                              onPlanReady: _applyDesignPlan,
+                              onClose: () {
+                                setState(() {
+                                  _showAgentPanel = false;
+                                });
+                              },
+                            ),
+                        ],
                       ),
                     ),
-
-                    // 左侧工具栏
-                    Positioned(
-                      left: 16,
-                      top: 16,
-                      child: _buildToolbar(),
-                    ),
-                    
-                    // 画笔工具栏（当选择画笔工具且显示状态为true时显示）
-                    if (_currentTool == CanvasTool.draw && _showBrushToolbar)
-                      Positioned(
-                        left: 88,
-                        top: 16,
-                        child: _buildBrushToolbar(),
-                      ),
-                    
-                    // 文本工具栏（当选择文本工具且显示状态为true时显示）
-                    if (_currentTool == CanvasTool.text && _showTextToolbar)
-                      Positioned(
-                        left: 88,
-                        top: 16,
-                        child: _buildTextToolbar(),
-                      ),
-
-                    // 右下角缩放控制
-                    Positioned(
-                      right: 16,
-                      bottom: 16,
-                      child: _buildZoomControls(),
-                    ),
-
-                    // 底部编辑面板（仅图片和视频需要，且不是仅显示节点）
-                    if (_selectedNodeId != null)
-                      () {
-                        final node = _nodes.firstWhere((n) => n.id == _selectedNodeId);
-                        final isDisplayOnly = node.data['isDisplayOnly'] == true;
-                        
-                        // 仅显示节点不显示编辑面板
-                        if (isDisplayOnly) {
-                          return const SizedBox.shrink();
-                        }
-                        
-                        if (node.type == NodeType.image || node.type == NodeType.video) {
-                          // 计算节点在屏幕上的位置
-                          final nodeScreenPos = Offset(
-                            node.position.dx * _scale + _canvasOffset.dx,
-                            node.position.dy * _scale + _canvasOffset.dy,
-                          );
-                          final nodeScreenSize = Size(
-                            node.size.width * _scale,
-                            node.size.height * _scale,
-                          );
-                          
-                          // 面板宽度
-                          const panelWidth = 600.0;
-                          
-                          // 计算居中位置
-                          final panelLeft = nodeScreenPos.dx + (nodeScreenSize.width - panelWidth) / 2;
-                          
-                          return Positioned(
-                            left: panelLeft,
-                            top: nodeScreenPos.dy + nodeScreenSize.height + 12,
-                            child: _buildCompactEditPanel(node),
-                          );
-                        }
-                        return const SizedBox.shrink();
-                      }(),
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 
@@ -1978,20 +2468,198 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           _buildToolButton(Icons.text_fields, "文本", CanvasTool.text),
           const SizedBox(height: 8),
           // 分隔线
-          Container(
-            width: 32,
-            height: 1,
-            color: _borderColor,
-          ),
+          Container(width: 32, height: 1, color: _borderColor),
           const SizedBox(height: 8),
           _buildToolButton(Icons.image_outlined, "图片", CanvasTool.image),
           const SizedBox(height: 8),
           _buildToolButton(Icons.videocam_outlined, "视频", CanvasTool.video),
+          const SizedBox(height: 8),
+          // 分隔线
+          Container(width: 32, height: 1, color: _borderColor),
+          const SizedBox(height: 8),
+          // AI Agent 按钮
+          _buildAgentButton(),
         ],
       ),
     );
   }
-  
+
+  // AI Agent 按钮
+  Widget _buildAgentButton() {
+    return Tooltip(
+      message: "AI 设计助手",
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _showAgentPanel = !_showAgentPanel;
+          });
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _showAgentPanel
+                ? _accentBlue.withValues(alpha: 0.1)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: _showAgentPanel
+                ? Border.all(color: _accentBlue, width: 2)
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Icon(
+            Icons.auto_awesome,
+            color: _showAgentPanel ? _accentBlue : Colors.black87,
+            size: 24,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 将 Agent 设计方案应用到画布
+  void _applyDesignPlan(DesignPlan plan) {
+    if (plan.elements.isEmpty) {
+      _showMessage('设计方案为空');
+      return;
+    }
+
+    // 计算当前视口中心（画布坐标系）
+    final viewportWidth =
+        MediaQuery.of(context).size.width - (_showAgentPanel ? 360 : 0);
+    final viewportHeight = MediaQuery.of(context).size.height - 32; // 减去标题栏
+    final centerX = (viewportWidth / 2 - _canvasOffset.dx) / _scale;
+    final centerY = (viewportHeight / 2 - _canvasOffset.dy) / _scale;
+
+    // 计算方案中所有元素的包围盒
+    double planMinX = double.infinity, planMinY = double.infinity;
+    double planMaxX = double.negativeInfinity,
+        planMaxY = double.negativeInfinity;
+    for (final el in plan.elements) {
+      if (el.x < planMinX) planMinX = el.x;
+      if (el.y < planMinY) planMinY = el.y;
+      if (el.x + el.width > planMaxX) planMaxX = el.x + el.width;
+      if (el.y + el.height > planMaxY) planMaxY = el.y + el.height;
+    }
+    final planCenterX = (planMinX + planMaxX) / 2;
+    final planCenterY = (planMinY + planMaxY) / 2;
+
+    // 偏移量：将方案中心映射到视口中心
+    final offsetX = centerX - planCenterX;
+    final offsetY = centerY - planCenterY;
+
+    final newNodes = <CanvasNode>[];
+
+    for (int i = 0; i < plan.elements.length; i++) {
+      final element = plan.elements[i];
+
+      NodeType nodeType;
+      final data = <String, dynamic>{};
+
+      switch (element.type) {
+        case 'video':
+          nodeType = NodeType.video;
+          data['prompt'] = element.prompt;
+          data['model'] = _availableVideoModels.isNotEmpty
+              ? _availableVideoModels.first
+              : '';
+          if (element.ratio != null) data['ratio'] = element.ratio;
+          if (element.duration != null) data['duration'] = element.duration;
+          break;
+        case 'text':
+          nodeType = NodeType.text;
+          data['text'] = element.prompt;
+          data['fontFamily'] = _textFontFamily;
+          data['fontSize'] = _textFontSize;
+          data['color'] = _textColor;
+          data['bold'] = _textBold;
+          data['italic'] = _textItalic;
+          data['underline'] = _textUnderline;
+          break;
+        default:
+          nodeType = NodeType.image;
+          data['prompt'] = element.prompt;
+          data['model'] = _availableImageModels.isNotEmpty
+              ? _availableImageModels.first
+              : '';
+          if (element.ratio != null) data['ratio'] = element.ratio;
+          break;
+      }
+
+      // 应用偏移量，让节点出现在当前视口中心区域
+      final node = CanvasNode(
+        id: '${DateTime.now().millisecondsSinceEpoch}_agent_$i',
+        type: nodeType,
+        position: Offset(element.x + offsetX, element.y + offsetY),
+        size: Size(element.width, element.height),
+        data: data,
+      );
+
+      newNodes.add(node);
+      debugPrint(
+        '🎨 [Agent] 创建节点: ${element.type} 位置(${node.position.dx.toInt()}, ${node.position.dy.toInt()}) 大小(${node.size.width.toInt()}x${node.size.height.toInt()})',
+      );
+    }
+
+    setState(() {
+      _nodes.addAll(newNodes);
+      _selectedNodeIds.clear();
+      _selectedNodeIds.addAll(newNodes.map((n) => n.id));
+      if (newNodes.isNotEmpty) {
+        _selectedNodeId = newNodes.first.id;
+      }
+    });
+
+    _saveCanvasData();
+
+    // 统计要生成的元素
+    final genCount = newNodes
+        .where((n) => n.type == NodeType.image || n.type == NodeType.video)
+        .length;
+    if (genCount > 0) {
+      _showMessage('已创建 ${newNodes.length} 个元素，正在自动生成 $genCount 个图片/视频...');
+    } else {
+      _showMessage('已创建 ${newNodes.length} 个文本元素');
+    }
+
+    // 自动开始生成所有图片和视频节点
+    _autoGenerateNodes(newNodes);
+  }
+
+  /// 自动按顺序生成所有图片和视频节点
+  Future<void> _autoGenerateNodes(List<CanvasNode> nodes) async {
+    int successCount = 0;
+    int failCount = 0;
+
+    for (final node in nodes) {
+      if (node.type == NodeType.image || node.type == NodeType.video) {
+        final prompt = node.data['prompt'] as String?;
+        if (prompt != null && prompt.isNotEmpty) {
+          debugPrint(
+            '🚀 [Agent] 开始生成: ${node.type.name} - ${prompt.substring(0, prompt.length > 50 ? 50 : prompt.length)}...',
+          );
+          try {
+            await _generateContent(node);
+            successCount++;
+            debugPrint('✅ [Agent] 生成完成: ${node.id}');
+          } catch (e) {
+            failCount++;
+            debugPrint('❌ [Agent] 生成失败: ${node.id} - $e');
+          }
+          // 刷新UI
+          if (mounted) setState(() {});
+        }
+      }
+    }
+
+    if (mounted && (successCount > 0 || failCount > 0)) {
+      _showMessage(
+        '生成完成：$successCount 成功${failCount > 0 ? "，$failCount 失败" : ""}',
+      );
+    }
+  }
+
   // 插入媒体按钮
   Widget _buildInsertMediaButton() {
     return Tooltip(
@@ -2009,21 +2677,17 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             borderRadius: BorderRadius.circular(8),
           ),
           alignment: Alignment.center,
-          child: const Icon(
-            Icons.add,
-            color: Colors.black87,
-            size: 24,
-          ),
+          child: const Icon(Icons.add, color: Colors.black87, size: 24),
         ),
       ),
     );
   }
-  
+
   // 显示插入媒体菜单
   void _showInsertMediaMenu() {
     final RenderBox renderBox = context.findRenderObject() as RenderBox;
     final position = renderBox.localToGlobal(Offset.zero);
-    
+
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -2080,7 +2744,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       }
     });
   }
-  
+
   // 插入本地图片
   Future<void> _insertLocalImage() async {
     try {
@@ -2088,38 +2752,44 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         type: FileType.image,
         allowMultiple: true, // 允许多选
       );
-      
+
       if (result != null && result.files.isNotEmpty) {
         // 计算起始位置（屏幕中心偏左上）
-        final screenCenterX = (MediaQuery.of(context).size.width / 2 - _canvasOffset.dx) / _scale - 300;
-        final screenCenterY = (MediaQuery.of(context).size.height / 2 - _canvasOffset.dy) / _scale - 200;
-        
+        final screenCenterX =
+            (MediaQuery.of(context).size.width / 2 - _canvasOffset.dx) /
+                _scale -
+            300;
+        final screenCenterY =
+            (MediaQuery.of(context).size.height / 2 - _canvasOffset.dy) /
+                _scale -
+            200;
+
         // 用于自动排列的变量
         double currentX = screenCenterX;
         double currentY = screenCenterY;
         double maxHeightInRow = 0;
         const spacing = 20.0; // 节点之间的间距
         const maxRowWidth = 1400.0; // 每行最大宽度
-        
+
         final List<CanvasNode> newNodes = [];
-        
+
         for (var file in result.files) {
           if (file.path == null) continue;
-          
+
           final imagePath = file.path!;
-          
+
           // 读取图片尺寸以计算合适的节点大小
           final imageFile = File(imagePath);
           final bytes = await imageFile.readAsBytes();
           final image = await decodeImageFromList(bytes);
-          
+
           final imageWidth = image.width.toDouble();
           final imageHeight = image.height.toDouble();
           final aspectRatio = imageWidth / imageHeight;
-          
+
           // 根据图片方向计算节点大小
           double nodeWidth, nodeHeight;
-          
+
           if (aspectRatio >= 1.0) {
             // 横图：以宽度为基准
             const baseWidth = 400.0;
@@ -2131,19 +2801,20 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             nodeHeight = baseHeight;
             nodeWidth = baseHeight * aspectRatio;
           }
-          
+
           // 限制尺寸范围
           nodeWidth = nodeWidth.clamp(100.0, 4000.0);
           nodeHeight = nodeHeight.clamp(100.0, 4000.0);
-          
+
           // 检查是否需要换行
-          if (currentX - screenCenterX + nodeWidth > maxRowWidth && newNodes.isNotEmpty) {
+          if (currentX - screenCenterX + nodeWidth > maxRowWidth &&
+              newNodes.isNotEmpty) {
             // 换行
             currentX = screenCenterX;
             currentY += maxHeightInRow + spacing;
             maxHeightInRow = 0;
           }
-          
+
           // 创建一个显示节点（不是生成节点）
           final newNode = CanvasNode(
             id: '${DateTime.now().millisecondsSinceEpoch}_${newNodes.length}',
@@ -2157,20 +2828,26 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               '_sizeAdjusted': true, // 标记已调整，避免重复调整
             },
           );
-          
+
           newNodes.add(newNode);
-          
+
           // 更新位置
           currentX += nodeWidth + spacing;
-          maxHeightInRow = nodeHeight > maxHeightInRow ? nodeHeight : maxHeightInRow;
-          
-          _logger.info('插入图片 ${newNodes.length}/${result.files.length}', module: 'AI画布', extra: {
-            '图片尺寸': '${imageWidth.toInt()}x${imageHeight.toInt()}',
-            '宽高比': aspectRatio.toStringAsFixed(2),
-            '节点尺寸': '${nodeWidth.toInt()}x${nodeHeight.toInt()}',
-          });
+          maxHeightInRow = nodeHeight > maxHeightInRow
+              ? nodeHeight
+              : maxHeightInRow;
+
+          _logger.info(
+            '插入图片 ${newNodes.length}/${result.files.length}',
+            module: 'AI画布',
+            extra: {
+              '图片尺寸': '${imageWidth.toInt()}x${imageHeight.toInt()}',
+              '宽高比': aspectRatio.toStringAsFixed(2),
+              '节点尺寸': '${nodeWidth.toInt()}x${nodeHeight.toInt()}',
+            },
+          );
         }
-        
+
         // 批量添加节点
         if (newNodes.isNotEmpty) {
           setState(() {
@@ -2180,10 +2857,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             _selectedNodeIds.addAll(newNodes.map((n) => n.id));
             _selectedNodeId = newNodes.first.id;
           });
-          
+
           // 自动保存
           _saveCanvasData();
-          
+
           _showMessage('成功插入 ${newNodes.length} 张图片');
         }
       }
@@ -2193,7 +2870,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       _showMessage('插入图片失败: $e');
     }
   }
-  
+
   // 插入本地视频
   Future<void> _insertLocalVideo() async {
     try {
@@ -2201,38 +2878,47 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         type: FileType.video,
         allowMultiple: true, // 允许多选
       );
-      
+
       if (result != null && result.files.isNotEmpty) {
         debugPrint('========== 开始批量插入视频 ==========');
         debugPrint('选中视频数量: ${result.files.length}');
-        
+
         // 计算起始位置（屏幕中心偏左上）
-        final screenCenterX = (MediaQuery.of(context).size.width / 2 - _canvasOffset.dx) / _scale - 300;
-        final screenCenterY = (MediaQuery.of(context).size.height / 2 - _canvasOffset.dy) / _scale - 200;
-        
+        final screenCenterX =
+            (MediaQuery.of(context).size.width / 2 - _canvasOffset.dx) /
+                _scale -
+            300;
+        final screenCenterY =
+            (MediaQuery.of(context).size.height / 2 - _canvasOffset.dy) /
+                _scale -
+            200;
+
         // 用于自动排列的变量
         double currentX = screenCenterX;
         double currentY = screenCenterY;
         const defaultSize = 400.0; // 默认大小
         const spacing = 20.0; // 节点之间的间距
         const maxRowWidth = 1400.0; // 每行最大宽度
-        
+
         final List<CanvasNode> newNodes = [];
-        
+
         for (var file in result.files) {
           if (file.path == null) continue;
-          
+
           final videoPath = file.path!;
-          
-          debugPrint('处理视频 ${newNodes.length + 1}/${result.files.length}: $videoPath');
-          
+
+          debugPrint(
+            '处理视频 ${newNodes.length + 1}/${result.files.length}: $videoPath',
+          );
+
           // 检查是否需要换行
-          if (currentX - screenCenterX + defaultSize > maxRowWidth && newNodes.isNotEmpty) {
+          if (currentX - screenCenterX + defaultSize > maxRowWidth &&
+              newNodes.isNotEmpty) {
             // 换行
             currentX = screenCenterX;
             currentY += defaultSize + spacing;
           }
-          
+
           // 创建一个显示节点（不是生成节点）
           final newNode = CanvasNode(
             id: '${DateTime.now().millisecondsSinceEpoch}_${newNodes.length}',
@@ -2245,17 +2931,17 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               '_sizeAdjusted': false, // 标记未调整，等待视频加载后调整
             },
           );
-          
+
           newNodes.add(newNode);
-          
+
           // 更新位置
           currentX += defaultSize + spacing;
-          
+
           debugPrint('创建节点: 位置(${currentX.toInt()}, ${currentY.toInt()})');
         }
-        
+
         debugPrint('========== 批量插入视频完成 ==========');
-        
+
         // 批量添加节点
         if (newNodes.isNotEmpty) {
           setState(() {
@@ -2264,7 +2950,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             _selectedNodeIds.clear();
             _selectedNodeIds.addAll(newNodes.map((n) => n.id));
             _selectedNodeId = newNodes.first.id;
-            
+
             // 延迟一帧后再初始化视频控制器，避免崩溃
             Future.delayed(const Duration(milliseconds: 100), () {
               if (mounted) {
@@ -2272,24 +2958,27 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               }
             });
           });
-          
+
           // 自动保存
           _saveCanvasData();
-          
+
           _showMessage('成功插入 ${newNodes.length} 个视频');
         }
       }
     } catch (e) {
       debugPrint("插入视频失败: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("插入视频失败: $e"), duration: const Duration(seconds: 3)),
+        SnackBar(
+          content: Text("插入视频失败: $e"),
+          duration: const Duration(seconds: 3),
+        ),
       );
     }
   }
 
   Widget _buildToolButton(IconData icon, String tooltip, CanvasTool tool) {
     final isActive = _currentTool == tool;
-    
+
     return Tooltip(
       message: tooltip,
       child: InkWell(
@@ -2336,7 +3025,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: isActive ? _accentBlue.withValues(alpha: 0.1) : Colors.transparent,
+            color: isActive
+                ? _accentBlue.withValues(alpha: 0.1)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             border: isActive ? Border.all(color: _accentBlue, width: 2) : null,
           ),
@@ -2350,7 +3041,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 画笔工具栏
   Widget _buildBrushToolbar() {
     return Container(
@@ -2377,7 +3068,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 12),
-          
+
           // 粗细调节
           Row(
             children: [
@@ -2393,16 +3084,19 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   },
                 ),
               ),
-              Text("${_brushSize.toInt()}px", style: const TextStyle(fontSize: 11)),
+              Text(
+                "${_brushSize.toInt()}px",
+                style: const TextStyle(fontSize: 11),
+              ),
             ],
           ),
-          
+
           const SizedBox(height: 8),
-          
+
           // 颜色选择器
           const Text("颜色:", style: TextStyle(fontSize: 12)),
           const SizedBox(height: 8),
-          
+
           // 渐变色带
           GestureDetector(
             onTapDown: (details) {
@@ -2449,9 +3143,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ),
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           // 亮度调节
           GestureDetector(
             onTapDown: (details) {
@@ -2476,9 +3170,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ),
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           // 当前颜色预览
           Row(
             children: [
@@ -2550,10 +3244,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     );
   }
 
-
   Widget _buildNodeCard(CanvasNode node) {
-    final isSelected = _selectedNodeId == node.id || _selectedNodeIds.contains(node.id);
-    
+    final isSelected =
+        _selectedNodeId == node.id || _selectedNodeIds.contains(node.id);
+
     return Stack(
       children: [
         GestureDetector(
@@ -2561,16 +3255,20 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             // 如果正在从画布选择参考图片或首尾帧
             if (_isSelectingFromCanvas && _targetNodeForImage != null) {
               // 只能选择图片节点
-              if (node.type == NodeType.image && node.data['generatedImagePath'] != null) {
-                final selectingFrameType = _targetNodeForImage!.data['_selectingFrameType'];
-                
+              if (node.type == NodeType.image &&
+                  node.data['generatedImagePath'] != null) {
+                final selectingFrameType =
+                    _targetNodeForImage!.data['_selectingFrameType'];
+
                 if (selectingFrameType != null) {
                   // 选择首帧或尾帧
                   setState(() {
                     if (selectingFrameType == 'first') {
-                      _targetNodeForImage!.data['firstFrameImage'] = node.data['generatedImagePath'];
+                      _targetNodeForImage!.data['firstFrameImage'] =
+                          node.data['generatedImagePath'];
                     } else {
-                      _targetNodeForImage!.data['lastFrameImage'] = node.data['generatedImagePath'];
+                      _targetNodeForImage!.data['lastFrameImage'] =
+                          node.data['generatedImagePath'];
                     }
                     _targetNodeForImage!.data.remove('_selectingFrameType');
                     _isSelectingFromCanvas = false;
@@ -2579,7 +3277,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   });
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text("已设置${selectingFrameType == 'first' ? '首帧' : '尾帧'}图片"),
+                      content: Text(
+                        "已设置${selectingFrameType == 'first' ? '首帧' : '尾帧'}图片",
+                      ),
                       duration: const Duration(seconds: 1),
                     ),
                   );
@@ -2592,24 +3292,34 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     }
                     // 添加到参考图片列表
                     final imagePath = node.data['generatedImagePath'];
-                    (_targetNodeForImage!.data['referenceImages'] as List<String>).add(imagePath);
-                    
+                    (_targetNodeForImage!.data['referenceImages']
+                            as List<String>)
+                        .add(imagePath);
+
                     debugPrint('========== 从画布添加参考图片 ==========');
                     debugPrint('目标节点ID: ${_targetNodeForImage!.id}');
                     debugPrint('添加的图片路径: $imagePath');
-                    debugPrint('当前参考图片总数: ${(_targetNodeForImage!.data['referenceImages'] as List).length}');
-                    
+                    debugPrint(
+                      '当前参考图片总数: ${(_targetNodeForImage!.data['referenceImages'] as List).length}',
+                    );
+
                     _isSelectingFromCanvas = false;
                     _selectNode(_targetNodeForImage!.id);
                     _targetNodeForImage = null;
                   });
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("已添加参考图片"), duration: Duration(seconds: 1)),
+                    const SnackBar(
+                      content: Text("已添加参考图片"),
+                      duration: Duration(seconds: 1),
+                    ),
                   );
                 }
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("请选择包含生成图片的节点"), duration: Duration(seconds: 1)),
+                  const SnackBar(
+                    content: Text("请选择包含生成图片的节点"),
+                    duration: Duration(seconds: 1),
+                  ),
                 );
               }
             } else {
@@ -2630,14 +3340,16 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             decoration: BoxDecoration(
               color: _cardBg,
               borderRadius: BorderRadius.circular(8),
-              border: isSelected 
+              border: isSelected
                   ? Border.all(color: _accentBlue, width: 2)
-                  : (_isSelectingFromCanvas && node.type == NodeType.image 
-                      ? Border.all(color: Colors.green, width: 2)
-                      : null), // 不选中时无边框，更自然
+                  : (_isSelectingFromCanvas && node.type == NodeType.image
+                        ? Border.all(color: Colors.green, width: 2)
+                        : null), // 不选中时无边框，更自然
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: isSelected ? 0.15 : 0.08),
+                  color: Colors.black.withValues(
+                    alpha: isSelected ? 0.15 : 0.08,
+                  ),
                   blurRadius: isSelected ? 16 : 8,
                   offset: const Offset(0, 2),
                 ),
@@ -2646,7 +3358,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             child: _buildNodeContent(node),
           ),
         ),
-        
+
         // 调整大小手柄（只在单选时显示）
         if (isSelected && _selectedNodeIds.isEmpty) ...[
           _buildResizeHandle(node, ResizeHandle.topLeft),
@@ -2657,11 +3369,11 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ],
     );
   }
-  
+
   Widget _buildResizeHandle(CanvasNode node, ResizeHandle handle) {
     double left = 0, top = 0;
     SystemMouseCursor cursor = SystemMouseCursors.resizeUpLeftDownRight;
-    
+
     switch (handle) {
       case ResizeHandle.topLeft:
         left = -6;
@@ -2684,7 +3396,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         cursor = SystemMouseCursors.resizeUpLeftDownRight; // ↖↘
         break;
     }
-    
+
     return Positioned(
       left: left,
       top: top,
@@ -2709,10 +3421,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   ResizeHandle? _getResizeHandle(Offset position, Rect nodeRect) {
     const handleSize = 16.0;
-    
+
     final handles = {
       ResizeHandle.topLeft: Rect.fromLTWH(
         nodeRect.left - handleSize / 2,
@@ -2739,13 +3451,13 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         handleSize,
       ),
     };
-    
+
     for (var entry in handles.entries) {
       if (entry.value.contains(position)) {
         return entry.key;
       }
     }
-    
+
     return null;
   }
 
@@ -2802,7 +3514,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           },
         ),
       );
-      
+
       // ✅ 添加拖动功能
       return DraggableMediaItem(
         filePath: displayImagePath,
@@ -2811,10 +3523,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         child: imageWidget,
       );
     }
-    
+
     // 优先显示生成的图片，而不是参考图片
     final generatedImagePath = node.data['generatedImagePath'];
-    
+
     if (generatedImagePath != null && generatedImagePath is String) {
       // 显示API生成的图片
       final imageWidget = ClipRRect(
@@ -2858,7 +3570,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           },
         ),
       );
-      
+
       // ✅ 添加拖动功能
       return DraggableMediaItem(
         filePath: generatedImagePath,
@@ -2867,7 +3579,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         child: imageWidget,
       );
     }
-    
+
     // 默认占位符（等待生成）
     return Container(
       decoration: BoxDecoration(
@@ -2892,34 +3604,37 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     // 优先显示生成的视频，其次是直接显示的视频
     final generatedVideoPath = node.data['generatedVideoPath'];
     final displayVideoPath = node.data['displayVideoPath'];
-    final videoPath = (generatedVideoPath != null && generatedVideoPath is String) 
-        ? generatedVideoPath 
+    final videoPath =
+        (generatedVideoPath != null && generatedVideoPath is String)
+        ? generatedVideoPath
         : displayVideoPath;
-    
+
     if (videoPath != null && videoPath is String) {
       debugPrint('========== 渲染视频节点 ==========');
       debugPrint('节点ID: ${node.id}');
       debugPrint('视频路径: $videoPath');
       debugPrint('是否为生成的视频: ${generatedVideoPath != null}');
-      
+
       // 获取或创建视频播放器
       if (!_videoPlayers.containsKey(node.id)) {
         debugPrint('创建新的视频播放器...');
         try {
           final player = Player();
           final controller = VideoController(player);
-          
+
           _videoPlayers[node.id] = player;
           _videoControllers[node.id] = controller;
-          
+
           // 打开视频文件
           debugPrint('打开视频文件: $videoPath');
           player.open(Media(videoPath), play: false);
           player.setPlaylistMode(PlaylistMode.loop);
-          
+
           // 监听视频尺寸变化，自动调整节点大小
           player.stream.width.listen((width) {
-            if (width != null && width > 0 && node.data['_sizeAdjusted'] != true) {
+            if (width != null &&
+                width > 0 &&
+                node.data['_sizeAdjusted'] != true) {
               final height = player.state.height;
               if (height != null && height > 0) {
                 debugPrint('视频尺寸已加载: ${width}x$height');
@@ -2927,7 +3642,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               }
             }
           });
-          
+
           debugPrint('✅ 视频播放器创建成功');
         } catch (e) {
           debugPrint('❌ 创建视频播放器失败: $e');
@@ -2936,18 +3651,18 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       } else {
         debugPrint('使用现有的视频播放器');
       }
-      
+
       final player = _videoPlayers[node.id];
       final controller = _videoControllers[node.id];
-      
+
       // 如果播放器不存在，显示错误
       if (player == null || controller == null) {
         debugPrint('❌ 播放器或控制器为空');
         return _buildVideoErrorWidget();
       }
-      
+
       debugPrint('✅ 渲染视频播放器');
-      
+
       // 显示视频播放器
       return MouseRegion(
         onEnter: (_) {
@@ -2980,7 +3695,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         ),
       );
     }
-    
+
     // 默认占位符
     debugPrint('显示视频占位符（节点ID: ${node.id}）');
     return Container(
@@ -2993,37 +3708,38 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         children: [
           Icon(Icons.videocam_outlined, size: 48, color: Colors.grey[400]),
           const SizedBox(height: 8),
-          Text(
-            "视频",
-            style: TextStyle(color: Colors.grey[600], fontSize: 12),
-          ),
+          Text("视频", style: TextStyle(color: Colors.grey[600], fontSize: 12)),
         ],
       ),
     );
   }
-  
+
   /// 调整视频节点大小以匹配视频宽高比
-  void _adjustVideoNodeSize(CanvasNode node, double videoWidth, double videoHeight) {
+  void _adjustVideoNodeSize(
+    CanvasNode node,
+    double videoWidth,
+    double videoHeight,
+  ) {
     if (node.data['_sizeAdjusted'] == true) {
       return; // 已经调整过了
     }
-    
+
     final aspectRatio = videoWidth / videoHeight;
-    
+
     debugPrint('========== 调整视频节点大小 ==========');
     debugPrint('视频尺寸: ${videoWidth.toInt()}x${videoHeight.toInt()}');
     debugPrint('宽高比: ${aspectRatio.toStringAsFixed(4)}');
     debugPrint('视频方向: ${aspectRatio >= 1.0 ? '横向' : '竖向'}');
-    
+
     // 根据视频方向计算节点大小
     double nodeWidth, nodeHeight;
-    
+
     if (aspectRatio >= 1.0) {
       // 横向视频：以宽度为基准
       const baseWidth = 400.0;
       nodeWidth = baseWidth;
       nodeHeight = baseWidth / aspectRatio;
-      
+
       // 如果高度超出范围，按比例缩放
       if (nodeHeight > 800.0) {
         nodeHeight = 800.0;
@@ -3037,7 +3753,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       const baseHeight = 400.0;
       nodeHeight = baseHeight;
       nodeWidth = baseHeight * aspectRatio;
-      
+
       // 如果宽度超出范围，按比例缩放
       if (nodeWidth > 800.0) {
         nodeWidth = 800.0;
@@ -3047,7 +3763,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         nodeHeight = nodeWidth / aspectRatio;
       }
     }
-    
+
     // 最终确保在范围内（保持宽高比）
     if (nodeWidth > 800.0) {
       nodeWidth = 800.0;
@@ -3057,11 +3773,11 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       nodeHeight = 800.0;
       nodeWidth = nodeHeight * aspectRatio;
     }
-    
+
     debugPrint('最终节点尺寸: ${nodeWidth.toInt()}x${nodeHeight.toInt()}');
     debugPrint('节点宽高比: ${(nodeWidth / nodeHeight).toStringAsFixed(4)}');
     debugPrint('========== 调整完成 ==========');
-    
+
     if (mounted) {
       setState(() {
         node.size = Size(nodeWidth, nodeHeight);
@@ -3070,7 +3786,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       });
     }
   }
-  
+
   // 视频错误显示组件
   Widget _buildVideoErrorWidget() {
     return Container(
@@ -3083,10 +3799,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         children: [
           Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
           const SizedBox(height: 8),
-          Text(
-            "视频加载失败",
-            style: TextStyle(color: Colors.white, fontSize: 12),
-          ),
+          Text("视频加载失败", style: TextStyle(color: Colors.white, fontSize: 12)),
         ],
       ),
     );
@@ -3096,14 +3809,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
     // 获取文本样式设置
     final fontFamily = node.data['fontFamily'] ?? _textFontFamily;
     final fontSize = node.data['fontSize'] ?? _textFontSize;
-    final color = node.data['color'] ?? _textColor;
+    final color = _getColorFromData(node.data['color'], _textColor);
     final bold = node.data['bold'] ?? _textBold;
     final italic = node.data['italic'] ?? _textItalic;
     final underline = node.data['underline'] ?? _textUnderline;
-    
+
     // 检查是否处于编辑模式
     final isEditing = node.data['isEditing'] ?? false;
-    
+
     if (!isEditing) {
       // 非编辑模式：显示文本，双击进入编辑
       return GestureDetector(
@@ -3116,20 +3829,26 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           padding: const EdgeInsets.all(12),
           alignment: Alignment.topLeft,
           child: Text(
-            node.data['text']?.isEmpty ?? true ? "双击编辑文本..." : node.data['text'],
+            node.data['text']?.isEmpty ?? true
+                ? "双击编辑文本..."
+                : node.data['text'],
             style: TextStyle(
               fontSize: fontSize,
-              color: node.data['text']?.isEmpty ?? true ? Colors.black26 : color,
+              color: node.data['text']?.isEmpty ?? true
+                  ? Colors.black26
+                  : color,
               fontFamily: fontFamily,
               fontWeight: bold ? FontWeight.bold : FontWeight.normal,
               fontStyle: italic ? FontStyle.italic : FontStyle.normal,
-              decoration: underline ? TextDecoration.underline : TextDecoration.none,
+              decoration: underline
+                  ? TextDecoration.underline
+                  : TextDecoration.none,
             ),
           ),
         ),
       );
     }
-    
+
     // 编辑模式：显示输入框
     return TextField(
       controller: TextEditingController(text: node.data['text'] ?? ''),
@@ -3160,7 +3879,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 文本工具栏
   Widget _buildTextToolbar() {
     return Container(
@@ -3187,7 +3906,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 12),
-          
+
           // 字体和字号选择
           Row(
             children: [
@@ -3197,7 +3916,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("字体", style: TextStyle(fontSize: 11, color: Colors.black54)),
+                    const Text(
+                      "字体",
+                      style: TextStyle(fontSize: 11, color: Colors.black54),
+                    ),
                     const SizedBox(height: 4),
                     Container(
                       height: 40,
@@ -3212,14 +3934,26 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                           value: _textFontFamily,
                           isExpanded: true,
                           icon: const Icon(Icons.arrow_drop_down, size: 20),
-                          style: const TextStyle(fontSize: 13, color: Colors.black87),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.black87,
+                          ),
                           dropdownColor: Colors.white,
-                          items: ['Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana']
-                              .map((font) => DropdownMenuItem(
-                                    value: font,
-                                    child: Text(font),
-                                  ))
-                              .toList(),
+                          items:
+                              [
+                                    'Arial',
+                                    'Times New Roman',
+                                    'Courier New',
+                                    'Georgia',
+                                    'Verdana',
+                                  ]
+                                  .map(
+                                    (font) => DropdownMenuItem(
+                                      value: font,
+                                      child: Text(font),
+                                    ),
+                                  )
+                                  .toList(),
                           onChanged: (val) {
                             if (val != null) {
                               setState(() => _textFontFamily = val);
@@ -3238,7 +3972,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("字号", style: TextStyle(fontSize: 11, color: Colors.black54)),
+                    const Text(
+                      "字号",
+                      style: TextStyle(fontSize: 11, color: Colors.black54),
+                    ),
                     const SizedBox(height: 4),
                     Container(
                       height: 40,
@@ -3253,14 +3990,35 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                           value: _textFontSize,
                           isExpanded: true,
                           icon: const Icon(Icons.arrow_drop_down, size: 20),
-                          style: const TextStyle(fontSize: 13, color: Colors.black87),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.black87,
+                          ),
                           dropdownColor: Colors.white,
-                          items: [8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 60.0, 72.0]
-                              .map((size) => DropdownMenuItem(
-                                    value: size,
-                                    child: Text("${size.toInt()}"),
-                                  ))
-                              .toList(),
+                          items:
+                              [
+                                    8.0,
+                                    10.0,
+                                    12.0,
+                                    14.0,
+                                    16.0,
+                                    18.0,
+                                    20.0,
+                                    24.0,
+                                    28.0,
+                                    32.0,
+                                    36.0,
+                                    48.0,
+                                    60.0,
+                                    72.0,
+                                  ]
+                                  .map(
+                                    (size) => DropdownMenuItem(
+                                      value: size,
+                                      child: Text("${size.toInt()}"),
+                                    ),
+                                  )
+                                  .toList(),
                           onChanged: (val) {
                             if (val != null) {
                               setState(() => _textFontSize = val);
@@ -3274,9 +4032,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ],
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           // 文本样式按钮
           Row(
             children: [
@@ -3290,18 +4048,23 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 setState(() => _textItalic = !_textItalic);
               }),
               const SizedBox(width: 4),
-              _buildStyleButton(Icons.format_underline, "下划线", _textUnderline, () {
-                setState(() => _textUnderline = !_textUnderline);
-              }),
+              _buildStyleButton(
+                Icons.format_underline,
+                "下划线",
+                _textUnderline,
+                () {
+                  setState(() => _textUnderline = !_textUnderline);
+                },
+              ),
             ],
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           // 颜色选择
           const Text("颜色:", style: TextStyle(fontSize: 12)),
           const SizedBox(height: 8),
-          
+
           // 渐变色带
           GestureDetector(
             onTapDown: (details) {
@@ -3347,9 +4110,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ),
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           // 亮度调节
           GestureDetector(
             onTapDown: (details) {
@@ -3374,9 +4137,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ),
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           // 当前颜色预览
           Row(
             children: [
@@ -3397,8 +4160,13 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
-  Widget _buildStyleButton(IconData icon, String tooltip, bool isActive, VoidCallback onTap) {
+
+  Widget _buildStyleButton(
+    IconData icon,
+    String tooltip,
+    bool isActive,
+    VoidCallback onTap,
+  ) {
     return Tooltip(
       message: tooltip,
       child: InkWell(
@@ -3408,9 +4176,13 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: isActive ? _accentBlue.withValues(alpha: 0.2) : Colors.transparent,
+            color: isActive
+                ? _accentBlue.withValues(alpha: 0.2)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: isActive ? Border.all(color: _accentBlue, width: 1.5) : null,
+            border: isActive
+                ? Border.all(color: _accentBlue, width: 1.5)
+                : null,
           ),
           alignment: Alignment.center,
           child: Icon(
@@ -3422,35 +4194,38 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 检测点是否靠近涂鸦
   bool _isPointNearStroke(Offset screenPoint, DrawingStroke stroke) {
     const threshold = 10.0;
-    
+
     // 将屏幕坐标转换为画布坐标
     final canvasPoint = Offset(
       (screenPoint.dx - _canvasOffset.dx) / _scale,
       (screenPoint.dy - _canvasOffset.dy) / _scale,
     );
-    
+
     for (var strokePoint in stroke.points) {
       final distance = (canvasPoint - strokePoint).distance;
       if (distance < (threshold + stroke.strokeWidth) / _scale) {
         return true;
       }
     }
-    
+
     return false;
   }
-  
+
   // 从本地选择首帧/尾帧图片
-  Future<void> _pickFrameImage(CanvasNode node, {required bool isFirstFrame}) async {
+  Future<void> _pickFrameImage(
+    CanvasNode node, {
+    required bool isFirstFrame,
+  }) async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
       );
-      
+
       if (result != null && result.files.single.path != null) {
         setState(() {
           if (isFirstFrame) {
@@ -3465,9 +4240,12 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       print("选择图片失败: $e");
     }
   }
-  
+
   // 从画布选择首帧/尾帧图片
-  void _selectFrameFromCanvas(CanvasNode targetNode, {required bool isFirstFrame}) {
+  void _selectFrameFromCanvas(
+    CanvasNode targetNode, {
+    required bool isFirstFrame,
+  }) {
     setState(() {
       _isSelectingFromCanvas = true;
       _targetNodeForImage = targetNode;
@@ -3475,7 +4253,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       targetNode.data['_selectingFrameType'] = isFirstFrame ? 'first' : 'last';
       _selectNode(null);
     });
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text("请点击画布上的图片节点作为${isFirstFrame ? '首帧' : '尾帧'}"),
@@ -3493,20 +4271,18 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 打开素材库
   void _openMaterialLibrary(CanvasNode node) async {
     // 根据节点类型决定显示的素材库类型
     // 图片节点：显示角色、场景、物品素材
     // 视频节点：显示角色、场景、物品、语音素材
-    
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => _MaterialLibraryDialog(
-        nodeType: node.type,
-      ),
+      builder: (context) => _MaterialLibraryDialog(nodeType: node.type),
     );
-    
+
     if (result != null && mounted) {
       if (node.type == NodeType.image) {
         // 图片节点：添加选择的图片到参考图片列表
@@ -3516,7 +4292,8 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             if (node.data['referenceImages'] == null) {
               node.data['referenceImages'] = <String>[];
             }
-            final referenceImages = node.data['referenceImages'] as List<String>;
+            final referenceImages =
+                node.data['referenceImages'] as List<String>;
             for (var imagePath in selectedImages) {
               if (referenceImages.length < 10) {
                 referenceImages.add(imagePath);
@@ -3528,14 +4305,15 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         // 视频节点：可以添加图片素材或语音
         final selectedImages = result['images'] as List<String>?;
         final selectedVoice = result['voice'] as String?;
-        
+
         if (selectedImages != null && selectedImages.isNotEmpty) {
           // 添加图片素材到参考图片列表
           setState(() {
             if (node.data['referenceImages'] == null) {
               node.data['referenceImages'] = <String>[];
             }
-            final referenceImages = node.data['referenceImages'] as List<String>;
+            final referenceImages =
+                node.data['referenceImages'] as List<String>;
             for (var imagePath in selectedImages) {
               if (referenceImages.length < 10) {
                 referenceImages.add(imagePath);
@@ -3543,20 +4321,23 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
             }
           });
         }
-        
+
         if (selectedVoice != null) {
           // 添加语音素材
           setState(() {
             node.data['voiceAsset'] = selectedVoice;
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("已选择语音: $selectedVoice"), duration: const Duration(seconds: 2)),
+            SnackBar(
+              content: Text("已选择语音: $selectedVoice"),
+              duration: const Duration(seconds: 2),
+            ),
           );
         }
       }
     }
   }
-  
+
   // 从本地选择参考图片
   Future<void> _pickReferenceImage(CanvasNode node) async {
     try {
@@ -3564,16 +4345,16 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         type: FileType.image,
         allowMultiple: true, // 允许多选
       );
-      
+
       if (result != null && result.files.isNotEmpty) {
         setState(() {
           // 初始化参考图片列表
           if (node.data['referenceImages'] == null) {
             node.data['referenceImages'] = <String>[];
           }
-          
+
           final referenceImages = node.data['referenceImages'] as List<String>;
-          
+
           // 添加所有选择的图片，但限制总数不超过10张
           for (var file in result.files) {
             if (file.path != null && referenceImages.length < 10) {
@@ -3581,12 +4362,12 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               debugPrint('✅ 添加参考图片: ${file.path}');
             }
           }
-          
+
           debugPrint('========== 参考图片添加完成 ==========');
           debugPrint('节点ID: ${node.id}');
           debugPrint('当前参考图片总数: ${referenceImages.length}');
           debugPrint('参考图片列表: $referenceImages');
-          
+
           // 如果超过10张，显示提示
           if (result.files.length > 10 || referenceImages.length >= 10) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -3610,7 +4391,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       print("选择图片失败: $e");
     }
   }
-  
+
   // 从画布选择参考图片
   void _selectReferenceFromCanvas(CanvasNode targetNode) {
     setState(() {
@@ -3618,7 +4399,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       _targetNodeForImage = targetNode;
       _selectNode(null); // 取消当前选择
     });
-    
+
     // 显示提示
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -3636,7 +4417,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 从本地选择图片（旧方法，保留用于其他用途）
   Future<void> _pickImageFromLocal(CanvasNode node) async {
     try {
@@ -3644,7 +4425,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
         type: FileType.image,
         allowMultiple: false,
       );
-      
+
       if (result != null && result.files.single.path != null) {
         setState(() {
           node.data['imagePath'] = result.files.single.path;
@@ -3656,7 +4437,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       print("选择图片失败: $e");
     }
   }
-  
+
   // 从画布选择图片（旧方法，保留用于其他用途）
   void _selectImageFromCanvas(CanvasNode targetNode) {
     setState(() {
@@ -3664,7 +4445,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       _targetNodeForImage = targetNode;
       _selectNode(null); // 取消当前选择
     });
-    
+
     // 显示提示
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -3682,12 +4463,17 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 显示文本节点右键菜单
   void _showTextNodeContextMenu(Offset position, CanvasNode node) {
     showMenu<void>(
       context: context,
-      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
       color: Colors.white,
       elevation: 12,
       shadowColor: Colors.black.withValues(alpha: 0.15),
@@ -3710,7 +4496,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 child: Icon(Icons.edit, size: 20, color: _accentBlue),
               ),
               const SizedBox(width: 12),
-              const Text("编辑", style: TextStyle(fontSize: 14, color: Colors.black, fontWeight: FontWeight.w500)),
+              const Text(
+                "编辑",
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.black,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
           onTap: () {
@@ -3731,10 +4524,21 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   color: Colors.red.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                child: const Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: Colors.red,
+                ),
               ),
               const SizedBox(width: 12),
-              const Text("删除", style: TextStyle(fontSize: 14, color: Colors.black, fontWeight: FontWeight.w500)),
+              const Text(
+                "删除",
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.black,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
           onTap: () {
@@ -3753,16 +4557,16 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ],
     );
   }
-  
+
   // 显示文本节点编辑对话框
   void _showTextNodeEditDialog(CanvasNode node) {
     String tempFontFamily = node.data['fontFamily'] ?? _textFontFamily;
     double tempFontSize = node.data['fontSize'] ?? _textFontSize;
-    Color tempColor = node.data['color'] ?? _textColor;
+    Color tempColor = _getColorFromData(node.data['color'], _textColor);
     bool tempBold = node.data['bold'] ?? _textBold;
     bool tempItalic = node.data['italic'] ?? _textItalic;
     bool tempUnderline = node.data['underline'] ?? _textUnderline;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -3784,11 +4588,19 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text("字体", style: TextStyle(fontSize: 11, color: Colors.black54)),
+                            const Text(
+                              "字体",
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.black54,
+                              ),
+                            ),
                             const SizedBox(height: 4),
                             Container(
                               height: 40,
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 border: Border.all(color: _borderColor),
@@ -3798,15 +4610,35 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                                 child: DropdownButton<String>(
                                   value: tempFontFamily,
                                   isExpanded: true,
-                                  icon: const Icon(Icons.arrow_drop_down, size: 20),
-                                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                                  icon: const Icon(
+                                    Icons.arrow_drop_down,
+                                    size: 20,
+                                  ),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.black87,
+                                  ),
                                   dropdownColor: Colors.white,
-                                  items: ['Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana']
-                                      .map((font) => DropdownMenuItem(value: font, child: Text(font)))
-                                      .toList(),
+                                  items:
+                                      [
+                                            'Arial',
+                                            'Times New Roman',
+                                            'Courier New',
+                                            'Georgia',
+                                            'Verdana',
+                                          ]
+                                          .map(
+                                            (font) => DropdownMenuItem(
+                                              value: font,
+                                              child: Text(font),
+                                            ),
+                                          )
+                                          .toList(),
                                   onChanged: (val) {
                                     if (val != null) {
-                                      setDialogState(() => tempFontFamily = val);
+                                      setDialogState(
+                                        () => tempFontFamily = val,
+                                      );
                                     }
                                   },
                                 ),
@@ -3820,11 +4652,19 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text("字号", style: TextStyle(fontSize: 11, color: Colors.black54)),
+                            const Text(
+                              "字号",
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.black54,
+                              ),
+                            ),
                             const SizedBox(height: 4),
                             Container(
                               height: 40,
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 border: Border.all(color: _borderColor),
@@ -3834,12 +4674,39 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                                 child: DropdownButton<double>(
                                   value: tempFontSize,
                                   isExpanded: true,
-                                  icon: const Icon(Icons.arrow_drop_down, size: 20),
-                                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                                  icon: const Icon(
+                                    Icons.arrow_drop_down,
+                                    size: 20,
+                                  ),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.black87,
+                                  ),
                                   dropdownColor: Colors.white,
-                                  items: [8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 60.0, 72.0]
-                                      .map((size) => DropdownMenuItem(value: size, child: Text("${size.toInt()}")))
-                                      .toList(),
+                                  items:
+                                      [
+                                            8.0,
+                                            10.0,
+                                            12.0,
+                                            14.0,
+                                            16.0,
+                                            18.0,
+                                            20.0,
+                                            24.0,
+                                            28.0,
+                                            32.0,
+                                            36.0,
+                                            48.0,
+                                            60.0,
+                                            72.0,
+                                          ]
+                                          .map(
+                                            (size) => DropdownMenuItem(
+                                              value: size,
+                                              child: Text("${size.toInt()}"),
+                                            ),
+                                          )
+                                          .toList(),
                                   onChanged: (val) {
                                     if (val != null) {
                                       setDialogState(() => tempFontSize = val);
@@ -3853,9 +4720,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 16),
-                  
+
                   // 文本样式
                   Row(
                     children: [
@@ -3867,60 +4734,92 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: tempBold ? _accentBlue.withValues(alpha: 0.2) : Colors.transparent,
+                            color: tempBold
+                                ? _accentBlue.withValues(alpha: 0.2)
+                                : Colors.transparent,
                             borderRadius: BorderRadius.circular(6),
-                            border: tempBold ? Border.all(color: _accentBlue, width: 1.5) : null,
+                            border: tempBold
+                                ? Border.all(color: _accentBlue, width: 1.5)
+                                : null,
                           ),
                           alignment: Alignment.center,
-                          child: Icon(Icons.format_bold, size: 18, color: tempBold ? _accentBlue : Colors.black54),
+                          child: Icon(
+                            Icons.format_bold,
+                            size: 18,
+                            color: tempBold ? _accentBlue : Colors.black54,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 4),
                       InkWell(
-                        onTap: () => setDialogState(() => tempItalic = !tempItalic),
+                        onTap: () =>
+                            setDialogState(() => tempItalic = !tempItalic),
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: tempItalic ? _accentBlue.withValues(alpha: 0.2) : Colors.transparent,
+                            color: tempItalic
+                                ? _accentBlue.withValues(alpha: 0.2)
+                                : Colors.transparent,
                             borderRadius: BorderRadius.circular(6),
-                            border: tempItalic ? Border.all(color: _accentBlue, width: 1.5) : null,
+                            border: tempItalic
+                                ? Border.all(color: _accentBlue, width: 1.5)
+                                : null,
                           ),
                           alignment: Alignment.center,
-                          child: Icon(Icons.format_italic, size: 18, color: tempItalic ? _accentBlue : Colors.black54),
+                          child: Icon(
+                            Icons.format_italic,
+                            size: 18,
+                            color: tempItalic ? _accentBlue : Colors.black54,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 4),
                       InkWell(
-                        onTap: () => setDialogState(() => tempUnderline = !tempUnderline),
+                        onTap: () => setDialogState(
+                          () => tempUnderline = !tempUnderline,
+                        ),
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: tempUnderline ? _accentBlue.withValues(alpha: 0.2) : Colors.transparent,
+                            color: tempUnderline
+                                ? _accentBlue.withValues(alpha: 0.2)
+                                : Colors.transparent,
                             borderRadius: BorderRadius.circular(6),
-                            border: tempUnderline ? Border.all(color: _accentBlue, width: 1.5) : null,
+                            border: tempUnderline
+                                ? Border.all(color: _accentBlue, width: 1.5)
+                                : null,
                           ),
                           alignment: Alignment.center,
-                          child: Icon(Icons.format_underline, size: 18, color: tempUnderline ? _accentBlue : Colors.black54),
+                          child: Icon(
+                            Icons.format_underline,
+                            size: 18,
+                            color: tempUnderline ? _accentBlue : Colors.black54,
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 16),
-                  
+
                   // 颜色选择
                   const Text("颜色:", style: TextStyle(fontSize: 12)),
                   const SizedBox(height: 8),
-                  
+
                   GestureDetector(
                     onTapDown: (details) {
                       final width = 368.0;
                       final x = details.localPosition.dx.clamp(0.0, width);
                       final hue = (x / width) * 360;
                       setDialogState(() {
-                        tempColor = HSVColor.fromAHSV(1.0, hue, 1.0, 1.0).toColor();
+                        tempColor = HSVColor.fromAHSV(
+                          1.0,
+                          hue,
+                          1.0,
+                          1.0,
+                        ).toColor();
                       });
                     },
                     child: Container(
@@ -3928,13 +4827,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(6),
                         gradient: const LinearGradient(
-                          colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
+                          colors: [
+                            Colors.red,
+                            Colors.yellow,
+                            Colors.green,
+                            Colors.cyan,
+                            Colors.blue,
+                            Colors.purple,
+                            Colors.red,
+                          ],
                         ),
                       ),
                       child: Stack(
                         children: [
                           Positioned(
-                            left: (HSVColor.fromColor(tempColor).hue / 360) * 368 - 8,
+                            left:
+                                (HSVColor.fromColor(tempColor).hue / 360) *
+                                    368 -
+                                8,
                             top: -4,
                             child: Container(
                               width: 16,
@@ -3942,7 +4852,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: Colors.white,
-                                border: Border.all(color: Colors.black26, width: 2),
+                                border: Border.all(
+                                  color: Colors.black26,
+                                  width: 2,
+                                ),
                               ),
                             ),
                           ),
@@ -3950,9 +4863,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                       ),
                     ),
                   ),
-                  
+
                   const SizedBox(height: 12),
-                  
+
                   GestureDetector(
                     onTapDown: (details) {
                       final width = 368.0;
@@ -3968,14 +4881,19 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(6),
                         gradient: LinearGradient(
-                          colors: [Colors.black, HSVColor.fromColor(tempColor).withValue(1.0).toColor()],
+                          colors: [
+                            Colors.black,
+                            HSVColor.fromColor(
+                              tempColor,
+                            ).withValue(1.0).toColor(),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                  
+
                   const SizedBox(height: 12),
-                  
+
                   Row(
                     children: [
                       const Text("当前:", style: TextStyle(fontSize: 12)),
@@ -4000,7 +4918,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               onPressed: () => Navigator.pop(context),
               style: TextButton.styleFrom(
                 foregroundColor: Colors.black54,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
               child: const Text("取消", style: TextStyle(fontSize: 15)),
             ),
@@ -4021,24 +4942,35 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 backgroundColor: _accentBlue,
                 foregroundColor: Colors.white,
                 elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: const Text("确定", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+              child: const Text(
+                "确定",
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+              ),
             ),
           ],
         ),
       ),
     );
   }
-  
+
   // 显示涂鸦右键菜单
   void _showStrokeContextMenu(Offset position) {
     showMenu<void>(
       context: context,
-      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
       color: Colors.white,
       elevation: 12,
       shadowColor: Colors.black.withValues(alpha: 0.15),
@@ -4061,7 +4993,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 child: Icon(Icons.edit, size: 20, color: _accentBlue),
               ),
               const SizedBox(width: 12),
-              const Text("编辑", style: TextStyle(fontSize: 14, color: Colors.black, fontWeight: FontWeight.w500)),
+              const Text(
+                "编辑",
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.black,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
           onTap: () {
@@ -4082,10 +5021,21 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   color: Colors.red.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                child: const Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: Colors.red,
+                ),
               ),
               const SizedBox(width: 12),
-              const Text("删除", style: TextStyle(fontSize: 14, color: Colors.black, fontWeight: FontWeight.w500)),
+              const Text(
+                "删除",
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.black,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
           onTap: () {
@@ -4098,14 +5048,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ],
     );
   }
-  
+
   // 显示涂鸦编辑对话框
   void _showStrokeEditDialog() {
     if (_selectedStroke == null) return;
-    
+
     Color tempColor = _selectedStroke!.color;
     double tempWidth = _selectedStroke!.strokeWidth;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -4132,14 +5082,17 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         },
                       ),
                     ),
-                    Text("${tempWidth.toInt()}px", style: const TextStyle(fontSize: 11)),
+                    Text(
+                      "${tempWidth.toInt()}px",
+                      style: const TextStyle(fontSize: 11),
+                    ),
                   ],
                 ),
-                
+
                 const SizedBox(height: 16),
                 const Text("颜色:", style: TextStyle(fontSize: 12)),
                 const SizedBox(height: 8),
-                
+
                 // 渐变色带
                 GestureDetector(
                   onTapDown: (details) {
@@ -4147,7 +5100,12 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     final x = details.localPosition.dx.clamp(0.0, width);
                     final hue = (x / width) * 360;
                     setDialogState(() {
-                      tempColor = HSVColor.fromAHSV(1.0, hue, 1.0, 1.0).toColor();
+                      tempColor = HSVColor.fromAHSV(
+                        1.0,
+                        hue,
+                        1.0,
+                        1.0,
+                      ).toColor();
                     });
                   },
                   child: Container(
@@ -4169,7 +5127,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     child: Stack(
                       children: [
                         Positioned(
-                          left: (HSVColor.fromColor(tempColor).hue / 360) * 368 - 8,
+                          left:
+                              (HSVColor.fromColor(tempColor).hue / 360) * 368 -
+                              8,
                           top: -4,
                           child: Container(
                             width: 16,
@@ -4177,7 +5137,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: Colors.white,
-                              border: Border.all(color: Colors.black26, width: 2),
+                              border: Border.all(
+                                color: Colors.black26,
+                                width: 2,
+                              ),
                             ),
                           ),
                         ),
@@ -4185,9 +5148,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 12),
-                
+
                 // 亮度调节
                 GestureDetector(
                   onTapDown: (details) {
@@ -4206,15 +5169,17 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                       gradient: LinearGradient(
                         colors: [
                           Colors.black,
-                          HSVColor.fromColor(tempColor).withValue(1.0).toColor(),
+                          HSVColor.fromColor(
+                            tempColor,
+                          ).withValue(1.0).toColor(),
                         ],
                       ),
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 12),
-                
+
                 // 当前颜色预览
                 Row(
                   children: [
@@ -4239,7 +5204,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               onPressed: () => Navigator.pop(context),
               style: TextButton.styleFrom(
                 foregroundColor: Colors.black54,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
               child: const Text("取消", style: TextStyle(fontSize: 15)),
             ),
@@ -4256,12 +5224,18 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 backgroundColor: _accentBlue,
                 foregroundColor: Colors.white,
                 elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: const Text("确定", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+              child: const Text(
+                "确定",
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+              ),
             ),
           ],
         ),
@@ -4273,14 +5247,14 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
   Widget _buildCompactEditPanel(CanvasNode node) {
     // 获取上传的参考图片列表（图片和视频节点都可以有）
     final referenceImages = node.data['referenceImages'] as List<String>? ?? [];
-    
+
     // 获取首尾帧图片（视频节点）
     final firstFrameImage = node.data['firstFrameImage'] as String?;
     final lastFrameImage = node.data['lastFrameImage'] as String?;
     final frameImages = <String>[];
     if (firstFrameImage != null) frameImages.add(firstFrameImage);
     if (lastFrameImage != null) frameImages.add(lastFrameImage);
-    
+
     return Container(
       width: 600,
       padding: const EdgeInsets.all(16),
@@ -4302,7 +5276,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           // 提示词输入框
           TextField(
             decoration: InputDecoration(
-              hintText: node.type == NodeType.image ? "描述你想要生成的图片..." : "描述你想要生成的视频...",
+              hintText: node.type == NodeType.image
+                  ? "描述你想要生成的图片..."
+                  : "描述你想要生成的视频...",
               hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -4316,7 +5292,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                 borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide(color: _accentBlue, width: 2),
               ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 14,
+              ),
             ),
             maxLines: 3,
             style: const TextStyle(fontSize: 14, color: Colors.black),
@@ -4324,7 +5303,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               node.data['prompt'] = val;
             },
           ),
-          
+
           // 参考图片缩略图列表（图片和视频节点都显示）
           if (referenceImages.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -4359,7 +5338,11 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                                       top: 20,
                                       right: 20,
                                       child: IconButton(
-                                        icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                                        icon: const Icon(
+                                          Icons.close,
+                                          color: Colors.white,
+                                          size: 32,
+                                        ),
                                         onPressed: () => Navigator.pop(context),
                                       ),
                                     ),
@@ -4410,7 +5393,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ),
           ],
-          
+
           // 首尾帧图片缩略图列表（仅视频节点）
           if (node.type == NodeType.video && frameImages.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -4446,7 +5429,11 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                                       top: 20,
                                       right: 20,
                                       child: IconButton(
-                                        icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                                        icon: const Icon(
+                                          Icons.close,
+                                          color: Colors.white,
+                                          size: 32,
+                                        ),
                                         onPressed: () => Navigator.pop(context),
                                       ),
                                     ),
@@ -4501,9 +5488,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
               ),
             ),
           ],
-          
+
           const SizedBox(height: 12),
-          
+
           // 底部控制栏
           Row(
             children: [
@@ -4527,14 +5514,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     PopupMenuItem<String>(
                       value: 'local',
                       height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
-                          Icon(Icons.upload_file, size: 20, color: Colors.black87),
+                          Icon(
+                            Icons.upload_file,
+                            size: 20,
+                            color: Colors.black87,
+                          ),
                           const SizedBox(width: 12),
                           const Text(
                             "从本地上传图片",
-                            style: TextStyle(fontSize: 14, color: Colors.black87),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.black87,
+                            ),
                           ),
                         ],
                       ),
@@ -4542,14 +5539,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     PopupMenuItem<String>(
                       value: 'library',
                       height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
-                          Icon(Icons.photo_library_outlined, size: 20, color: Colors.black87),
+                          Icon(
+                            Icons.photo_library_outlined,
+                            size: 20,
+                            color: Colors.black87,
+                          ),
                           const SizedBox(width: 12),
                           const Text(
                             "素材库",
-                            style: TextStyle(fontSize: 14, color: Colors.black87),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.black87,
+                            ),
                           ),
                         ],
                       ),
@@ -4557,14 +5564,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     PopupMenuItem<String>(
                       value: 'canvas',
                       height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
-                          Icon(Icons.crop_free, size: 20, color: Colors.black87),
+                          Icon(
+                            Icons.crop_free,
+                            size: 20,
+                            color: Colors.black87,
+                          ),
                           const SizedBox(width: 12),
                           const Text(
                             "从画布选择",
-                            style: TextStyle(fontSize: 14, color: Colors.black87),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.black87,
+                            ),
                           ),
                         ],
                       ),
@@ -4601,7 +5618,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                           const SizedBox(width: 4),
                           Text(
                             "首帧",
-                            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[700],
+                            ),
                           ),
                         ],
                       ),
@@ -4617,14 +5637,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         PopupMenuItem<String>(
                           value: 'local',
                           height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
-                              Icon(Icons.upload_file, size: 20, color: Colors.black87),
+                              Icon(
+                                Icons.upload_file,
+                                size: 20,
+                                color: Colors.black87,
+                              ),
                               const SizedBox(width: 12),
                               const Text(
                                 "从本地上传图片",
-                                style: TextStyle(fontSize: 14, color: Colors.black87),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ],
                           ),
@@ -4632,14 +5662,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         PopupMenuItem<String>(
                           value: 'library',
                           height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
-                              Icon(Icons.photo_library_outlined, size: 20, color: Colors.black87),
+                              Icon(
+                                Icons.photo_library_outlined,
+                                size: 20,
+                                color: Colors.black87,
+                              ),
                               const SizedBox(width: 12),
                               const Text(
                                 "素材库",
-                                style: TextStyle(fontSize: 14, color: Colors.black87),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ],
                           ),
@@ -4647,14 +5687,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         PopupMenuItem<String>(
                           value: 'canvas',
                           height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
-                              Icon(Icons.crop_free, size: 20, color: Colors.black87),
+                              Icon(
+                                Icons.crop_free,
+                                size: 20,
+                                color: Colors.black87,
+                              ),
                               const SizedBox(width: 12),
                               const Text(
                                 "从画布选择",
-                                style: TextStyle(fontSize: 14, color: Colors.black87),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ],
                           ),
@@ -4674,9 +5724,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         }
                       },
                     ),
-                    
+
                     const SizedBox(width: 8),
-                    
+
                     // 尾帧按钮
                     PopupMenuButton<String>(
                       icon: Row(
@@ -4690,7 +5740,10 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                           const SizedBox(width: 4),
                           Text(
                             "尾帧",
-                            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[700],
+                            ),
                           ),
                         ],
                       ),
@@ -4706,14 +5759,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         PopupMenuItem<String>(
                           value: 'local',
                           height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
-                              Icon(Icons.upload_file, size: 20, color: Colors.black87),
+                              Icon(
+                                Icons.upload_file,
+                                size: 20,
+                                color: Colors.black87,
+                              ),
                               const SizedBox(width: 12),
                               const Text(
                                 "从本地上传图片",
-                                style: TextStyle(fontSize: 14, color: Colors.black87),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ],
                           ),
@@ -4721,14 +5784,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         PopupMenuItem<String>(
                           value: 'library',
                           height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
-                              Icon(Icons.photo_library_outlined, size: 20, color: Colors.black87),
+                              Icon(
+                                Icons.photo_library_outlined,
+                                size: 20,
+                                color: Colors.black87,
+                              ),
                               const SizedBox(width: 12),
                               const Text(
                                 "素材库",
-                                style: TextStyle(fontSize: 14, color: Colors.black87),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ],
                           ),
@@ -4736,14 +5809,24 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                         PopupMenuItem<String>(
                           value: 'canvas',
                           height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
                             children: [
-                              Icon(Icons.crop_free, size: 20, color: Colors.black87),
+                              Icon(
+                                Icons.crop_free,
+                                size: 20,
+                                color: Colors.black87,
+                              ),
                               const SizedBox(width: 12),
                               const Text(
                                 "从画布选择",
-                                style: TextStyle(fontSize: 14, color: Colors.black87),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ],
                           ),
@@ -4765,129 +5848,290 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     ),
                   ],
                 ),
-              
-              const SizedBox(width: 12),
-              
-              // 模型选择 - 无边框
-              PopupMenuButton<String>(
-                initialValue: node.data['model'] ?? (node.type == NodeType.image 
-                    ? (_availableImageModels.isNotEmpty ? _availableImageModels.first : null)
-                    : (_availableVideoModels.isNotEmpty ? _availableVideoModels.first : null)),
-                icon: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        (node.type == NodeType.image ? _imageProvider : _videoProvider).toLowerCase() == 'comfyui'
-                            ? Icons.account_tree // ComfyUI 工作流图标
-                            : Icons.auto_awesome,
-                        size: 16,
-                        color: Colors.grey[700],
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          _getShortModelName(
-                            node.data['model'] ?? (node.type == NodeType.image 
-                                ? (_availableImageModels.isNotEmpty ? _availableImageModels.first : '未设置')
-                                : (_availableVideoModels.isNotEmpty ? _availableVideoModels.first : '未设置')),
-                            node.type == NodeType.image ? _imageProvider : _videoProvider,
+
+              const SizedBox(width: 8),
+
+              // 服务商选择
+              () {
+                final nodeProvider =
+                    (node.data['provider'] as String?) ??
+                    (node.type == NodeType.image
+                        ? _imageProvider
+                        : _videoProvider);
+                return PopupMenuButton<String>(
+                  initialValue: nodeProvider,
+                  icon: Container(
+                    constraints: const BoxConstraints(maxWidth: 90),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.cloud_outlined,
+                          size: 14,
+                          color: Colors.grey[700],
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            _getProviderDisplayName(nodeProvider),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[700],
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
                           ),
-                          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(Icons.arrow_drop_down, size: 18, color: Colors.grey[600]),
-                    ],
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 16,
+                          color: Colors.grey[600],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                color: Colors.white,
-                elevation: 8,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(color: _borderColor, width: 1),
-                ),
-                offset: const Offset(0, 40),
-                padding: EdgeInsets.zero,
-                itemBuilder: (context) {
-                  final models = node.type == NodeType.image ? _availableImageModels : _availableVideoModels;
-                  final provider = node.type == NodeType.image ? _imageProvider : _videoProvider;
-                  final isComfyUI = provider.toLowerCase() == 'comfyui';
-                  
-                  if (models.isEmpty) {
-                    return [
-                      const PopupMenuItem<String>(
-                        enabled: false,
-                        height: 48,
-                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Text(
-                          '请在设置中配置模型',
-                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                  color: Colors.white,
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: _borderColor, width: 1),
+                  ),
+                  offset: const Offset(0, 40),
+                  padding: EdgeInsets.zero,
+                  itemBuilder: (context) {
+                    final providers = node.type == NodeType.image
+                        ? _getImageProviderList()
+                        : _getVideoProviderList();
+                    final currentProvider = nodeProvider;
+                    return providers.map((p) {
+                      final isSelected = p['key'] == currentProvider;
+                      return PopupMenuItem<String>(
+                        value: p['key'],
+                        height: 44,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 6,
                         ),
-                      ),
-                    ];
-                  }
-                  
-                  // 检查是否是 ComfyUI 的提示信息
-                  if (models.length == 1 && (models.first.contains('未配置') || models.first.contains('无'))) {
-                    return [
-                      PopupMenuItem<String>(
-                        enabled: false,
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Text(
-                          models.first,
-                          style: const TextStyle(fontSize: 14, color: Colors.grey),
-                        ),
-                      ),
-                    ];
-                  }
-                  
-                  return models.map((model) {
-                    return PopupMenuItem<String>(
-                      value: model,
-                      height: 60, // 固定高度，足够显示多行文本
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (isComfyUI) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Icon(
-                                Icons.account_tree,
-                                size: 18,
-                                color: Colors.blue[700],
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                p['name']!,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: isSelected
+                                      ? _accentBlue
+                                      : Colors.black87,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            if (isSelected)
+                              Icon(Icons.check, size: 18, color: _accentBlue),
                           ],
-                          Expanded(
+                        ),
+                      );
+                    }).toList();
+                  },
+                  onSelected: (provider) {
+                    setState(() {
+                      node.data['provider'] = provider;
+                      // 切换服务商时重置模型为该服务商的第一个模型
+                      final modelType = node.type == NodeType.image
+                          ? 'image'
+                          : 'video';
+                      final models = _getModelsForProvider(provider, modelType);
+                      node.data['model'] = models.isNotEmpty
+                          ? models.first
+                          : null;
+                    });
+                  },
+                );
+              }(),
+
+              const SizedBox(width: 4),
+
+              // 模型选择 - 宽度受限
+              Flexible(
+                child: () {
+                  final String effectiveProvider =
+                      (node.data['provider'] as String?) ??
+                      (node.type == NodeType.image
+                          ? _imageProvider
+                          : _videoProvider);
+                  final models = _getModelsForProvider(
+                    effectiveProvider,
+                    node.type == NodeType.image ? 'image' : 'video',
+                  );
+                  final String? currentModel = node.data['model'] as String?;
+                  final String? initialModel =
+                      (currentModel != null && models.contains(currentModel))
+                      ? currentModel
+                      : (models.isNotEmpty ? models.first : null);
+                  final String displayModel = initialModel ?? '未设置';
+                  final bool isComfyUI =
+                      effectiveProvider.toLowerCase() == 'comfyui';
+
+                  return PopupMenuButton<String>(
+                    initialValue: initialModel,
+                    icon: Container(
+                      constraints: const BoxConstraints(maxWidth: 150),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isComfyUI ? Icons.account_tree : Icons.auto_awesome,
+                            size: 14,
+                            color: Colors.grey[700],
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
                             child: Text(
-                              model,
-                              style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.3),
-                              softWrap: true, // 允许换行
-                              maxLines: 2, // 最多2行
+                              _getShortModelName(
+                                displayModel,
+                                effectiveProvider,
+                              ),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
                               overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
                             ),
+                          ),
+                          Icon(
+                            Icons.arrow_drop_down,
+                            size: 16,
+                            color: Colors.grey[600],
                           ),
                         ],
                       ),
-                    );
-                  }).toList();
-                },
-                onSelected: (model) {
-                  setState(() {
-                    node.data['model'] = model;
-                  });
-                },
+                    ),
+                    color: Colors.white,
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: _borderColor, width: 1),
+                    ),
+                    offset: const Offset(0, 40),
+                    padding: EdgeInsets.zero,
+                    itemBuilder: (context) {
+                      if (models.isEmpty) {
+                        return [
+                          const PopupMenuItem<String>(
+                            enabled: false,
+                            height: 48,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: Text(
+                              '该服务商暂无可用模型',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ];
+                      }
+
+                      if (models.length == 1 &&
+                          (models.first.contains('未配置') ||
+                              models.first.contains('无'))) {
+                        return [
+                          PopupMenuItem<String>(
+                            enabled: false,
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: Text(
+                              models.first,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ];
+                      }
+
+                      return models.map((model) {
+                        final isSelected = model == initialModel;
+                        return PopupMenuItem<String>(
+                          value: model,
+                          height: 48,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 6,
+                          ),
+                          child: Row(
+                            children: [
+                              if (isComfyUI) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Icon(
+                                    Icons.account_tree,
+                                    size: 16,
+                                    color: isSelected
+                                        ? _accentBlue
+                                        : Colors.blue[700],
+                                  ),
+                                ),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  model,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: isSelected
+                                        ? _accentBlue
+                                        : Colors.black87,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 2,
+                                ),
+                              ),
+                              if (isSelected)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Icon(
+                                    Icons.check,
+                                    size: 18,
+                                    color: _accentBlue,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      }).toList();
+                    },
+                    onSelected: (model) {
+                      setState(() {
+                        node.data['model'] = model;
+                      });
+                    },
+                  );
+                }(),
               ),
-              
+
               const Spacer(),
-              
+
               // 分辨率选择 - 无边框
               _buildCompactDropdown(
                 value: node.data['resolution'] ?? "1K",
@@ -4898,9 +6142,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   }
                 },
               ),
-              
+
               const SizedBox(width: 8),
-              
+
               // 视频节点：比例选择
               if (node.type == NodeType.video)
                 _buildCompactDropdown(
@@ -4920,7 +6164,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                     }
                   },
                 ),
-              
+
               // 视频节点：时长选择
               if (node.type == NodeType.video) ...[
                 const SizedBox(width: 8),
@@ -4942,7 +6186,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   },
                 ),
               ],
-              
+
               // 图片节点：比例选择
               if (node.type == NodeType.image) ...[
                 const SizedBox(width: 8),
@@ -4964,9 +6208,9 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
                   },
                 ),
               ],
-              
+
               const SizedBox(width: 12),
-              
+
               // 生成按钮 - 黑色纸飞机图标，无背景
               IconButton(
                 icon: const Icon(Icons.send, size: 24, color: Colors.black87),
@@ -4980,7 +6224,7 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
       ),
     );
   }
-  
+
   // 紧凑的下拉框 - 无边框版本
   Widget _buildCompactDropdown({
     required String value,
@@ -4997,43 +6241,30 @@ class _AiCanvasPageState extends State<AiCanvasPage> with TickerProviderStateMix
           style: TextStyle(fontSize: 13, color: Colors.grey[700]),
           dropdownColor: Colors.white,
           items: items
-              .map((item) => DropdownMenuItem(
-                    value: item,
-                    child: Text(item),
-                  ))
+              .map((item) => DropdownMenuItem(value: item, child: Text(item)))
               .toList(),
           onChanged: onChanged,
         ),
       ),
     );
   }
-
 }
 
 // 画布工具
 enum CanvasTool {
-  select,  // 选择
-  pan,     // 拖动画布（手掌）
-  draw,    // 画笔
-  text,    // 文本
-  image,   // 图片
-  video,   // 视频
+  select, // 选择
+  pan, // 拖动画布（手掌）
+  draw, // 画笔
+  text, // 文本
+  image, // 图片
+  video, // 视频
 }
 
 // 调整大小手柄
-enum ResizeHandle {
-  topLeft,
-  topRight,
-  bottomLeft,
-  bottomRight,
-}
+enum ResizeHandle { topLeft, topRight, bottomLeft, bottomRight }
 
 // 节点类型
-enum NodeType {
-  image,
-  video,
-  text,
-}
+enum NodeType { image, video, text }
 
 // 节点数据模型
 class CanvasNode {
@@ -5083,12 +6314,16 @@ class _WindowControlButtonState extends State<_WindowControlButton> {
           width: 46,
           height: 32,
           color: _isHovered
-              ? (widget.isClose ? Colors.red : AppTheme.textColor.withValues(alpha: 0.1))
+              ? (widget.isClose
+                    ? Colors.red
+                    : AppTheme.textColor.withValues(alpha: 0.1))
               : Colors.transparent,
           child: Icon(
             widget.icon,
             size: 16,
-            color: _isHovered && widget.isClose ? Colors.white : AppTheme.subTextColor,
+            color: _isHovered && widget.isClose
+                ? Colors.white
+                : AppTheme.subTextColor,
           ),
         ),
       ),
@@ -5131,16 +6366,16 @@ class DrawingPainter extends CustomPainter {
     for (var stroke in strokes) {
       _drawStroke(canvas, stroke, stroke == selectedStroke);
     }
-    
+
     // 绘制当前笔画
     if (currentStroke != null) {
       _drawStroke(canvas, currentStroke!, false);
     }
   }
-  
+
   void _drawStroke(Canvas canvas, DrawingStroke stroke, bool isSelected) {
     if (stroke.points.length < 2) return;
-    
+
     // 如果选中，先绘制外层高亮
     if (isSelected) {
       final highlightPaint = Paint()
@@ -5149,38 +6384,38 @@ class DrawingPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..style = PaintingStyle.stroke;
-      
+
       final path = Path();
       final firstPoint = _transformPoint(stroke.points[0]);
       path.moveTo(firstPoint.dx, firstPoint.dy);
-      
+
       for (int i = 1; i < stroke.points.length; i++) {
         final point = _transformPoint(stroke.points[i]);
         path.lineTo(point.dx, point.dy);
       }
-      
+
       canvas.drawPath(path, highlightPaint);
     }
-    
+
     final paint = Paint()
       ..color = stroke.color
       ..strokeWidth = stroke.strokeWidth * scale
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
-    
+
     final path = Path();
     final firstPoint = _transformPoint(stroke.points[0]);
     path.moveTo(firstPoint.dx, firstPoint.dy);
-    
+
     for (int i = 1; i < stroke.points.length; i++) {
       final point = _transformPoint(stroke.points[i]);
       path.lineTo(point.dx, point.dy);
     }
-    
+
     canvas.drawPath(path, paint);
   }
-  
+
   // 将画布坐标转换为屏幕坐标
   Offset _transformPoint(Offset point) {
     return Offset(
@@ -5198,24 +6433,21 @@ class SelectionBoxPainter extends CustomPainter {
   final Offset start;
   final Offset end;
 
-  SelectionBoxPainter({
-    required this.start,
-    required this.end,
-  });
+  SelectionBoxPainter({required this.start, required this.end});
 
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Rect.fromPoints(start, end);
-    
+
     final fillPaint = Paint()
       ..color = const Color(0xFF3B82F6).withValues(alpha: 0.1)
       ..style = PaintingStyle.fill;
-    
+
     final strokePaint = Paint()
       ..color = const Color(0xFF3B82F6)
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
-    
+
     canvas.drawRect(rect, fillPaint);
     canvas.drawRect(rect, strokePaint);
   }
@@ -5224,14 +6456,11 @@ class SelectionBoxPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-
 // 素材库对话框
 class _MaterialLibraryDialog extends StatefulWidget {
   final NodeType nodeType;
-  
-  const _MaterialLibraryDialog({
-    required this.nodeType,
-  });
+
+  const _MaterialLibraryDialog({required this.nodeType});
 
   @override
   State<_MaterialLibraryDialog> createState() => _MaterialLibraryDialogState();
@@ -5241,12 +6470,12 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
   int _selectedCategoryIndex = 0;
   final List<String> _imageCategories = ['角色素材', '场景素材', '物品素材'];
   final List<String> _videoCategories = ['角色素材', '场景素材', '物品素材', '语音库'];
-  
+
   // 实际素材数据
   final Map<int, List<AssetStyle>> _stylesByCategory = {};
   List<VoiceAsset> _voiceAssets = [];
   bool _isLoading = true;
-  
+
   final Set<String> _selectedImages = {};
   String? _selectedVoice;
 
@@ -5260,16 +6489,17 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
   Future<void> _loadAssets() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // 加载图片素材（角色、场景、物品）- 图片和视频节点都需要
       final assetsJson = prefs.getString('asset_library_data');
       if (assetsJson != null && assetsJson.isNotEmpty) {
         final data = jsonDecode(assetsJson) as Map<String, dynamic>;
-        
+
         setState(() {
           data.forEach((key, value) {
             final categoryIndex = int.parse(key);
-            if (categoryIndex >= 0 && categoryIndex <= 2) { // 前3个分类
+            if (categoryIndex >= 0 && categoryIndex <= 2) {
+              // 前3个分类
               final stylesList = (value as List).map((styleData) {
                 return AssetStyle.fromJson(styleData);
               }).toList();
@@ -5278,7 +6508,7 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
           });
         });
       }
-      
+
       // 加载语音素材 - 视频节点需要
       if (widget.nodeType == NodeType.video) {
         final voicesJson = prefs.getString('voice_library_data');
@@ -5286,13 +6516,13 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
           final voicesList = (jsonDecode(voicesJson) as List)
               .map((item) => VoiceAsset.fromJson(item as Map<String, dynamic>))
               .toList();
-          
+
           setState(() {
             _voiceAssets = voicesList;
           });
         }
       }
-      
+
       setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('加载素材失败: $e');
@@ -5316,11 +6546,14 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final categories = widget.nodeType == NodeType.image ? _imageCategories : _videoCategories;
-    final isVoiceCategory = widget.nodeType == NodeType.video && _selectedCategoryIndex == 3;
+    final categories = widget.nodeType == NodeType.image
+        ? _imageCategories
+        : _videoCategories;
+    final isVoiceCategory =
+        widget.nodeType == NodeType.video && _selectedCategoryIndex == 3;
     final assets = isVoiceCategory ? [] : _getCurrentAssets();
     final voices = isVoiceCategory ? _voiceAssets : [];
-    
+
     return Dialog(
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -5336,7 +6569,10 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
               children: [
                 Text(
                   widget.nodeType == NodeType.image ? '选择素材' : '选择素材',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const Spacer(),
                 IconButton(
@@ -5345,9 +6581,9 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // 分类标签
             SizedBox(
               height: 40,
@@ -5371,144 +6607,176 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                 },
               ),
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // 素材网格
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : (assets.isEmpty && voices.isEmpty)
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.folder_open, size: 64, color: Colors.grey[400]),
-                              const SizedBox(height: 16),
-                              Text(
-                                '暂无素材\n请在素材库页面添加素材',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Colors.grey[600], fontSize: 14),
-                              ),
-                            ],
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.folder_open,
+                            size: 64,
+                            color: Colors.grey[400],
                           ),
-                        )
-                      : GridView.builder(
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          const SizedBox(height: 16),
+                          Text(
+                            '暂无素材\n请在素材库页面添加素材',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : GridView.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 4,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
                             childAspectRatio: 1.0,
                           ),
-                          itemCount: isVoiceCategory ? voices.length : assets.length,
-                          itemBuilder: (context, index) {
-                            if (isVoiceCategory) {
-                              // 语音素材
-                              final voice = voices[index];
-                              final isSelected = _selectedVoice == voice.id;
-                              
-                              return GestureDetector(
-                                onTap: () {
-                                  setState(() => _selectedVoice = voice.id);
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: isSelected ? const Color(0xFF3B82F6).withValues(alpha: 0.1) : Colors.grey[100],
-                                    border: Border.all(
-                                      color: isSelected ? const Color(0xFF3B82F6) : Colors.grey[300]!,
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.mic,
-                                        size: 32,
-                                        color: isSelected ? const Color(0xFF3B82F6) : Colors.grey[600],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        voice.name,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: isSelected ? const Color(0xFF3B82F6) : Colors.black87,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
-                                  ),
+                      itemCount: isVoiceCategory
+                          ? voices.length
+                          : assets.length,
+                      itemBuilder: (context, index) {
+                        if (isVoiceCategory) {
+                          // 语音素材
+                          final voice = voices[index];
+                          final isSelected = _selectedVoice == voice.id;
+
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() => _selectedVoice = voice.id);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? const Color(
+                                        0xFF3B82F6,
+                                      ).withValues(alpha: 0.1)
+                                    : Colors.grey[100],
+                                border: Border.all(
+                                  color: isSelected
+                                      ? const Color(0xFF3B82F6)
+                                      : Colors.grey[300]!,
+                                  width: isSelected ? 2 : 1,
                                 ),
-                              );
-                            } else {
-                              // 图片素材（角色、场景、物品）
-                              final asset = assets[index];
-                              final isSelected = _selectedImages.contains(asset.path);
-                              
-                              return GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    if (isSelected) {
-                                      _selectedImages.remove(asset.path);
-                                    } else if (_selectedImages.length < 10) {
-                                      _selectedImages.add(asset.path);
-                                    }
-                                  });
-                                },
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: isSelected ? const Color(0xFF3B82F6) : Colors.grey[300]!,
-                                      width: isSelected ? 3 : 1,
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.mic,
+                                    size: 32,
+                                    color: isSelected
+                                        ? const Color(0xFF3B82F6)
+                                        : Colors.grey[600],
                                   ),
-                                  child: Stack(
-                                    children: [
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: Image.file(
-                                          File(asset.path),
-                                          fit: BoxFit.cover,
-                                          width: double.infinity,
-                                          height: double.infinity,
-                                          errorBuilder: (context, error, stackTrace) {
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    voice.name,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: isSelected
+                                          ? const Color(0xFF3B82F6)
+                                          : Colors.black87,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        } else {
+                          // 图片素材（角色、场景、物品）
+                          final asset = assets[index];
+                          final isSelected = _selectedImages.contains(
+                            asset.path,
+                          );
+
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                if (isSelected) {
+                                  _selectedImages.remove(asset.path);
+                                } else if (_selectedImages.length < 10) {
+                                  _selectedImages.add(asset.path);
+                                }
+                              });
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: isSelected
+                                      ? const Color(0xFF3B82F6)
+                                      : Colors.grey[300]!,
+                                  width: isSelected ? 3 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.file(
+                                      File(asset.path),
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      errorBuilder:
+                                          (context, error, stackTrace) {
                                             return Container(
                                               color: Colors.grey[200],
-                                              child: Icon(Icons.broken_image, color: Colors.grey[400]),
+                                              child: Icon(
+                                                Icons.broken_image,
+                                                color: Colors.grey[400],
+                                              ),
                                             );
                                           },
+                                    ),
+                                  ),
+                                  if (isSelected)
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: Container(
+                                        width: 24,
+                                        height: 24,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF3B82F6),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.check,
+                                          color: Colors.white,
+                                          size: 16,
                                         ),
                                       ),
-                                      if (isSelected)
-                                        Positioned(
-                                          top: 8,
-                                          right: 8,
-                                          child: Container(
-                                            width: 24,
-                                            height: 24,
-                                            decoration: const BoxDecoration(
-                                              color: Color(0xFF3B82F6),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(Icons.check, color: Colors.white, size: 16),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                        ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                    ),
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // 底部按钮
             Row(
               children: [
@@ -5533,14 +6801,19 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                     } else {
                       // 图片素材
                       if (_selectedImages.isNotEmpty) {
-                        Navigator.pop(context, {'images': _selectedImages.toList()});
+                        Navigator.pop(context, {
+                          'images': _selectedImages.toList(),
+                        });
                       }
                     }
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF3B82F6),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                   ),
                   child: const Text('确定'),
                 ),
@@ -5569,9 +6842,11 @@ class AssetStyle {
     return AssetStyle(
       name: json['name'] ?? '',
       description: json['description'] ?? '',
-      assets: (json['assets'] as List?)
-          ?.map((item) => AssetItem.fromJson(item as Map<String, dynamic>))
-          .toList() ?? [],
+      assets:
+          (json['assets'] as List?)
+              ?.map((item) => AssetItem.fromJson(item as Map<String, dynamic>))
+              .toList() ??
+          [],
     );
   }
 

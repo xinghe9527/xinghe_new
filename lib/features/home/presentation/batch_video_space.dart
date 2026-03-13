@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';  // ✅ 导入窗口管理器
+import 'package:window_manager/window_manager.dart'; // ✅ 导入窗口管理器
 import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
+import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/features/home/domain/video_task.dart';
-import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
-import 'package:xinghe_new/features/creation_workflow/presentation/widgets/video_grid_item.dart';  // ✅ 导入原位播放组件
-import 'package:xinghe_new/features/home/presentation/settings_page.dart';  // ✅ 导入设置页面
-import 'package:xinghe_new/core/aigc_engine/automation_api_client.dart';  // ✅ 导入网页服务商客户端
-import 'package:xinghe_new/services/api/api_repository.dart';  // ✅ 导入 API 仓库
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart'; // ✅ 导入拖动组件
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/video_grid_item.dart'; // ✅ 导入原位播放组件
+import 'package:xinghe_new/features/home/presentation/settings_page.dart'; // ✅ 导入设置页面
+import 'package:xinghe_new/core/aigc_engine/automation_api_client.dart'; // ✅ 导入网页服务商客户端
+import 'package:xinghe_new/services/api/api_repository.dart'; // ✅ 导入 API 仓库
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
@@ -34,9 +35,9 @@ final Map<String, int> _batchVideoProgress = {};
 class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   final List<VideoTask> _tasks = [];
   final LogManager _logger = LogManager();
-  final ApiRepository _apiRepository = ApiRepository();  // ✅ API Repository
-  bool _showSettings = false;  // ✅ 控制设置页面显示
-  bool _isSmartMatching = false;  // ✅ 智能匹配中
+  final ApiRepository _apiRepository = ApiRepository(); // ✅ API Repository
+  bool _showSettings = false; // ✅ 控制设置页面显示
+  bool _isSmartMatching = false; // ✅ 智能匹配中
 
   @override
   void initState() {
@@ -52,27 +53,29 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       final tasksJson = prefs.getString('batch_video_tasks');
       if (tasksJson != null && tasksJson.isNotEmpty && mounted) {
         final tasksList = jsonDecode(tasksJson) as List;
-        final tasks = tasksList.map((json) => VideoTask.fromJson(json)).toList();
-        
+        final tasks = tasksList
+            .map((json) => VideoTask.fromJson(json))
+            .toList();
+
         // 清理遗留占位符
         var cleanedCount = 0;
         for (var task in tasks) {
           final originalCount = task.generatedVideos.length;
-          task.generatedVideos.removeWhere((v) => 
-            v.startsWith('loading_') || v.startsWith('failed_')
+          task.generatedVideos.removeWhere(
+            (v) => v.startsWith('loading_') || v.startsWith('failed_'),
           );
           cleanedCount += originalCount - task.generatedVideos.length;
         }
-        
+
         setState(() {
           _tasks.clear();
           _tasks.addAll(tasks);
         });
-        
+
         if (cleanedCount > 0) {
           _saveTasks();
         }
-        
+
         _logger.success('成功加载 ${_tasks.length} 个批量任务', module: '批量空间');
       }
     } catch (e) {
@@ -83,30 +86,47 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   Future<void> _saveTasks() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('batch_video_tasks', jsonEncode(_tasks.map((t) => t.toJson()).toList()));
+      await prefs.setString(
+        'batch_video_tasks',
+        jsonEncode(_tasks.map((t) => t.toJson()).toList()),
+      );
     } catch (e) {
       _logger.error('保存批量任务失败: $e', module: '批量空间');
     }
   }
 
-  void _addNewTask() {
-    final newTask = _tasks.isEmpty 
-        ? VideoTask.create()
-        : VideoTask.create().copyWith(
+  Future<void> _addNewTask() async {
+    VideoTask newTask;
+    if (_tasks.isEmpty) {
+      newTask = VideoTask.create();
+      // 从设置中读取用户保存的模型
+      final prefs = await SharedPreferences.getInstance();
+      final provider = prefs.getString('video_provider') ?? 'geeknow';
+      final savedModel = await SecureStorageManager().getModel(provider: provider, modelType: 'video');
+      if (savedModel != null && savedModel.isNotEmpty) {
+        newTask = newTask.copyWith(model: savedModel);
+      }
+    } else {
+      newTask = VideoTask.create().copyWith(
             model: _tasks.last.model,
             ratio: _tasks.last.ratio,
             quality: _tasks.last.quality,
             batchCount: _tasks.last.batchCount,
             seconds: _tasks.last.seconds,
           );
+    }
     setState(() => _tasks.add(newTask));
     _saveTasks();
-    _logger.success('创建新的批量任务', module: '批量空间', extra: {
-      'taskId': newTask.id,
-      '任务索引': _tasks.length - 1,
-      '任务总数': _tasks.length,
-    });
-    
+    _logger.success(
+      '创建新的批量任务',
+      module: '批量空间',
+      extra: {
+        'taskId': newTask.id,
+        '任务索引': _tasks.length - 1,
+        '任务总数': _tasks.length,
+      },
+    );
+
     // 输出所有任务的ID，方便调试
     for (var i = 0; i < _tasks.length; i++) {
       _logger.info('任务 $i: ID=${_tasks[i].id}', module: '批量空间');
@@ -125,45 +145,69 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       _showMessage('请先输入提示词', isError: true);
       return;
     }
-    
-    _logger.success('🚀 开始生成单个任务', module: '批量空间', extra: {
-      '提示词': task.prompt.substring(0, task.prompt.length > 20 ? 20 : task.prompt.length),
-      '批量': task.batchCount,
-    });
-    
+
+    _logger.success(
+      '🚀 开始生成单个任务',
+      module: '批量空间',
+      extra: {
+        '提示词': task.prompt.substring(
+          0,
+          task.prompt.length > 20 ? 20 : task.prompt.length,
+        ),
+        '批量': task.batchCount,
+      },
+    );
+
     // 生成这一个任务
     await _generateSingleTask(task);
-    
+
     _logger.success('✅ 单个任务生成完成', module: '批量空间');
   }
 
   void _updateTask(VideoTask task) {
     final index = _tasks.indexWhere((t) => t.id == task.id);
     if (index != -1) {
-      _logger.info('【_updateTask】准备更新任务 [$index]', module: '批量空间', extra: {
-        'taskId': task.id,
-        '旧图片数': _tasks[index].referenceImages.length,
-        '新图片数': task.referenceImages.length,
-      });
-      
+      _logger.info(
+        '【_updateTask】准备更新任务 [$index]',
+        module: '批量空间',
+        extra: {
+          'taskId': task.id,
+          '旧图片数': _tasks[index].referenceImages.length,
+          '新图片数': task.referenceImages.length,
+        },
+      );
+
       _tasks[index] = task;
-      
-      _logger.success('【_updateTask】任务已更新', module: '批量空间', extra: {
-        'taskId': task.id,
-        'index': index,
-        'prompt': task.prompt.length > 20 ? '${task.prompt.substring(0, 20)}...' : task.prompt,
-        'images': task.referenceImages.length,
-        'videos': task.generatedVideos.length,
-      });
-      
+
+      _logger.success(
+        '【_updateTask】任务已更新',
+        module: '批量空间',
+        extra: {
+          'taskId': task.id,
+          'index': index,
+          'prompt': task.prompt.length > 20
+              ? '${task.prompt.substring(0, 20)}...'
+              : task.prompt,
+          'images': task.referenceImages.length,
+          'videos': task.generatedVideos.length,
+        },
+      );
+
       // 输出更新后所有任务的状态
       for (var i = 0; i < _tasks.length; i++) {
-        _logger.info('  更新后任务[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}', module: '批量空间');
+        _logger.info(
+          '  更新后任务[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}',
+          module: '批量空间',
+        );
       }
-      
+
       _saveTasks();
     } else {
-      _logger.warning('【_updateTask】任务不存在！', module: '批量空间', extra: {'taskId': task.id});
+      _logger.warning(
+        '【_updateTask】任务不存在！',
+        module: '批量空间',
+        extra: {'taskId': task.id},
+      );
     }
     if (mounted) {
       setState(() {});
@@ -177,11 +221,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         type: FileType.custom,
         allowedExtensions: ['csv'],
       );
-      
+
       if (result == null || result.files.isEmpty) return;
-      
+
       final file = File(result.files.first.path!);
-      
+
       // 兼容多种编码：先读字节，再尝试 UTF-8 / 系统编码（GBK/ANSI）
       final bytes = await file.readAsBytes();
       String content;
@@ -195,40 +239,47 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         content = content.substring(1);
       }
       final lines = content.split('\n');
-      
+
       if (lines.isEmpty) {
         _showMessage('CSV文件为空', isError: true);
         return;
       }
-      
+
       // 跳过表头
-      final dataLines = lines.skip(1).where((line) => line.trim().isNotEmpty).toList();
-      
+      final dataLines = lines
+          .skip(1)
+          .where((line) => line.trim().isNotEmpty)
+          .toList();
+
       if (dataLines.isEmpty) {
         _showMessage('CSV文件没有数据', isError: true);
         return;
       }
-      
+
       final newTasks = <VideoTask>[];
       final warnings = <String>[];
-      
+
       for (var i = 0; i < dataLines.length; i++) {
         final line = dataLines[i].trim();
         final parts = _parseCSVLine(line);
-        
+
         if (parts.isEmpty) continue;
-        
+
         // 解析字段
         final prompt = parts.isNotEmpty ? parts[0].trim() : '';
         if (prompt.isEmpty) {
           warnings.add('第${i + 2}行: 提示词为空，已跳过');
           continue;
         }
-        
+
         final ratio = parts.length > 1 ? _validateRatio(parts[1].trim()) : '自动';
-        final seconds = parts.length > 2 ? _validateSeconds(parts[2].trim()) : '自动';
-        final batchCount = parts.length > 3 ? _validateBatchCount(parts[3].trim()) : 1;
-        
+        final seconds = parts.length > 2
+            ? _validateSeconds(parts[2].trim())
+            : '自动';
+        final batchCount = parts.length > 3
+            ? _validateBatchCount(parts[3].trim())
+            : 1;
+
         // 解析参考图片
         final referenceImages = <String>[];
         if (parts.length > 4 && parts[4].trim().isNotEmpty) {
@@ -242,7 +293,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             }
           }
         }
-        
+
         // 解析生成视频
         final generatedVideos = <String>[];
         if (parts.length > 5 && parts[5].trim().isNotEmpty) {
@@ -256,7 +307,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             }
           }
         }
-        
+
         // ✅ 创建唯一ID：时间戳 + 索引，确保每个任务ID都不同
         final uniqueId = '${DateTime.now().millisecondsSinceEpoch}_$i';
         final newTask = VideoTask(
@@ -268,16 +319,16 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           referenceImages: referenceImages,
           generatedVideos: generatedVideos,
         );
-        
+
         newTasks.add(newTask);
         _logger.info('创建CSV任务 $i', module: '批量空间', extra: {'taskId': uniqueId});
       }
-      
+
       if (newTasks.isEmpty) {
         _showMessage('没有可导入的任务', isError: true);
         return;
       }
-      
+
       // 显示预览对话框
       final confirmed = await _showImportPreview(newTasks, warnings);
       if (confirmed == true) {
@@ -287,11 +338,14 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         _saveTasks();
         _logger.success('成功导入 ${newTasks.length} 个任务', module: '批量空间');
         _showMessage('成功导入 ${newTasks.length} 个任务');
-        
+
         // ✅ 输出所有任务的ID，确认没有重复
         _logger.info('导入后的任务列表:', module: '批量空间');
         for (var i = 0; i < _tasks.length; i++) {
-          _logger.info('  任务[$i]: ID=${_tasks[i].id}, 提示词=${_tasks[i].prompt.length > 20 ? _tasks[i].prompt.substring(0, 20) : _tasks[i].prompt}...', module: '批量空间');
+          _logger.info(
+            '  任务[$i]: ID=${_tasks[i].id}, 提示词=${_tasks[i].prompt.length > 20 ? _tasks[i].prompt.substring(0, 20) : _tasks[i].prompt}...',
+            module: '批量空间',
+          );
         }
       }
     } catch (e) {
@@ -305,10 +359,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     final result = <String>[];
     var current = StringBuffer();
     var inQuotes = false;
-    
+
     for (var i = 0; i < line.length; i++) {
       final char = line[i];
-      
+
       if (char == '"') {
         inQuotes = !inQuotes;
       } else if (char == ',' && !inQuotes) {
@@ -318,7 +372,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         current.write(char);
       }
     }
-    
+
     result.add(current.toString());
     return result;
   }
@@ -344,11 +398,19 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   }
 
   /// 显示导入预览对话框
-  Future<bool?> _showImportPreview(List<VideoTask> tasks, List<String> warnings) async {
+  Future<bool?> _showImportPreview(
+    List<VideoTask> tasks,
+    List<String> warnings,
+  ) async {
     // 统计视频信息
-    final tasksWithVideos = tasks.where((t) => t.generatedVideos.isNotEmpty).length;
-    final totalVideos = tasks.fold<int>(0, (sum, t) => sum + t.generatedVideos.length);
-    
+    final tasksWithVideos = tasks
+        .where((t) => t.generatedVideos.isNotEmpty)
+        .length;
+    final totalVideos = tasks.fold<int>(
+      0,
+      (sum, t) => sum + t.generatedVideos.length,
+    );
+
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -362,7 +424,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             children: [
               Text(
                 '即将导入 ${tasks.length} 个任务',
-                style: TextStyle(color: AppTheme.textColor, fontSize: 16, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: AppTheme.textColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               if (tasksWithVideos > 0) ...[
                 const SizedBox(height: 8),
@@ -375,7 +441,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                 const SizedBox(height: 16),
                 Text(
                   '警告 (${warnings.length})',
-                  style: const TextStyle(color: Colors.orange, fontSize: 14, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.orange,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Container(
@@ -383,13 +453,20 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: warnings.map((w) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Text(
-                          '• $w',
-                          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
-                        ),
-                      )).toList(),
+                      children: warnings
+                          .map(
+                            (w) => Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '• $w',
+                                style: TextStyle(
+                                  color: AppTheme.subTextColor,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
                     ),
                   ),
                 ),
@@ -418,30 +495,34 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         _showMessage('没有可导出的任务', isError: true);
         return;
       }
-      
+
       final result = await FilePicker.platform.saveFile(
         dialogTitle: '导出CSV',
         fileName: 'batch_tasks_${DateTime.now().millisecondsSinceEpoch}.csv',
         type: FileType.custom,
         allowedExtensions: ['csv'],
       );
-      
+
       if (result == null) return;
-      
+
       final lines = <String>[];
       lines.add('提示词,比例,时长,批量,参考图片,生成视频');
-      
+
       for (var task in _tasks) {
-        final prompt = task.prompt.contains(',') ? '"${task.prompt}"' : task.prompt;
+        final prompt = task.prompt.contains(',')
+            ? '"${task.prompt}"'
+            : task.prompt;
         final images = task.referenceImages.join('|');
         final videos = task.generatedVideos.join('|');
-        lines.add('$prompt,${task.ratio},${task.seconds},${task.batchCount},$images,$videos');
+        lines.add(
+          '$prompt,${task.ratio},${task.seconds},${task.batchCount},$images,$videos',
+        );
       }
-      
+
       final file = File(result);
       // 添加 UTF-8 BOM，让 WPS/Excel 识别为 UTF-8 编码
       await file.writeAsString('\uFEFF${lines.join('\n')}', encoding: utf8);
-      
+
       _logger.success('成功导出 ${_tasks.length} 个任务', module: '批量空间');
       _showMessage('成功导出到 $result');
     } catch (e) {
@@ -452,20 +533,25 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
 
   /// 批量生成所有任务
   Future<void> _generateAllTasks() async {
-    final tasksToGenerate = _tasks.where((t) => t.prompt.trim().isNotEmpty).toList();
-    
+    final tasksToGenerate = _tasks
+        .where((t) => t.prompt.trim().isNotEmpty)
+        .toList();
+
     if (tasksToGenerate.isEmpty) {
       _showMessage('没有可生成的任务\n请确保任务有提示词', isError: true);
       return;
     }
-    
-    _logger.success('🚀 开始批量生成 ${tasksToGenerate.length} 个视频任务', module: '批量空间');
-    
+
+    _logger.success(
+      '🚀 开始批量生成 ${tasksToGenerate.length} 个视频任务',
+      module: '批量空间',
+    );
+
     await Future.wait(
       tasksToGenerate.map((task) => _generateSingleTask(task)),
       eagerError: false,
     );
-    
+
     _logger.success('✅ 批量生成完成', module: '批量空间');
   }
 
@@ -477,11 +563,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     required int index,
     required SharedPreferences prefs,
   }) async {
-    final payload = <String, dynamic>{
-      'prompt': task.prompt,
-      'model': webModel,
-    };
-    
+    final payload = <String, dynamic>{'prompt': task.prompt, 'model': webModel};
+
     // 添加保存路径
     final savePath = prefs.getString('video_save_path');
     if (savePath != null && savePath.isNotEmpty) {
@@ -490,7 +573,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       final fullPath = path.join(savePath, fileName);
       payload['savePath'] = fullPath;
     }
-    
+
     // 图生视频
     if (webTool == 'img2video') {
       if (task.referenceImages.isEmpty) {
@@ -498,13 +581,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       }
       payload['imageUrl'] = task.referenceImages.first;
     }
-    
+
     // 参考生视频
     if (webTool == 'ref2video') {
       if (task.referenceImages.isNotEmpty) {
         final List<String> assetNames = [];
         final List<String> normalFiles = [];
-        
+
         for (final refPath in task.referenceImages) {
           final assetName = await _findAssetNameByPath(refPath);
           if (assetName != null && assetName.isNotEmpty) {
@@ -513,99 +596,128 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             normalFiles.add(refPath);
           }
         }
-        
+
         if (assetNames.isNotEmpty) {
           payload['characterName'] = assetNames.join(',');
-          _logger.info('【批量空间】参考生视频：素材库主体「${assetNames.join(", ")}」', module: '批量空间');
+          _logger.info(
+            '【批量空间】参考生视频：素材库主体「${assetNames.join(", ")}」',
+            module: '批量空间',
+          );
         }
         if (normalFiles.isNotEmpty) {
           payload['referenceFile'] = normalFiles.first;
-          _logger.info('【批量空间】参考生视频：上传参考文件 ${normalFiles.first}', module: '批量空间');
+          _logger.info(
+            '【批量空间】参考生视频：上传参考文件 ${normalFiles.first}',
+            module: '批量空间',
+          );
         }
       } else {
         if (task.characterName.isNotEmpty) {
           payload['characterName'] = task.characterName;
-          _logger.info('【批量空间】参考生视频：使用任务角色名「${task.characterName}」', module: '批量空间');
+          _logger.info(
+            '【批量空间】参考生视频：使用任务角色名「${task.characterName}」',
+            module: '批量空间',
+          );
         }
       }
     }
-    
+
     // 视频参数
     payload['aspectRatio'] = task.ratio;
     payload['resolution'] = task.quality;
     payload['duration'] = task.seconds;
-    
+
     return payload;
   }
 
   /// 生成单个任务
   Future<void> _generateSingleTask(VideoTask task) async {
     if (task.prompt.trim().isEmpty) return;
-    
+
     final batchCount = task.batchCount;
-    
+
     // 添加占位符
     final placeholders = List.generate(
       batchCount,
       (i) => 'loading_${DateTime.now().millisecondsSinceEpoch}_${task.id}_$i',
     );
-    
+
     // 初始化进度
     for (var placeholder in placeholders) {
       _batchVideoProgress[placeholder] = 0;
     }
-    
+
     // 更新任务
     final updatedTask = task.copyWith(
       generatedVideos: [...task.generatedVideos, ...placeholders],
     );
     _updateTask(updatedTask);
-    
+
     await Future.delayed(const Duration(milliseconds: 100));
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('video_provider') ?? 'geeknow';
-      
+
+      // 从设置中读取用户保存的模型，优先使用设置模型
+      final savedModel = await SecureStorageManager().getModel(provider: provider, modelType: 'video');
+      final effectiveModel = savedModel ?? task.model;
+
       _logger.info('【批量空间】使用 Provider: $provider', module: '批量空间');
-      _logger.info('【批量空间】任务信息', module: '批量空间', extra: {
-        'taskId': task.id,
-        'prompt': task.prompt.substring(0, task.prompt.length > 30 ? 30 : task.prompt.length),
-        'model': task.model,
-        'ratio': task.ratio,
-        'seconds': task.seconds,
-        'batchCount': task.batchCount,
-        'referenceImages': task.referenceImages.length,
-      });
-      
+      _logger.info(
+        '【批量空间】任务信息',
+        module: '批量空间',
+        extra: {
+          'taskId': task.id,
+          'prompt': task.prompt.substring(
+            0,
+            task.prompt.length > 30 ? 30 : task.prompt.length,
+          ),
+          'model': effectiveModel,
+          'ratio': task.ratio,
+          'seconds': task.seconds,
+          'batchCount': task.batchCount,
+          'referenceImages': task.referenceImages.length,
+        },
+      );
+
       // ✅ 判断是否为网页服务商
-      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(provider);
-      
+      final isWebProvider = [
+        'vidu',
+        'jimeng',
+        'keling',
+        'hailuo',
+      ].contains(provider);
+
       if (isWebProvider) {
         // ========== 网页服务商路线 ==========
-        _logger.info('【批量空间】使用网页服务商生成视频', module: '批量空间', extra: {'provider': provider});
-        
+        _logger.info(
+          '【批量空间】使用网页服务商生成视频',
+          module: '批量空间',
+          extra: {'provider': provider},
+        );
+
         // 读取网页服务商配置
         final webTool = prefs.getString('video_web_tool');
         final webModel = prefs.getString('video_web_model');
-        
+
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
         }
-        
+
         if (webModel == null || webModel.isEmpty) {
           throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型（如：Vidu Q3）');
         }
-        
-        _logger.info('【批量空间】网页服务商配置', module: '批量空间', extra: {
-          'provider': provider,
-          'tool': webTool,
-          'model': webModel,
-        });
-        
+
+        _logger.info(
+          '【批量空间】网页服务商配置',
+          module: '批量空间',
+          extra: {'provider': provider, 'tool': webTool, 'model': webModel},
+        );
+
         // ✅ 创建 AutomationApiClient 实例
         final aigcClient = AutomationApiClient();
-        
+
         // ✅ 检查 API 服务是否可用
         final isHealthy = await aigcClient.checkHealth();
         if (!isHealthy) {
@@ -614,43 +726,58 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             '请先启动 Python 服务：\n'
             '1. 打开命令行\n'
             '2. 进入项目目录\n'
-            '3. 运行: python python_backend/web_automation/api_server.py'
+            '3. 运行: python python_backend/web_automation/api_server.py',
           );
         }
-        
+
         _logger.success('【批量空间】Python API 服务连接成功', module: '批量空间');
-        
+
         // ✅ Vidu 需要顺序生成（每次生成需要刷新页面），其他网页服务商可以并发
         final isViduProvider = provider == 'vidu';
-        
+
         if (isViduProvider) {
           // ========== Vidu 顺序生成模式 ==========
-          _logger.info('【批量空间】Vidu 顺序生成模式：逐个生成 $batchCount 个视频', module: '批量空间');
-          
+          _logger.info(
+            '【批量空间】Vidu 顺序生成模式：逐个生成 $batchCount 个视频',
+            module: '批量空间',
+          );
+
           for (var i = 0; i < batchCount; i++) {
             final placeholder = placeholders[i];
-            
+
             try {
-              _logger.info('【批量空间】Vidu 顺序提交任务 ${i + 1}/$batchCount', module: '批量空间');
-              
+              _logger.info(
+                '【批量空间】Vidu 顺序提交任务 ${i + 1}/$batchCount',
+                module: '批量空间',
+              );
+
               // 构建 payload
               final payload = await _buildWebPayload(
-                task: task, webModel: webModel!, webTool: webTool!, 
-                index: i, prefs: prefs,
+                task: task,
+                webModel: webModel!,
+                webTool: webTool!,
+                index: i,
+                prefs: prefs,
               );
-              
+
               // 提交生成任务
               final result = await aigcClient.submitGenerationTask(
                 platform: provider,
                 toolType: webTool,
                 payload: payload,
               );
-              
-              _logger.success('【批量空间】Vidu 任务 ${i + 1} 提交成功: ${result.taskId}', module: '批量空间');
-              
+
+              _logger.success(
+                '【批量空间】Vidu 任务 ${i + 1} 提交成功: ${result.taskId}',
+                module: '批量空间',
+              );
+
               // 立即轮询等待完成
-              _logger.info('【批量空间】Vidu 等待任务 ${i + 1} 完成: ${result.taskId}', module: '批量空间');
-              
+              _logger.info(
+                '【批量空间】Vidu 等待任务 ${i + 1} 完成: ${result.taskId}',
+                module: '批量空间',
+              );
+
               final pollResult = await aigcClient.pollTaskStatus(
                 taskId: result.taskId,
                 interval: const Duration(seconds: 3),
@@ -660,37 +787,52 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                     _batchVideoProgress[placeholder] = 50;
                   }
                   if (mounted) setState(() {});
-                  _logger.info('【批量空间】Vidu 任务 ${i + 1} 状态: ${taskResult.status}', module: '批量空间');
+                  _logger.info(
+                    '【批量空间】Vidu 任务 ${i + 1} 状态: ${taskResult.status}',
+                    module: '批量空间',
+                  );
                 },
               );
-              
+
               if (pollResult.isSuccess) {
-                final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
+                final videoPath =
+                    pollResult.localVideoPath ?? pollResult.videoUrl;
                 if (videoPath == null || videoPath.isEmpty) {
                   throw Exception('任务完成但未返回视频地址');
                 }
-                
-                _logger.success('【批量空间】Vidu 任务 ${i + 1} 完成: $videoPath', module: '批量空间');
-                
+
+                _logger.success(
+                  '【批量空间】Vidu 任务 ${i + 1} 完成: $videoPath',
+                  module: '批量空间',
+                );
+
                 // 提取首帧
-                if (!videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+                if (!videoPath.startsWith('http') &&
+                    videoPath.endsWith('.mp4')) {
                   try {
                     final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
                     final ffmpeg = FFmpegService();
-                    await ffmpeg.extractFrame(videoPath: videoPath, outputPath: thumbnailPath);
+                    await ffmpeg.extractFrame(
+                      videoPath: videoPath,
+                      outputPath: thumbnailPath,
+                    );
                   } catch (e) {
                     _logger.warning('【批量空间】提取首帧失败: $e', module: '批量空间');
                   }
                 }
-                
+
                 // 替换占位符
                 final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-                final currentVideos = List<String>.from(currentTask.generatedVideos);
+                final currentVideos = List<String>.from(
+                  currentTask.generatedVideos,
+                );
                 final placeholderIndex = currentVideos.indexOf(placeholder);
                 if (placeholderIndex != -1) {
                   currentVideos[placeholderIndex] = videoPath;
                   _batchVideoProgress.remove(placeholder);
-                  _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                  _updateTask(
+                    currentTask.copyWith(generatedVideos: currentVideos),
+                  );
                   if (mounted) setState(() {});
                 }
               } else {
@@ -698,57 +840,73 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               }
             } catch (e) {
               _logger.error('【批量空间】Vidu 任务 ${i + 1} 失败: $e', module: '批量空间');
-              
+
               // 标记为失败
               try {
-                final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
-                final currentVideos = List<String>.from(currentTask.generatedVideos);
+                final currentTask = _tasks.firstWhere(
+                  (t) => t.id == task.id,
+                  orElse: () => task,
+                );
+                final currentVideos = List<String>.from(
+                  currentTask.generatedVideos,
+                );
                 final placeholderIndex = currentVideos.indexOf(placeholder);
                 if (placeholderIndex != -1) {
-                  currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+                  currentVideos[placeholderIndex] =
+                      'failed_${DateTime.now().millisecondsSinceEpoch}';
                   _batchVideoProgress.remove(placeholder);
-                  _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                  _updateTask(
+                    currentTask.copyWith(generatedVideos: currentVideos),
+                  );
                 }
               } catch (e2) {
                 _logger.error('【批量空间】清理占位符失败: $e2', module: '批量空间');
               }
-              
+
               if (mounted) {
                 _showMessage('Vidu 任务 ${i + 1} 失败: $e', isError: true);
               }
             }
           }
-          
+
           _logger.success('【批量空间】Vidu 顺序生成全部完成', module: '批量空间');
           aigcClient.dispose();
           return;
         }
-        
+
         // ========== 非 Vidu 网页服务商：并发提交 ==========
         _logger.info('【批量空间】开始并发提交 $batchCount 个网页服务商视频任务', module: '批量空间');
-        
+
         final submitFutures = List.generate(batchCount, (i) async {
           final placeholder = placeholders[i];
-          
+
           try {
             _logger.info('【批量空间】提交网页任务 ${i + 1}/$batchCount', module: '批量空间');
-            
+
             // ✅ 构建 payload（复用辅助方法）
             final payload = await _buildWebPayload(
-              task: task, webModel: webModel!, webTool: webTool!,
-              index: i, prefs: prefs,
+              task: task,
+              webModel: webModel!,
+              webTool: webTool!,
+              index: i,
+              prefs: prefs,
             );
-            
+
             // 提交生成任务
             final result = await aigcClient.submitGenerationTask(
               platform: provider,
               toolType: webTool,
               payload: payload,
             );
-            
-            _logger.success('【批量空间】网页任务 ${i + 1} 提交成功: ${result.taskId}', module: '批量空间');
-            print('✅ [批量空间] 任务 ${i + 1} 提交成功: taskId=${result.taskId}, status=${result.status}');
-            
+
+            _logger.success(
+              '【批量空间】网页任务 ${i + 1} 提交成功: ${result.taskId}',
+              module: '批量空间',
+            );
+            print(
+              '✅ [批量空间] 任务 ${i + 1} 提交成功: taskId=${result.taskId}, status=${result.status}',
+            );
+
             return {
               'index': i,
               'taskId': result.taskId,
@@ -759,57 +917,73 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             rethrow;
           }
         });
-        
+
         // 等待所有任务提交完成
         final submittedTasks = await Future.wait(submitFutures);
         _logger.success('【批量空间】所有网页任务已提交，开始轮询', module: '批量空间');
-        
+
         // ✅ 并发轮询所有任务
         final pollFutures = submittedTasks.map((taskInfo) async {
           final index = taskInfo['index'] as int;
           final taskId = taskInfo['taskId'] as String;
           final placeholder = taskInfo['placeholder'] as String;
-          
+
           try {
-            _logger.info('【批量空间】开始轮询网页任务 ${index + 1}: $taskId', module: '批量空间');
-            
+            _logger.info(
+              '【批量空间】开始轮询网页任务 ${index + 1}: $taskId',
+              module: '批量空间',
+            );
+
             // 轮询任务状态
             final result = await aigcClient.pollTaskStatus(
               taskId: taskId,
               interval: const Duration(seconds: 3),
-              maxAttempts: 300,  // 最多 15 分钟（与后端 max_wait=900 匹配）
+              maxAttempts: 300, // 最多 15 分钟（与后端 max_wait=900 匹配）
               onProgress: (taskResult) {
                 // 更新进度
                 if (taskResult.isRunning) {
-                  _batchVideoProgress[placeholder] = 50;  // 显示 50% 表示运行中
+                  _batchVideoProgress[placeholder] = 50; // 显示 50% 表示运行中
                 }
-                
+
                 if (mounted) {
                   setState(() {});
                 }
-                
-                print('📡 [批量空间] 任务 ${index + 1} 轮询: status=${taskResult.status}, taskId=$taskId');
-                _logger.info('【批量空间】网页任务 ${index + 1} 状态: ${taskResult.status}', module: '批量空间');
+
+                print(
+                  '📡 [批量空间] 任务 ${index + 1} 轮询: status=${taskResult.status}, taskId=$taskId',
+                );
+                _logger.info(
+                  '【批量空间】网页任务 ${index + 1} 状态: ${taskResult.status}',
+                  module: '批量空间',
+                );
               },
             );
-            
-            print('📡 [批量空间] 任务 ${index + 1} 轮询结束: status=${result.status}, success=${result.isSuccess}');
-            
+
+            print(
+              '📡 [批量空间] 任务 ${index + 1} 轮询结束: status=${result.status}, success=${result.isSuccess}',
+            );
+
             if (result.isSuccess) {
               // 任务成功完成
               final videoPath = result.localVideoPath ?? result.videoUrl;
-              
+
               if (videoPath == null || videoPath.isEmpty) {
                 throw Exception('任务完成但未返回视频地址');
               }
-              
-              _logger.success('【批量空间】网页任务 ${index + 1} 完成', module: '批量空间', extra: {
-                'videoPath': videoPath,
-                'isLocal': result.localVideoPath != null,
-              });
-              
+
+              _logger.success(
+                '【批量空间】网页任务 ${index + 1} 完成',
+                module: '批量空间',
+                extra: {
+                  'videoPath': videoPath,
+                  'isLocal': result.localVideoPath != null,
+                },
+              );
+
               // ✅ 提取视频首帧作为缩略图（本地文件才需要）
-              if (videoPath != null && !videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+              if (videoPath != null &&
+                  !videoPath.startsWith('http') &&
+                  videoPath.endsWith('.mp4')) {
                 try {
                   final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
                   final ffmpeg = FFmpegService();
@@ -824,22 +998,26 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                   _logger.warning('【批量空间】提取首帧失败: $e', module: '批量空间');
                 }
               }
-              
+
               // 替换占位符
               final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final currentVideos = List<String>.from(
+                currentTask.generatedVideos,
+              );
               final placeholderIndex = currentVideos.indexOf(placeholder);
-              
+
               if (placeholderIndex != -1) {
                 currentVideos[placeholderIndex] = videoPath;
                 _batchVideoProgress.remove(placeholder);
-                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
-                
+                _updateTask(
+                  currentTask.copyWith(generatedVideos: currentVideos),
+                );
+
                 if (mounted) {
                   setState(() {});
                 }
               }
-              
+
               return true;
             } else {
               // 任务失败
@@ -847,183 +1025,329 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             }
           } catch (e) {
             _logger.error('【批量空间】网页任务 ${index + 1} 处理失败: $e', module: '批量空间');
-            print('❌ [批量空间] 网页任务 ${index + 1} 失败: $e');  // 确保控制台可见
-            
+            print('❌ [批量空间] 网页任务 ${index + 1} 失败: $e'); // 确保控制台可见
+
             // 标记为失败
             try {
-              final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
-              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final currentTask = _tasks.firstWhere(
+                (t) => t.id == task.id,
+                orElse: () => task,
+              );
+              final currentVideos = List<String>.from(
+                currentTask.generatedVideos,
+              );
               final placeholderIndex = currentVideos.indexOf(placeholder);
-              
+
               if (placeholderIndex != -1) {
-                currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+                currentVideos[placeholderIndex] =
+                    'failed_${DateTime.now().millisecondsSinceEpoch}';
                 _batchVideoProgress.remove(placeholder);
-                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+                _updateTask(
+                  currentTask.copyWith(generatedVideos: currentVideos),
+                );
               }
             } catch (e2) {
               _logger.error('【批量空间】清理占位符失败: $e2', module: '批量空间');
             }
-            
+
             // 显示错误给用户
             if (mounted) {
               _showMessage('任务 ${index + 1} 失败: $e', isError: true);
             }
-            
+
             return false;
           }
         }).toList();
-        
+
         // 等待所有任务完成
         await Future.wait(pollFutures, eagerError: false);
-        
+
         _logger.success('【批量空间】所有网页服务商任务已处理完成', module: '批量空间');
-        
+
         // 清理资源
         aigcClient.dispose();
-        
+
         // ✅ 网页服务商处理完成，直接返回
         return;
       }
-      
+
       // ========== API 服务商路线（原有逻辑）==========
-      final baseUrl = await SecureStorageManager().getBaseUrl(provider: provider, modelType: 'video');
-      final apiKey = await SecureStorageManager().getApiKey(provider: provider, modelType: 'video');
-      
+      final baseUrl = await SecureStorageManager().getBaseUrl(
+        provider: provider,
+        modelType: 'video',
+      );
+      final apiKey = await SecureStorageManager().getApiKey(
+        provider: provider,
+        modelType: 'video',
+      );
+
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置视频 API');
       }
-      
+
       // ✅ ComfyUI 特殊检查：需要选择工作流
       if (provider.toLowerCase() == 'comfyui') {
-        final selectedWorkflow = prefs.getString('comfyui_selected_video_workflow');
+        final selectedWorkflow = prefs.getString(
+          'comfyui_selected_video_workflow',
+        );
         if (selectedWorkflow == null || selectedWorkflow.isEmpty) {
           throw Exception('未选择 ComfyUI 视频工作流\n\n请前往设置页面选择一个视频工作流');
         }
-        
+
         final workflowsJson = prefs.getString('comfyui_workflows');
         if (workflowsJson == null || workflowsJson.isEmpty) {
           throw Exception('未找到 ComfyUI 工作流数据\n\n请前往设置页面重新读取工作流');
         }
-        
-        _logger.success('【批量空间】使用 ComfyUI 工作流: $selectedWorkflow', module: '批量空间');
-        
+
+        _logger.success(
+          '【批量空间】使用 ComfyUI 工作流: $selectedWorkflow',
+          module: '批量空间',
+        );
+
         // ✅ 检查工作流类型
         final workflows = List<Map<String, dynamic>>.from(
-          (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+          (jsonDecode(workflowsJson) as List).map(
+            (w) => Map<String, dynamic>.from(w as Map),
+          ),
         );
         final workflow = workflows.firstWhere(
           (w) => w['id'] == selectedWorkflow,
           orElse: () => throw Exception('工作流未找到: $selectedWorkflow'),
         );
-        
+
         final workflowType = workflow['type'] as String?;
         _logger.info('【批量空间】工作流类型: $workflowType', module: '批量空间');
-        
+
         if (workflowType != 'video') {
-          _logger.warning('⚠️ 选中的工作流不是视频类型！', module: '批量空间', extra: {
-            'workflowName': workflow['name'],
-            'workflowType': workflowType,
-          });
-          throw Exception('选中的工作流不是视频类型\n\n当前工作流: ${workflow['name']}\n类型: $workflowType\n\n请在设置中选择一个视频工作流（类型应为 video）');
+          _logger.warning(
+            '⚠️ 选中的工作流不是视频类型！',
+            module: '批量空间',
+            extra: {
+              'workflowName': workflow['name'],
+              'workflowType': workflowType,
+            },
+          );
+          throw Exception(
+            '选中的工作流不是视频类型\n\n当前工作流: ${workflow['name']}\n类型: $workflowType\n\n请在设置中选择一个视频工作流（类型应为 video）',
+          );
         }
       }
-      
-      final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+
+      final config = ApiConfig(
+        provider: provider,
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+      );
       final apiFactory = ApiFactory();
       final service = apiFactory.createService(provider, config);
-      
+
       // 准备参数 - "自动"选项不传参数
-      final size = task.ratio == '自动' ? null : _convertRatioToSize(task.ratio, task.quality, task.model);
+      final size = task.ratio == '自动'
+          ? null
+          : _convertRatioToSize(task.ratio, task.quality, effectiveModel);
       final seconds = task.seconds == '自动' ? null : _parseSeconds(task.seconds);
-      
+
       final parameters = <String, dynamic>{};
       if (seconds != null) {
         parameters['seconds'] = seconds;
       }
-      
+
       // ComfyUI 同步生成
       if (provider.toLowerCase() == 'comfyui') {
         final generateFutures = List.generate(batchCount, (i) async {
           final placeholder = placeholders[i];
-          
+
           try {
             final result = await service.generateVideos(
               prompt: task.prompt,
-              model: task.model,
+              model: effectiveModel,
               ratio: size,
               referenceImages: task.referenceImages,
               parameters: parameters,
             );
-            
-            if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
+
+            if (result.isSuccess &&
+                result.data != null &&
+                result.data!.isNotEmpty) {
               final videoUrl = result.data!.first.videoUrl;
-              final savedPath = await _downloadSingleVideoForTask(videoUrl, i, task.id);
-              
+              final savedPath = await _downloadSingleVideoForTask(
+                videoUrl,
+                i,
+                task.id,
+              );
+
               final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final currentVideos = List<String>.from(
+                currentTask.generatedVideos,
+              );
               final placeholderIndex = currentVideos.indexOf(placeholder);
-              
+
               if (placeholderIndex != -1) {
                 currentVideos[placeholderIndex] = savedPath;
                 _batchVideoProgress.remove(placeholder);
-                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
-                
+                _updateTask(
+                  currentTask.copyWith(generatedVideos: currentVideos),
+                );
+
                 // ✅ 延迟后再次刷新，确保首帧显示
                 await Future.delayed(const Duration(milliseconds: 500));
                 if (mounted) {
                   setState(() {});
                 }
               }
-              
+
               return true;
             }
           } catch (e) {
             _logger.error('视频生成失败: $e', module: '批量空间');
-            
+
             final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final currentVideos = List<String>.from(
+              currentTask.generatedVideos,
+            );
             final placeholderIndex = currentVideos.indexOf(placeholder);
-            
+
             if (placeholderIndex != -1) {
-              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              currentVideos[placeholderIndex] =
+                  'failed_${DateTime.now().millisecondsSinceEpoch}';
               _batchVideoProgress.remove(placeholder);
               _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
             }
           }
-          
+
           return false;
         });
-        
+
         await Future.wait(generateFutures, eagerError: false);
-      } else {
-        // 其他服务的异步轮询模式
-        final helper = VeoVideoHelper(service as VeoVideoService);
-        
+      } else if (provider.toLowerCase() == 'yunwu') {
+        // Yunwu 服务的异步轮询模式
+        final yunwuService = service as YunwuService;
+        final yunwuHelper = YunwuHelper(yunwuService);
+
         final submitFutures = List.generate(batchCount, (i) async {
           final result = await service.generateVideos(
             prompt: task.prompt,
-            model: task.model,
+            model: effectiveModel,
             ratio: size,
             referenceImages: task.referenceImages,
             parameters: parameters,
           );
-          
-          if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
-            return {'index': i, 'taskId': result.data!.first.videoId, 'placeholder': placeholders[i]};
+
+          if (result.isSuccess &&
+              result.data != null &&
+              result.data!.isNotEmpty) {
+            return {
+              'index': i,
+              'taskId': result.data!.first.videoId,
+              'placeholder': placeholders[i],
+            };
           } else {
             throw Exception('提交失败: ${result.errorMessage}');
           }
         });
-        
+
         final submittedTasks = await Future.wait(submitFutures);
-        
+
         final pollFutures = submittedTasks.map((taskInfo) async {
           final index = taskInfo['index'] as int;
           final taskId = taskInfo['taskId'] as String?;
           final placeholder = taskInfo['placeholder'] as String;
-          
+
           if (taskId == null) return false;
-          
+
+          try {
+            final statusResult = await yunwuHelper.pollTaskUntilComplete(
+              taskId: taskId,
+              maxWaitMinutes: 15,
+              onProgress: (progress, status) {
+                _batchVideoProgress[placeholder] = progress;
+                if (mounted) setState(() {});
+              },
+            );
+
+            if (statusResult.isSuccess && statusResult.data != null && statusResult.data!.videoUrl != null) {
+              final videoUrl = statusResult.data!.videoUrl!;
+              final savedPath = await _downloadSingleVideoForTask(
+                videoUrl,
+                index,
+                task.id,
+              );
+
+              final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+              final currentVideos = List<String>.from(
+                currentTask.generatedVideos,
+              );
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = savedPath;
+                _batchVideoProgress.remove(placeholder);
+                _updateTask(
+                  currentTask.copyWith(generatedVideos: currentVideos),
+                );
+
+                await Future.delayed(const Duration(milliseconds: 500));
+                if (mounted) {
+                  setState(() {});
+                }
+              }
+
+              return true;
+            }
+          } catch (e) {
+            final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+            final currentVideos = List<String>.from(
+              currentTask.generatedVideos,
+            );
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] =
+                  'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _batchVideoProgress.remove(placeholder);
+              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+            }
+          }
+
+          return false;
+        }).toList();
+
+        await Future.wait(pollFutures, eagerError: false);
+      } else {
+        // 其他服务的异步轮询模式（GeekNow/OpenAI等）
+        final helper = VeoVideoHelper(service as VeoVideoService);
+
+        final submitFutures = List.generate(batchCount, (i) async {
+          final result = await service.generateVideos(
+            prompt: task.prompt,
+            model: effectiveModel,
+            ratio: size,
+            referenceImages: task.referenceImages,
+            parameters: parameters,
+          );
+
+          if (result.isSuccess &&
+              result.data != null &&
+              result.data!.isNotEmpty) {
+            return {
+              'index': i,
+              'taskId': result.data!.first.videoId,
+              'placeholder': placeholders[i],
+            };
+          } else {
+            throw Exception('提交失败: ${result.errorMessage}');
+          }
+        });
+
+        final submittedTasks = await Future.wait(submitFutures);
+
+        final pollFutures = submittedTasks.map((taskInfo) async {
+          final index = taskInfo['index'] as int;
+          final taskId = taskInfo['taskId'] as String?;
+          final placeholder = taskInfo['placeholder'] as String;
+
+          if (taskId == null) return false;
+
           try {
             final statusResult = await helper.pollTaskUntilComplete(
               taskId: taskId,
@@ -1033,58 +1357,73 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                 if (mounted) setState(() {});
               },
             );
-            
+
             if (statusResult.isSuccess && statusResult.data!.hasVideo) {
               final videoUrl = statusResult.data!.videoUrl!;
-              final savedPath = await _downloadSingleVideoForTask(videoUrl, index, task.id);
-              
+              final savedPath = await _downloadSingleVideoForTask(
+                videoUrl,
+                index,
+                task.id,
+              );
+
               final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final currentVideos = List<String>.from(
+                currentTask.generatedVideos,
+              );
               final placeholderIndex = currentVideos.indexOf(placeholder);
-              
+
               if (placeholderIndex != -1) {
                 currentVideos[placeholderIndex] = savedPath;
                 _batchVideoProgress.remove(placeholder);
-                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
-                
+                _updateTask(
+                  currentTask.copyWith(generatedVideos: currentVideos),
+                );
+
                 // ✅ 延迟后再次刷新，确保首帧显示
                 await Future.delayed(const Duration(milliseconds: 500));
                 if (mounted) {
                   setState(() {});
                 }
               }
-              
+
               return true;
             }
           } catch (e) {
             final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final currentVideos = List<String>.from(
+              currentTask.generatedVideos,
+            );
             final placeholderIndex = currentVideos.indexOf(placeholder);
-            
+
             if (placeholderIndex != -1) {
-              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              currentVideos[placeholderIndex] =
+                  'failed_${DateTime.now().millisecondsSinceEpoch}';
               _batchVideoProgress.remove(placeholder);
               _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
             }
           }
-          
+
           return false;
         }).toList();
-        
+
         await Future.wait(pollFutures, eagerError: false);
       }
     } catch (e) {
       _logger.error('任务生成失败: $e', module: '批量空间');
       print('❌ [批量空间] 外层异常: $e');
-      
+
       // 清理占位符
       try {
-        final currentTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+        final currentTask = _tasks.firstWhere(
+          (t) => t.id == task.id,
+          orElse: () => task,
+        );
         final currentVideos = List<String>.from(currentTask.generatedVideos);
         for (var placeholder in placeholders) {
           final index = currentVideos.indexOf(placeholder);
           if (index != -1) {
-            currentVideos[index] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+            currentVideos[index] =
+                'failed_${DateTime.now().millisecondsSinceEpoch}';
             _batchVideoProgress.remove(placeholder);
           }
         }
@@ -1096,68 +1435,87 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   }
 
   /// 下载单个视频
-  Future<String> _downloadSingleVideoForTask(String videoUrl, int index, String taskId) async {
+  Future<String> _downloadSingleVideoForTask(
+    String videoUrl,
+    int index,
+    String taskId,
+  ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savePath = prefs.getString('video_save_path');
-      
+
       if (savePath == null || savePath.isEmpty) {
         _logger.warning('未设置视频保存路径，使用在线URL', module: '批量空间');
         return videoUrl;
       }
-      
-      _logger.info('开始下载视频 ${index + 1}', module: '批量空间', extra: {'url': videoUrl});
-      
-      final response = await http.get(Uri.parse(videoUrl)).timeout(
-        const Duration(minutes: 5),
+
+      _logger.info(
+        '开始下载视频 ${index + 1}',
+        module: '批量空间',
+        extra: {'url': videoUrl},
       );
-      
+
+      final response = await http
+          .get(Uri.parse(videoUrl))
+          .timeout(const Duration(minutes: 5));
+
       if (response.statusCode == 200) {
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         final fileName = 'video_${timestamp}_${taskId}_$index.mp4';
         final filePath = path.join(savePath, fileName);
-        
+
         await File(filePath).writeAsBytes(response.bodyBytes);
-        
-        _logger.success('视频已保存', module: '批量空间', extra: {
-          'path': filePath,
-          'size': '${(response.bodyBytes.length / 1024 / 1024).toStringAsFixed(2)} MB',
-        });
-        
+
+        _logger.success(
+          '视频已保存',
+          module: '批量空间',
+          extra: {
+            'path': filePath,
+            'size':
+                '${(response.bodyBytes.length / 1024 / 1024).toStringAsFixed(2)} MB',
+          },
+        );
+
         // ✅ 提取首帧
         try {
           final thumbnailPath = filePath.replaceAll('.mp4', '.jpg');
-          _logger.info('开始提取视频首帧', module: '批量空间', extra: {
-            'video': filePath,
-            'thumbnail': thumbnailPath,
-          });
-          
+          _logger.info(
+            '开始提取视频首帧',
+            module: '批量空间',
+            extra: {'video': filePath, 'thumbnail': thumbnailPath},
+          );
+
           final ffmpeg = FFmpegService();
           final success = await ffmpeg.extractFrame(
-            videoPath: filePath, 
+            videoPath: filePath,
             outputPath: thumbnailPath,
           );
-          
+
           if (success) {
-            _logger.success('视频首帧已提取', module: '批量空间', extra: {
-              'thumbnail': thumbnailPath,
-            });
+            _logger.success(
+              '视频首帧已提取',
+              module: '批量空间',
+              extra: {'thumbnail': thumbnailPath},
+            );
           } else {
             _logger.warning('首帧提取失败', module: '批量空间');
           }
         } catch (e) {
           _logger.error('提取首帧失败: $e', module: '批量空间');
         }
-        
+
         return filePath;
       } else {
-        _logger.warning('下载失败（状态码: ${response.statusCode}），使用在线URL', module: '批量空间');
+        _logger.warning(
+          '下载失败（状态码: ${response.statusCode}），使用在线URL',
+          module: '批量空间',
+        );
         return videoUrl;
       }
     } catch (e) {
       _logger.error('下载视频失败: $e', module: '批量空间');
     }
-    
+
     return videoUrl;
   }
 
@@ -1171,15 +1529,15 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         _logger.warning('素材库数据为空，无法查找: $imagePath', module: '批量空间');
         return null;
       }
-      
+
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
       // ✅ 规范化路径用于比较（Windows 路径大小写不敏感，分隔符可能不同）
       final normalizedInput = imagePath.replaceAll('\\', '/').toLowerCase();
       // 提取文件名用于回退匹配
       final inputFileName = normalizedInput.split('/').last;
-      
-      String? fallbackMatch;  // 文件名匹配的回退结果
-      
+
+      String? fallbackMatch; // 文件名匹配的回退结果
+
       for (final entry in data.values) {
         final stylesList = entry as List;
         for (final styleData in stylesList) {
@@ -1187,23 +1545,33 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           for (final assetData in assets) {
             final asset = assetData as Map<String, dynamic>;
             final assetPath = (asset['path'] as String?) ?? '';
-            final normalizedAsset = assetPath.replaceAll('\\', '/').toLowerCase();
-            
+            final normalizedAsset = assetPath
+                .replaceAll('\\', '/')
+                .toLowerCase();
+
             // 策略1：完整路径匹配（规范化后）
             if (normalizedAsset == normalizedInput || assetPath == imagePath) {
               final name = asset['name'] as String? ?? '';
-              if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
+              if (name.isNotEmpty &&
+                  !name.contains('.png') &&
+                  !name.contains('.jpg') &&
+                  !name.contains('.jpeg') &&
+                  !name.contains('.webp')) {
                 return name;
               }
               return null;
             }
-            
+
             // 策略2：文件名匹配（回退）
             if (fallbackMatch == null) {
               final assetFileName = normalizedAsset.split('/').last;
               if (assetFileName == inputFileName && assetFileName.isNotEmpty) {
                 final name = asset['name'] as String? ?? '';
-                if (name.isNotEmpty && !name.contains('.png') && !name.contains('.jpg') && !name.contains('.jpeg') && !name.contains('.webp')) {
+                if (name.isNotEmpty &&
+                    !name.contains('.png') &&
+                    !name.contains('.jpg') &&
+                    !name.contains('.jpeg') &&
+                    !name.contains('.webp')) {
                   fallbackMatch = name;
                 }
               }
@@ -1211,10 +1579,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           }
         }
       }
-      
+
       // 完整路径未匹配，使用文件名回退
       if (fallbackMatch != null) {
-        _logger.info('素材库查找: 使用文件名回退匹配 "$fallbackMatch" for $imagePath', module: '批量空间');
+        _logger.info(
+          '素材库查找: 使用文件名回退匹配 "$fallbackMatch" for $imagePath',
+          module: '批量空间',
+        );
         return fallbackMatch;
       }
     } catch (e) {
@@ -1266,7 +1637,10 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.surfaceBackground,
         title: Text('清空所有任务', style: TextStyle(color: AppTheme.textColor)),
-        content: Text('确定要删除所有任务吗？此操作不可恢复。', style: TextStyle(color: AppTheme.subTextColor)),
+        content: Text(
+          '确定要删除所有任务吗？此操作不可恢复。',
+          style: TextStyle(color: AppTheme.subTextColor),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1278,7 +1652,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               final count = _tasks.length;
               setState(() => _tasks.clear());
               _saveTasks();
-              _logger.warning('清空所有批量任务', module: '批量空间', extra: {'删除数量': count});
+              _logger.warning(
+                '清空所有批量任务',
+                module: '批量空间',
+                extra: {'删除数量': count},
+              );
               _showMessage('已清空 $count 个任务');
             },
             child: const Text('确定', style: TextStyle(color: Colors.red)),
@@ -1294,30 +1672,32 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       _showMessage('没有任务可匹配', isError: true);
       return;
     }
-    
+
     // 只处理有提示词的任务
-    final tasksWithPrompt = _tasks.where((t) => t.prompt.trim().isNotEmpty).toList();
+    final tasksWithPrompt = _tasks
+        .where((t) => t.prompt.trim().isNotEmpty)
+        .toList();
     if (tasksWithPrompt.isEmpty) {
       _showMessage('没有包含提示词的任务', isError: true);
       return;
     }
-    
+
     setState(() => _isSmartMatching = true);
-    
+
     try {
       // 1. 加载素材库数据
       final prefs = await SharedPreferences.getInstance();
       final assetsJson = prefs.getString('asset_library_data');
-      
+
       if (assetsJson == null || assetsJson.isEmpty) {
         _showMessage('素材库为空\n请先在素材库中添加图片', isError: true);
         return;
       }
-      
+
       // 解析素材数据
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
       final allAssets = <Map<String, String>>[];
-      
+
       data.forEach((key, value) {
         final stylesList = (value as List);
         for (var styleData in stylesList) {
@@ -1327,36 +1707,44 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             final name = assetMap['name'] as String? ?? '';
             final assetPath = assetMap['path'] as String? ?? '';
             if (name.isNotEmpty && assetPath.isNotEmpty) {
-              allAssets.add({
-                'path': assetPath,
-                'name': name,
-              });
+              allAssets.add({'path': assetPath, 'name': name});
             }
           }
         }
       });
-      
+
       if (allAssets.isEmpty) {
         _showMessage('素材库中没有可用的资产', isError: true);
         return;
       }
-      
+
       // 提取所有素材名称（去重）
       final assetNames = allAssets.map((a) => a['name']!).toSet().toList();
-      _logger.info('【智能匹配】素材库共 ${allAssets.length} 个资产，${assetNames.length} 个不同名称', module: '批量空间');
-      
+      _logger.info(
+        '【智能匹配】素材库共 ${allAssets.length} 个资产，${assetNames.length} 个不同名称',
+        module: '批量空间',
+      );
+
       // 2. 读取 LLM 配置
       final llmProvider = prefs.getString('llm_provider') ?? 'geeknow';
-      final llmModel = await SecureStorageManager().getModel(provider: llmProvider, modelType: 'llm');
-      
+      final llmModel = await SecureStorageManager().getModel(
+        provider: llmProvider,
+        modelType: 'llm',
+      );
+
       _logger.info('【智能匹配】使用 LLM: $llmProvider, 模型: $llmModel', module: '批量空间');
-      
+
       // 3. 构建 LLM 的提示词，让它分析所有任务的提示词
-      final promptList = tasksWithPrompt.asMap().entries.map((entry) {
-        return '任务${entry.key + 1}: ${entry.value.prompt}';
-      }).join('\n');
-      
-      final systemPrompt = '''你是一个素材匹配助手。用户有以下素材库资产名称列表：
+      final promptList = tasksWithPrompt
+          .asMap()
+          .entries
+          .map((entry) {
+            return '任务${entry.key + 1}: ${entry.value.prompt}';
+          })
+          .join('\n');
+
+      final systemPrompt =
+          '''你是一个素材匹配助手。用户有以下素材库资产名称列表：
 ${assetNames.join('、')}
 
 用户将给你一系列视频生成提示词。请分析每个提示词的内容，找出其中**提到的、对应的、或描述的**素材库资产名称。
@@ -1373,9 +1761,12 @@ ${assetNames.join('、')}
 taskIndex 从 0 开始，对应任务序号。''';
 
       final userPrompt = '请分析以下提示词，匹配素材库资产：\n\n$promptList';
-      
-      _logger.info('【智能匹配】调用 LLM 分析 ${tasksWithPrompt.length} 个提示词', module: '批量空间');
-      
+
+      _logger.info(
+        '【智能匹配】调用 LLM 分析 ${tasksWithPrompt.length} 个提示词',
+        module: '批量空间',
+      );
+
       // 4. 调用 LLM
       _apiRepository.clearCache();
       final response = await _apiRepository.generateTextWithMessages(
@@ -1385,44 +1776,46 @@ taskIndex 从 0 开始，对应任务序号。''';
           {'role': 'user', 'content': userPrompt},
         ],
         model: llmModel,
-        parameters: {
-          'temperature': 0.1,
-          'max_tokens': 4000,
-        },
+        parameters: {'temperature': 0.1, 'max_tokens': 4000},
       );
-      
+
       if (!response.isSuccess || response.data == null) {
         throw Exception('LLM 调用失败: ${response.errorMessage ?? "未知错误"}');
       }
-      
+
       final responseText = response.data!.text.trim();
       _logger.info('【智能匹配】LLM 返回: $responseText', module: '批量空间');
-      
+
       // 5. 解析 LLM 返回的 JSON
       // 清除可能的 markdown 代码块标记
       String cleanJson = responseText;
       if (cleanJson.contains('```json')) {
-        cleanJson = cleanJson.replaceAll('```json', '').replaceAll('```', '').trim();
+        cleanJson = cleanJson
+            .replaceAll('```json', '')
+            .replaceAll('```', '')
+            .trim();
       } else if (cleanJson.contains('```')) {
         cleanJson = cleanJson.replaceAll('```', '').trim();
       }
-      
+
       final matchResult = jsonDecode(cleanJson) as Map<String, dynamic>;
       final matches = (matchResult['matches'] as List?) ?? [];
-      
+
       // 6. 根据匹配结果更新每个任务
       int matchedCount = 0;
       int totalImagesAdded = 0;
-      
+
       for (final match in matches) {
         final taskIndex = match['taskIndex'] as int;
-        final matchedAssetNames = List<String>.from(match['assetNames'] as List? ?? []);
-        
+        final matchedAssetNames = List<String>.from(
+          match['assetNames'] as List? ?? [],
+        );
+
         if (matchedAssetNames.isEmpty) continue;
         if (taskIndex < 0 || taskIndex >= tasksWithPrompt.length) continue;
-        
+
         final task = tasksWithPrompt[taskIndex];
-        
+
         // 找到对应的素材路径
         final matchedPaths = <String>[];
         for (final assetName in matchedAssetNames) {
@@ -1435,26 +1828,35 @@ taskIndex 从 0 开始，对应任务序号。''';
             matchedPaths.add(matchedAsset['path']!);
           }
         }
-        
+
         if (matchedPaths.isEmpty) continue;
-        
+
         // 更新任务：替换原有图片
-        _logger.info('【智能匹配】任务 ${taskIndex + 1}: 匹配到 ${matchedAssetNames.join(", ")}', module: '批量空间');
-        
+        _logger.info(
+          '【智能匹配】任务 ${taskIndex + 1}: 匹配到 ${matchedAssetNames.join(", ")}',
+          module: '批量空间',
+        );
+
         final updatedTask = task.copyWith(
-          referenceImages: matchedPaths,  // 替换为匹配到的素材库图片
+          referenceImages: matchedPaths, // 替换为匹配到的素材库图片
         );
         _updateTask(updatedTask);
-        
+
         matchedCount++;
         totalImagesAdded += matchedPaths.length;
       }
-      
-      _logger.success('【智能匹配】完成！匹配了 $matchedCount 个任务，添加了 $totalImagesAdded 张图片', module: '批量空间');
+
+      _logger.success(
+        '【智能匹配】完成！匹配了 $matchedCount 个任务，添加了 $totalImagesAdded 张图片',
+        module: '批量空间',
+      );
       _showMessage('智能匹配完成\n匹配了 $matchedCount 个任务，添加了 $totalImagesAdded 张素材图片');
-      
     } catch (e, stackTrace) {
-      _logger.error('【智能匹配】失败: $e', module: '批量空间', extra: {'stackTrace': stackTrace.toString()});
+      _logger.error(
+        '【智能匹配】失败: $e',
+        module: '批量空间',
+        extra: {'stackTrace': stackTrace.toString()},
+      );
       _showMessage('智能匹配失败: $e', isError: true);
     } finally {
       if (mounted) {
@@ -1542,7 +1944,9 @@ taskIndex 从 0 开始，对应任务序号。''';
               _buildTitleBar(),
               Expanded(
                 child: _showSettings
-                    ? SettingsPage(onBack: () => setState(() => _showSettings = false))
+                    ? SettingsPage(
+                        onBack: () => setState(() => _showSettings = false),
+                      )
                     : Column(
                         children: [
                           _buildToolbar(),
@@ -1577,16 +1981,29 @@ taskIndex 从 0 开始，对应任务序号。''';
             child: GestureDetector(
               onTap: () => Navigator.pop(context),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.textColor.withOpacity(0.05),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.arrow_back, color: AppTheme.subTextColor, size: 16),
+                    Icon(
+                      Icons.arrow_back,
+                      color: AppTheme.subTextColor,
+                      size: 16,
+                    ),
                     const SizedBox(width: 6),
-                    Text('返回', style: TextStyle(color: AppTheme.subTextColor, fontSize: 13)),
+                    Text(
+                      '返回',
+                      style: TextStyle(
+                        color: AppTheme.subTextColor,
+                        fontSize: 13,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1600,7 +2017,11 @@ taskIndex 从 0 开始，对应任务序号。''';
           _toolButton(Icons.download, '导出CSV', _exportCSV),
           const SizedBox(width: 12),
           // ✅ 智能匹配
-          _toolButton(Icons.auto_fix_high, _isSmartMatching ? '匹配中...' : '智能匹配', _isSmartMatching ? () {} : _smartMatchAssets),
+          _toolButton(
+            Icons.auto_fix_high,
+            _isSmartMatching ? '匹配中...' : '智能匹配',
+            _isSmartMatching ? () {} : _smartMatchAssets,
+          ),
           const SizedBox(width: 12),
           // ✅ 清空面板（改为正常颜色，位置提前）
           _toolButton(Icons.delete_sweep_rounded, '清空面板', _clearAllTasks),
@@ -1615,7 +2036,12 @@ taskIndex 从 0 开始，对应任务序号。''';
     );
   }
 
-  Widget _toolButton(IconData icon, String label, VoidCallback onTap, {Color? color}) {
+  Widget _toolButton(
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
@@ -1630,7 +2056,13 @@ taskIndex 从 0 开始，对应任务序号。''';
             children: [
               Icon(icon, color: color ?? AppTheme.subTextColor, size: 16),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(color: color ?? AppTheme.subTextColor, fontSize: 13)),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color ?? AppTheme.subTextColor,
+                  fontSize: 13,
+                ),
+              ),
             ],
           ),
         ),
@@ -1640,12 +2072,14 @@ taskIndex 从 0 开始，对应任务序号。''';
 
   Widget _batchGenerateButton() {
     final hasValidTasks = _tasks.any((t) => t.prompt.trim().isNotEmpty);
-    final isAnyGenerating = _tasks.any((t) => 
-      t.generatedVideos.any((v) => v.startsWith('loading_'))
+    final isAnyGenerating = _tasks.any(
+      (t) => t.generatedVideos.any((v) => v.startsWith('loading_')),
     );
-    
+
     return MouseRegion(
-      cursor: hasValidTasks && !isAnyGenerating ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: hasValidTasks && !isAnyGenerating
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: hasValidTasks && !isAnyGenerating ? _generateAllTasks : null,
         child: Opacity(
@@ -1658,7 +2092,13 @@ taskIndex 从 0 开始，对应任务序号。''';
               ),
               borderRadius: BorderRadius.circular(8),
               boxShadow: hasValidTasks && !isAnyGenerating
-                  ? [BoxShadow(color: const Color(0xFFFF6B6B).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 2))]
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFFFF6B6B).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
                   : null,
             ),
             child: Row(
@@ -1694,15 +2134,30 @@ taskIndex 从 0 开始，对应任务序号。''';
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+            ),
             borderRadius: BorderRadius.circular(8),
-            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 2))],
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2AF598).withOpacity(0.3),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Row(
             children: const [
               Icon(Icons.add, color: Colors.white, size: 18),
               SizedBox(width: 6),
-              Text('新建行', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              Text(
+                '新建行',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
         ),
@@ -1810,7 +2265,7 @@ taskIndex 从 0 开始，对应任务序号。''';
   /// 构建表格行
   Widget _buildTableRow(int index) {
     final task = _tasks[index];
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -1835,24 +2290,13 @@ taskIndex 从 0 开始，对应任务序号。''';
             ),
           ),
           // 图片
-          SizedBox(
-            width: 110,
-            child: _buildImageCell(task),
-          ),
+          SizedBox(width: 110, child: _buildImageCell(task)),
           // 提示词
-          Expanded(
-            child: _buildPromptCell(task),
-          ),
+          Expanded(child: _buildPromptCell(task)),
           // 视频
-          SizedBox(
-            width: 110,
-            child: _buildVideoCell(task),
-          ),
+          SizedBox(width: 110, child: _buildVideoCell(task)),
           // 设置
-          SizedBox(
-            width: 240,
-            child: _buildSettingsCell(task),
-          ),
+          SizedBox(width: 240, child: _buildSettingsCell(task)),
         ],
       ),
     );
@@ -1867,7 +2311,7 @@ taskIndex 从 0 开始，对应任务序号。''';
         child: GestureDetector(
           onTap: () {
             _logger.info('点击添加图片', module: '批量空间', extra: {'taskId': task.id});
-            _showImageSourceDialog(task.id);  // ✅ 传递 task ID
+            _showImageSourceDialog(task.id); // ✅ 传递 task ID
           },
           child: Center(
             child: Icon(
@@ -1879,7 +2323,7 @@ taskIndex 从 0 开始，对应任务序号。''';
         ),
       );
     }
-    
+
     if (task.referenceImages.length == 1) {
       // ✅ 单张图片 - 点击可添加更多或查看大图
       return MouseRegion(
@@ -1887,7 +2331,7 @@ taskIndex 从 0 开始，对应任务序号。''';
         child: GestureDetector(
           onTap: () {
             _logger.info('点击查看图片', module: '批量空间', extra: {'taskId': task.id});
-            _showImagesDialog(task.id);  // ✅ 传递 task ID
+            _showImagesDialog(task.id); // ✅ 传递 task ID
           },
           child: Container(
             height: 60,
@@ -1902,14 +2346,18 @@ taskIndex 从 0 开始，对应任务序号。''';
         ),
       );
     }
-    
+
     // 多张图片显示数量 - 点击弹出对话框
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: () {
-          _logger.info('点击查看多张图片', module: '批量空间', extra: {'taskId': task.id, '图片数': task.referenceImages.length});
-          _showImagesDialog(task.id);  // ✅ 传递 task ID
+          _logger.info(
+            '点击查看多张图片',
+            module: '批量空间',
+            extra: {'taskId': task.id, '图片数': task.referenceImages.length},
+          );
+          _showImagesDialog(task.id); // ✅ 传递 task ID
         },
         child: Container(
           height: 60,
@@ -1941,7 +2389,11 @@ taskIndex 从 0 开始，对应任务序号。''';
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.photo_library, color: Colors.white, size: 18),
+                    const Icon(
+                      Icons.photo_library,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                     const SizedBox(width: 4),
                     Text(
                       '${task.referenceImages.length}',
@@ -1967,12 +2419,15 @@ taskIndex 从 0 开始，对应任务序号。''';
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: TextFormField(
         initialValue: task.prompt,
-        maxLines: null,  // ✅ 允许多行
+        maxLines: null, // ✅ 允许多行
         minLines: 1,
         style: TextStyle(color: AppTheme.textColor, fontSize: 13),
         decoration: InputDecoration(
           hintText: '输入视频描述...',
-          hintStyle: TextStyle(color: AppTheme.subTextColor.withOpacity(0.5), fontSize: 12),
+          hintStyle: TextStyle(
+            color: AppTheme.subTextColor.withOpacity(0.5),
+            fontSize: 12,
+          ),
           border: InputBorder.none,
           contentPadding: EdgeInsets.zero,
           isDense: true,
@@ -1990,16 +2445,18 @@ taskIndex 从 0 开始，对应任务序号。''';
   /// 构建视频单元格
   Widget _buildVideoCell(VideoTask task) {
     // 过滤掉失败的占位符，保留真实视频和加载中的视频
-    final allVideos = task.generatedVideos.where((v) => 
-      !v.startsWith('failed_')
-    ).toList();
-    
+    final allVideos = task.generatedVideos
+        .where((v) => !v.startsWith('failed_'))
+        .toList();
+
     // 真实视频（不包括 loading）
-    final realVideos = allVideos.where((v) => !v.startsWith('loading_')).toList();
-    
+    final realVideos = allVideos
+        .where((v) => !v.startsWith('loading_'))
+        .toList();
+
     // 检查是否有加载中的视频
     final hasLoading = allVideos.any((v) => v.startsWith('loading_'));
-    
+
     // ✅ 如果没有任何视频（包括加载中），显示"等待生成"
     if (realVideos.isEmpty && !hasLoading) {
       return Center(
@@ -2012,7 +2469,7 @@ taskIndex 从 0 开始，对应任务序号。''';
         ),
       );
     }
-    
+
     // ✅ 如果只有加载中的视频，没有真实视频，显示加载圈
     if (realVideos.isEmpty && hasLoading) {
       return Center(
@@ -2026,21 +2483,23 @@ taskIndex 从 0 开始，对应任务序号。''';
         ),
       );
     }
-    
+
     // ✅ 单个真实视频
     if (realVideos.length == 1) {
       final videoPath = realVideos.first;
       final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
       final thumbnailFile = File(thumbnailPath);
-      
+
       if (!hasLoading) {
         // 只有一个视频且没有生成中的，显示缩略图（点击弹出对话框）
         return FutureBuilder<bool>(
           key: ValueKey('${thumbnailPath}_single'),
           future: thumbnailFile.exists(),
           builder: (context, thumbnailSnapshot) {
-            final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
-            
+            final coverUrl = thumbnailSnapshot.data == true
+                ? thumbnailPath
+                : null;
+
             return DraggableMediaItem(
               filePath: videoPath,
               dragPreviewText: path.basename(videoPath),
@@ -2048,8 +2507,13 @@ taskIndex 从 0 开始，对应任务序号。''';
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: GestureDetector(
-                  onTap: () => _showVideosDialog(task.id),  // ✅ 点击弹出对话框
-                  onSecondaryTapDown: (details) => _showSingleVideoContextMenu(context, details, videoPath, task),
+                  onTap: () => _showVideosDialog(task.id), // ✅ 点击弹出对话框
+                  onSecondaryTapDown: (details) => _showSingleVideoContextMenu(
+                    context,
+                    details,
+                    videoPath,
+                    task,
+                  ),
                   child: _buildVideoThumbnail(videoPath, clickable: false),
                 ),
               ),
@@ -2058,14 +2522,18 @@ taskIndex 从 0 开始，对应任务序号。''';
         );
       } else {
         // 有一个视频 + 有生成中的，显示缩略图 + 生成中标记，点击弹出对话框
-        final loadingVideos = allVideos.where((v) => v.startsWith('loading_')).toList();
-        
+        final loadingVideos = allVideos
+            .where((v) => v.startsWith('loading_'))
+            .toList();
+
         return FutureBuilder<bool>(
           key: ValueKey('${thumbnailPath}_loading'),
           future: thumbnailFile.exists(),
           builder: (context, thumbnailSnapshot) {
-            final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
-            
+            final coverUrl = thumbnailSnapshot.data == true
+                ? thumbnailPath
+                : null;
+
             return DraggableMediaItem(
               filePath: videoPath,
               dragPreviewText: path.basename(videoPath),
@@ -2077,7 +2545,13 @@ taskIndex 从 0 开始，对应任务序号。''';
                     // ✅ 缩略图（点击弹出对话框）
                     GestureDetector(
                       onTap: () => _showVideosDialog(task.id),
-                      onSecondaryTapDown: (details) => _showSingleVideoContextMenu(context, details, videoPath, task),
+                      onSecondaryTapDown: (details) =>
+                          _showSingleVideoContextMenu(
+                            context,
+                            details,
+                            videoPath,
+                            task,
+                          ),
                       child: _buildVideoThumbnail(videoPath, clickable: false),
                     ),
                     // 生成中标记（点击弹出对话框）
@@ -2087,7 +2561,10 @@ taskIndex 从 0 开始，对应任务序号。''';
                       child: GestureDetector(
                         onTap: () => _showVideosDialog(task.id),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.orange,
                             borderRadius: BorderRadius.circular(12),
@@ -2106,7 +2583,9 @@ taskIndex 从 0 开始，对应任务序号。''';
                                 height: 10,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 4),
@@ -2131,18 +2610,18 @@ taskIndex 从 0 开始，对应任务序号。''';
         );
       }
     }
-    
+
     // ✅ 有真实视频（可能还有生成中的）- 点击弹出对话框查看所有视频（包括生成中的）
     final firstVideoPath = realVideos.first;
     final thumbnailPath = firstVideoPath.replaceAll('.mp4', '.jpg');
     final thumbnailFile = File(thumbnailPath);
-    
+
     return FutureBuilder<bool>(
       key: ValueKey('${thumbnailPath}_multiple'),
       future: thumbnailFile.exists(),
       builder: (context, thumbnailSnapshot) {
         final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
-        
+
         return DraggableMediaItem(
           filePath: firstVideoPath,
           dragPreviewText: path.basename(firstVideoPath),
@@ -2150,7 +2629,7 @@ taskIndex 从 0 开始，对应任务序号。''';
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
-              onTap: () => _showVideosDialog(task.id),  // ✅ 传递 task ID
+              onTap: () => _showVideosDialog(task.id), // ✅ 传递 task ID
               child: Stack(
                 children: [
                   // ✅ 背景显示第一个视频的缩略图
@@ -2160,9 +2639,14 @@ taskIndex 从 0 开始，对应任务序号。''';
                     top: 4,
                     right: 4,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
-                        color: hasLoading ? Colors.orange : AppTheme.accentColor,
+                        color: hasLoading
+                            ? Colors.orange
+                            : AppTheme.accentColor,
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
@@ -2172,7 +2656,9 @@ taskIndex 从 0 开始，对应任务序号。''';
                         ],
                       ),
                       child: Text(
-                        hasLoading ? '${realVideos.length}/${allVideos.length}' : '${realVideos.length}',
+                        hasLoading
+                            ? '${realVideos.length}/${allVideos.length}'
+                            : '${realVideos.length}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 11,
@@ -2191,7 +2677,11 @@ taskIndex 从 0 开始，对应任务序号。''';
   }
 
   /// 构建视频缩略图（显示首帧）
-  Widget _buildVideoThumbnail(String videoPath, {VoidCallback? onTap, bool clickable = true}) {
+  Widget _buildVideoThumbnail(
+    String videoPath, {
+    VoidCallback? onTap,
+    bool clickable = true,
+  }) {
     if (videoPath.startsWith('http')) {
       // 在线视频 - 显示播放图标
       return Container(
@@ -2201,17 +2691,21 @@ taskIndex 从 0 开始，对应任务序号。''';
           color: AppTheme.inputBackground,
         ),
         child: const Center(
-          child: Icon(Icons.play_circle_outline, color: Colors.white54, size: 32),
+          child: Icon(
+            Icons.play_circle_outline,
+            color: Colors.white54,
+            size: 32,
+          ),
         ),
       );
     }
-    
+
     // ✅ 本地视频 - 显示首帧缩略图
     final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
     final thumbnailFile = File(thumbnailPath);
-    
+
     Widget content = FutureBuilder<bool>(
-      key: ValueKey(thumbnailPath),  // ✅ 添加 key 确保每次都重新检查
+      key: ValueKey(thumbnailPath), // ✅ 添加 key 确保每次都重新检查
       future: thumbnailFile.exists(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -2230,7 +2724,7 @@ taskIndex 从 0 开始，对应任务序号。''';
             ),
           );
         }
-        
+
         if (snapshot.data == true) {
           // ✅ 显示首帧图片
           return Container(
@@ -2249,12 +2743,16 @@ taskIndex 从 0 开始，对应任务序号。''';
                   color: Colors.black.withOpacity(0.5),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.play_arrow, color: Colors.white, size: 20),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: Colors.white,
+                  size: 20,
+                ),
               ),
             ),
           );
         }
-        
+
         // 首帧不存在 - 显示默认图标
         return Container(
           height: 60,
@@ -2268,18 +2766,15 @@ taskIndex 从 0 开始，对应任务序号。''';
         );
       },
     );
-    
+
     // ✅ 根据参数决定是否可点击
     if (clickable && onTap != null) {
       return MouseRegion(
         cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: onTap,
-          child: content,
-        ),
+        child: GestureDetector(onTap: onTap, child: content),
       );
     }
-    
+
     return content;
   }
 
@@ -2292,19 +2787,23 @@ taskIndex 从 0 开始，对应任务序号。''';
         Row(
           children: [
             Expanded(
-              child: _buildCompactDropdown(
-                task.ratio,
-                ['自动', '16:9', '9:16', '1:1', '4:3', '3:4'],
-                (v) => _updateTask(task.copyWith(ratio: v)),
-              ),
+              child: _buildCompactDropdown(task.ratio, [
+                '自动',
+                '16:9',
+                '9:16',
+                '1:1',
+                '4:3',
+                '3:4',
+              ], (v) => _updateTask(task.copyWith(ratio: v))),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: _buildCompactDropdown(
-                task.seconds,
-                ['自动', '5秒', '10秒', '15秒'],
-                (v) => _updateTask(task.copyWith(seconds: v)),
-              ),
+              child: _buildCompactDropdown(task.seconds, [
+                '自动',
+                '5秒',
+                '10秒',
+                '15秒',
+              ], (v) => _updateTask(task.copyWith(seconds: v))),
             ),
           ],
         ),
@@ -2318,20 +2817,26 @@ taskIndex 从 0 开始，对应任务序号。''';
             // 删除按钮（正常颜色）
             Expanded(
               flex: 2,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  onTap: () => _deleteTask(task.id),
-                  child: Container(
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: AppTheme.inputBackground,  // ✅ 改为正常颜色
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: AppTheme.dividerColor),
-                    ),
-                    child: Center(
-                      child: Icon(Icons.delete_outline, 
-                        color: AppTheme.subTextColor, size: 16),  // ✅ 正常颜色
+              child: Tooltip(
+                message: '删除',
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => _deleteTask(task.id),
+                    child: Container(
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: AppTheme.inputBackground, // ✅ 改为正常颜色
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: AppTheme.dividerColor),
+                      ),
+                      child: Center(
+                        child: Icon(
+                          Icons.delete_outline,
+                          color: AppTheme.subTextColor,
+                          size: 16,
+                        ), // ✅ 正常颜色
+                      ),
                     ),
                   ),
                 ),
@@ -2367,7 +2872,11 @@ taskIndex 从 0 开始，对应任务序号。''';
   }
 
   /// 构建紧凑型下拉框
-  Widget _buildCompactDropdown(String value, List<String> items, Function(String) onChanged) {
+  Widget _buildCompactDropdown(
+    String value,
+    List<String> items,
+    Function(String) onChanged,
+  ) {
     return Container(
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2378,20 +2887,25 @@ taskIndex 从 0 开始，对应任务序号。''';
       ),
       child: DropdownButton<String>(
         value: value,
-        items: items.map((i) => DropdownMenuItem(
-          value: i,
-          child: Text(
-            i,
-            style: TextStyle(
-              color: AppTheme.textColor,
-              fontSize: 11,
-            ),
-          ),
-        )).toList(),
+        items: items
+            .map(
+              (i) => DropdownMenuItem(
+                value: i,
+                child: Text(
+                  i,
+                  style: TextStyle(color: AppTheme.textColor, fontSize: 11),
+                ),
+              ),
+            )
+            .toList(),
         onChanged: (v) => onChanged(v!),
         underline: const SizedBox(),
         dropdownColor: AppTheme.surfaceBackground,
-        icon: Icon(Icons.arrow_drop_down, color: AppTheme.subTextColor, size: 16),
+        icon: Icon(
+          Icons.arrow_drop_down,
+          color: AppTheme.subTextColor,
+          size: 16,
+        ),
         isDense: true,
         isExpanded: true,
       ),
@@ -2410,17 +2924,26 @@ taskIndex 从 0 开始，对应任务序号。''';
       ),
       child: Row(
         children: [
-          Text('批量', style: TextStyle(color: AppTheme.subTextColor, fontSize: 10)),
+          Text(
+            '批量',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 10),
+          ),
           const SizedBox(width: 4),
           MouseRegion(
-            cursor: task.batchCount > 1 ? SystemMouseCursors.click : SystemMouseCursors.basic,
+            cursor: task.batchCount > 1
+                ? SystemMouseCursors.click
+                : SystemMouseCursors.basic,
             child: GestureDetector(
               onTap: task.batchCount > 1
-                  ? () => _updateTask(task.copyWith(batchCount: task.batchCount - 1))
+                  ? () => _updateTask(
+                      task.copyWith(batchCount: task.batchCount - 1),
+                    )
                   : null,
               child: Icon(
                 Icons.remove,
-                color: task.batchCount > 1 ? AppTheme.textColor : AppTheme.subTextColor.withOpacity(0.3),
+                color: task.batchCount > 1
+                    ? AppTheme.textColor
+                    : AppTheme.subTextColor.withOpacity(0.3),
                 size: 16,
               ),
             ),
@@ -2439,14 +2962,20 @@ taskIndex 从 0 开始，对应任务序号。''';
             ),
           ),
           MouseRegion(
-            cursor: task.batchCount < 20 ? SystemMouseCursors.click : SystemMouseCursors.basic,
+            cursor: task.batchCount < 20
+                ? SystemMouseCursors.click
+                : SystemMouseCursors.basic,
             child: GestureDetector(
               onTap: task.batchCount < 20
-                  ? () => _updateTask(task.copyWith(batchCount: task.batchCount + 1))
+                  ? () => _updateTask(
+                      task.copyWith(batchCount: task.batchCount + 1),
+                    )
                   : null,
               child: Icon(
                 Icons.add,
-                color: task.batchCount < 20 ? AppTheme.textColor : AppTheme.subTextColor.withOpacity(0.3),
+                color: task.batchCount < 20
+                    ? AppTheme.textColor
+                    : AppTheme.subTextColor.withOpacity(0.3),
                 size: 16,
               ),
             ),
@@ -2485,22 +3014,32 @@ taskIndex 从 0 开始，对应任务序号。''';
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.folder_open, color: AppTheme.accentColor, size: 32),
+                      Icon(
+                        Icons.folder_open,
+                        color: AppTheme.accentColor,
+                        size: 32,
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('本地图片', style: TextStyle(
-                              color: AppTheme.textColor,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            )),
+                            Text(
+                              '本地图片',
+                              style: TextStyle(
+                                color: AppTheme.textColor,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             const SizedBox(height: 4),
-                            Text('从电脑中选择图片', style: TextStyle(
-                              color: AppTheme.subTextColor,
-                              fontSize: 12,
-                            )),
+                            Text(
+                              '从电脑中选择图片',
+                              style: TextStyle(
+                                color: AppTheme.subTextColor,
+                                fontSize: 12,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -2529,22 +3068,32 @@ taskIndex 从 0 开始，对应任务序号。''';
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.photo_library, color: AppTheme.accentColor, size: 32),
+                      Icon(
+                        Icons.photo_library,
+                        color: AppTheme.accentColor,
+                        size: 32,
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('素材库', style: TextStyle(
-                              color: AppTheme.textColor,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            )),
+                            Text(
+                              '素材库',
+                              style: TextStyle(
+                                color: AppTheme.textColor,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             const SizedBox(height: 4),
-                            Text('从素材库中选择', style: TextStyle(
-                              color: AppTheme.subTextColor,
-                              fontSize: 12,
-                            )),
+                            Text(
+                              '从素材库中选择',
+                              style: TextStyle(
+                                color: AppTheme.subTextColor,
+                                fontSize: 12,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -2570,45 +3119,66 @@ taskIndex 从 0 开始，对应任务序号。''';
   Future<void> _addLocalImages(String taskId) async {
     try {
       _logger.info('【添加本地图片】开始', module: '批量空间', extra: {'接收到的taskId': taskId});
-      
+
       // ✅ 先输出所有任务的ID，确认列表状态
       for (var i = 0; i < _tasks.length; i++) {
-        _logger.info('  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}', module: '批量空间');
+        _logger.info(
+          '  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}',
+          module: '批量空间',
+        );
       }
-      
+
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: true,
       );
-      
+
       if (result != null && result.files.isNotEmpty) {
         final newImages = result.files.map((f) => f.path!).toList();
         _logger.info('【添加本地图片】选择了 ${newImages.length} 张图片', module: '批量空间');
-        
+
         // ✅ 从列表中获取正确的 task
         final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
         if (taskIndex == -1) {
-          _logger.error('【添加本地图片】未找到任务！', module: '批量空间', extra: {'taskId': taskId});
+          _logger.error(
+            '【添加本地图片】未找到任务！',
+            module: '批量空间',
+            extra: {'taskId': taskId},
+          );
           _showMessage('任务不存在', isError: true);
           return;
         }
-        
+
         final task = _tasks[taskIndex];
-        _logger.info('【添加本地图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}', module: '批量空间');
-        
+        _logger.info(
+          '【添加本地图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}',
+          module: '批量空间',
+        );
+
         final updatedTask = task.copyWith(
           referenceImages: [...task.referenceImages, ...newImages],
         );
-        
-        _logger.info('更新任务，图片总数: ${updatedTask.referenceImages.length}', module: '批量空间');
+
+        _logger.info(
+          '更新任务，图片总数: ${updatedTask.referenceImages.length}',
+          module: '批量空间',
+        );
         _updateTask(updatedTask);
         _showMessage('添加了 ${newImages.length} 张图片');
-        _logger.success('添加本地图片成功', module: '批量空间', extra: {'数量': newImages.length, '任务索引': taskIndex});
+        _logger.success(
+          '添加本地图片成功',
+          module: '批量空间',
+          extra: {'数量': newImages.length, '任务索引': taskIndex},
+        );
       } else {
         _logger.info('用户取消选择图片', module: '批量空间');
       }
     } catch (e, stackTrace) {
-      _logger.error('添加本地图片失败: $e', module: '批量空间', extra: {'stackTrace': stackTrace.toString()});
+      _logger.error(
+        '添加本地图片失败: $e',
+        module: '批量空间',
+        extra: {'stackTrace': stackTrace.toString()},
+      );
       _showMessage('添加失败: $e', isError: true);
     }
   }
@@ -2616,26 +3186,33 @@ taskIndex 从 0 开始，对应任务序号。''';
   /// 添加素材库图片
   Future<void> _addAssetLibraryImages(String taskId) async {
     try {
-      _logger.info('【添加素材库图片】开始', module: '批量空间', extra: {'接收到的taskId': taskId});
-      
+      _logger.info(
+        '【添加素材库图片】开始',
+        module: '批量空间',
+        extra: {'接收到的taskId': taskId},
+      );
+
       // ✅ 先输出所有任务的ID，确认列表状态
       for (var i = 0; i < _tasks.length; i++) {
-        _logger.info('  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}', module: '批量空间');
+        _logger.info(
+          '  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}',
+          module: '批量空间',
+        );
       }
-      
+
       // 加载素材库数据
       final prefs = await SharedPreferences.getInstance();
       final assetsJson = prefs.getString('asset_library_data');
-      
+
       if (assetsJson == null || assetsJson.isEmpty) {
         _showMessage('素材库为空\n请先在素材库中添加图片', isError: true);
         return;
       }
-      
+
       // 解析素材数据
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
-      final allAssets = <Map<String, String>>[];  // ✅ 使用Map存储素材信息
-      
+      final allAssets = <Map<String, String>>[]; // ✅ 使用Map存储素材信息
+
       data.forEach((key, value) {
         final stylesList = (value as List);
         for (var styleData in stylesList) {
@@ -2649,53 +3226,75 @@ taskIndex 从 0 开始，对应任务序号。''';
           }
         }
       });
-      
+
       _logger.info('素材库中找到 ${allAssets.length} 张图片', module: '批量空间');
-      
+
       if (allAssets.isEmpty) {
         _showMessage('素材库中没有图片\n请先在素材库中添加图片', isError: true);
         return;
       }
-      
+
       // 显示素材库选择对话框
       final selectedAssets = await _showAssetLibraryDialog(allAssets);
-      
+
       if (selectedAssets != null && selectedAssets.isNotEmpty) {
-        final newImages = selectedAssets.map((asset) => asset['path']!).toList();
+        final newImages = selectedAssets
+            .map((asset) => asset['path']!)
+            .toList();
         _logger.info('【添加素材库图片】选择了 ${newImages.length} 张图片', module: '批量空间');
-        
+
         // ✅ 从列表中获取正确的 task
         final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
         if (taskIndex == -1) {
-          _logger.error('【添加素材库图片】未找到任务！', module: '批量空间', extra: {'taskId': taskId});
+          _logger.error(
+            '【添加素材库图片】未找到任务！',
+            module: '批量空间',
+            extra: {'taskId': taskId},
+          );
           _showMessage('任务不存在', isError: true);
           return;
         }
-        
+
         final task = _tasks[taskIndex];
-        _logger.info('【添加素材库图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}', module: '批量空间');
-        
+        _logger.info(
+          '【添加素材库图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}',
+          module: '批量空间',
+        );
+
         final updatedTask = task.copyWith(
           referenceImages: [...task.referenceImages, ...newImages],
         );
-        
-        _logger.info('更新任务，图片总数: ${updatedTask.referenceImages.length}', module: '批量空间');
+
+        _logger.info(
+          '更新任务，图片总数: ${updatedTask.referenceImages.length}',
+          module: '批量空间',
+        );
         _updateTask(updatedTask);
         _showMessage('从素材库添加了 ${newImages.length} 张图片');
-        _logger.success('从素材库添加图片成功', module: '批量空间', extra: {'数量': newImages.length, '任务索引': taskIndex});
+        _logger.success(
+          '从素材库添加图片成功',
+          module: '批量空间',
+          extra: {'数量': newImages.length, '任务索引': taskIndex},
+        );
       } else {
         _logger.info('用户取消选择', module: '批量空间');
       }
     } catch (e, stackTrace) {
-      _logger.error('从素材库添加图片失败: $e', module: '批量空间', extra: {'stackTrace': stackTrace.toString()});
+      _logger.error(
+        '从素材库添加图片失败: $e',
+        module: '批量空间',
+        extra: {'stackTrace': stackTrace.toString()},
+      );
       _showMessage('添加失败: $e', isError: true);
     }
   }
 
   /// 显示素材库选择对话框
-  Future<List<Map<String, String>>?> _showAssetLibraryDialog(List<Map<String, String>> allAssets) async {
+  Future<List<Map<String, String>>?> _showAssetLibraryDialog(
+    List<Map<String, String>> allAssets,
+  ) async {
     final selectedAssets = <Map<String, String>>[];
-    
+
     return showDialog<List<Map<String, String>>>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -2704,13 +3303,20 @@ taskIndex 从 0 开始，对应任务序号。''';
             backgroundColor: AppTheme.surfaceBackground,
             title: Row(
               children: [
-                Icon(Icons.photo_library, color: AppTheme.accentColor, size: 24),
+                Icon(
+                  Icons.photo_library,
+                  color: AppTheme.accentColor,
+                  size: 24,
+                ),
                 const SizedBox(width: 12),
                 Text('选择素材库图片', style: TextStyle(color: AppTheme.textColor)),
                 const Spacer(),
                 if (selectedAssets.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: AppTheme.accentColor.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(12),
@@ -2740,15 +3346,19 @@ taskIndex 从 0 开始，对应任务序号。''';
                 itemBuilder: (context, index) {
                   final asset = allAssets[index];
                   final assetPath = asset['path']!;
-                  final isSelected = selectedAssets.any((a) => a['path'] == assetPath);
-                  
+                  final isSelected = selectedAssets.any(
+                    (a) => a['path'] == assetPath,
+                  );
+
                   return MouseRegion(
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
                       onTap: () {
                         setState(() {
                           if (isSelected) {
-                            selectedAssets.removeWhere((a) => a['path'] == assetPath);
+                            selectedAssets.removeWhere(
+                              (a) => a['path'] == assetPath,
+                            );
                           } else {
                             selectedAssets.add(asset);
                           }
@@ -2760,8 +3370,8 @@ taskIndex 从 0 开始，对应任务序号。''';
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
-                                color: isSelected 
-                                    ? AppTheme.accentColor 
+                                color: isSelected
+                                    ? AppTheme.accentColor
                                     : AppTheme.dividerColor,
                                 width: isSelected ? 3 : 1,
                               ),
@@ -2781,7 +3391,11 @@ taskIndex 从 0 开始，对应任务序号。''';
                                   color: AppTheme.accentColor,
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(Icons.check, color: Colors.white, size: 16),
+                                child: const Icon(
+                                  Icons.check,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
                               ),
                             ),
                           Positioned(
@@ -2817,7 +3431,10 @@ taskIndex 从 0 开始，对应任务序号。''';
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, null),
-                child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+                child: Text(
+                  '取消',
+                  style: TextStyle(color: AppTheme.subTextColor),
+                ),
               ),
               TextButton(
                 onPressed: selectedAssets.isEmpty
@@ -2826,8 +3443,8 @@ taskIndex 从 0 开始，对应任务序号。''';
                 child: Text(
                   '确定 (${selectedAssets.length})',
                   style: TextStyle(
-                    color: selectedAssets.isEmpty 
-                        ? AppTheme.subTextColor 
+                    color: selectedAssets.isEmpty
+                        ? AppTheme.subTextColor
                         : AppTheme.accentColor,
                     fontWeight: FontWeight.bold,
                   ),
@@ -2848,7 +3465,7 @@ taskIndex 从 0 开始，对应任务序号。''';
         builder: (context, setDialogState) {
           // ✅ 实时获取最新的task数据
           final currentTask = _tasks.firstWhere((t) => t.id == taskId);
-          
+
           return AlertDialog(
             backgroundColor: AppTheme.surfaceBackground,
             title: Row(
@@ -2864,7 +3481,7 @@ taskIndex 从 0 开始，对应任务序号。''';
                   child: GestureDetector(
                     onTap: () {
                       Navigator.pop(dialogContext);
-                      _showImageSourceDialog(taskId);  // ✅ 传递 task ID
+                      _showImageSourceDialog(taskId); // ✅ 传递 task ID
                     },
                     child: Container(
                       padding: const EdgeInsets.all(8),
@@ -2875,13 +3492,20 @@ taskIndex 从 0 开始，对应任务序号。''';
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.add, color: AppTheme.accentColor, size: 16),
-                          const SizedBox(width: 4),
-                          Text('添加', style: TextStyle(
+                          Icon(
+                            Icons.add,
                             color: AppTheme.accentColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          )),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '添加',
+                            style: TextStyle(
+                              color: AppTheme.accentColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -2897,17 +3521,21 @@ taskIndex 从 0 开始，对应任务序号。''';
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_photo_alternate, 
-                            size: 64, 
-                            color: AppTheme.subTextColor.withOpacity(0.3)),
+                          Icon(
+                            Icons.add_photo_alternate,
+                            size: 64,
+                            color: AppTheme.subTextColor.withOpacity(0.3),
+                          ),
                           const SizedBox(height: 16),
-                          Text('还没有参考图片', 
-                            style: TextStyle(color: AppTheme.subTextColor)),
+                          Text(
+                            '还没有参考图片',
+                            style: TextStyle(color: AppTheme.subTextColor),
+                          ),
                           const SizedBox(height: 24),
                           ElevatedButton.icon(
                             onPressed: () {
                               Navigator.pop(dialogContext);
-                              _showImageSourceDialog(taskId);  // ✅ 传递 task ID
+                              _showImageSourceDialog(taskId); // ✅ 传递 task ID
                             },
                             icon: const Icon(Icons.add),
                             label: const Text('添加图片'),
@@ -2919,74 +3547,88 @@ taskIndex 从 0 开始，对应任务序号。''';
                       ),
                     )
                   : GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                ),
-                itemCount: currentTask.referenceImages.length,
-                itemBuilder: (context, index) {
-                  final imagePath = currentTask.referenceImages[index];
-                  return Stack(
-                    children: [
-                      // 图片
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: () => _showImagePreview(imagePath),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              image: DecorationImage(
-                                image: FileImage(File(imagePath)),
-                                fit: BoxFit.cover,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          ),
+                      itemCount: currentTask.referenceImages.length,
+                      itemBuilder: (context, index) {
+                        final imagePath = currentTask.referenceImages[index];
+                        return Stack(
+                          children: [
+                            // 图片
+                            MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: GestureDetector(
+                                onTap: () => _showImagePreview(imagePath),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    image: DecorationImage(
+                                      image: FileImage(File(imagePath)),
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      ),
-                      // ✅ 删除按钮（修复：使用setDialogState刷新对话框）
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: () {
-                          final newImages = List<String>.from(currentTask.referenceImages);
-                          newImages.removeAt(index);
-                          
-                          // ✅ 更新任务数据
-                          _updateTask(currentTask.copyWith(referenceImages: newImages));
-                          
-                          // ✅ 刷新对话框
-                          setDialogState(() {});
-                          
-                          // 如果没有图片了，关闭对话框
-                          if (newImages.isEmpty) {
-                            Navigator.pop(dialogContext);
-                          }
-                        },
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.6),
-                                shape: BoxShape.circle,
+                            // ✅ 删除按钮（修复：使用setDialogState刷新对话框）
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    final newImages = List<String>.from(
+                                      currentTask.referenceImages,
+                                    );
+                                    newImages.removeAt(index);
+
+                                    // ✅ 更新任务数据
+                                    _updateTask(
+                                      currentTask.copyWith(
+                                        referenceImages: newImages,
+                                      ),
+                                    );
+
+                                    // ✅ 刷新对话框
+                                    setDialogState(() {});
+
+                                    // 如果没有图片了，关闭对话框
+                                    if (newImages.isEmpty) {
+                                      Navigator.pop(dialogContext);
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.6),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.close,
+                                      color: Colors.white,
+                                      size: 14,
+                                    ),
+                                  ),
+                                ),
                               ),
-                              child: const Icon(Icons.close, color: Colors.white, size: 14),
                             ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+                          ],
+                        );
+                      },
+                    ),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: Text('关闭', style: TextStyle(color: AppTheme.accentColor)),
+                child: Text(
+                  '关闭',
+                  style: TextStyle(color: AppTheme.accentColor),
+                ),
               ),
             ],
           );
@@ -3004,15 +3646,19 @@ taskIndex 从 0 开始，对应任务序号。''';
         builder: (context, setDialogState) {
           // ✅ 实时获取最新的task数据
           final currentTask = _tasks.firstWhere((t) => t.id == taskId);
-          
+
           // 所有视频（包括生成中的，但不包括失败的）
-          final allVideos = currentTask.generatedVideos.where((v) => 
-            !v.startsWith('failed_')
-          ).toList();
-          
-          final realVideos = allVideos.where((v) => !v.startsWith('loading_')).toList();
-          final loadingVideos = allVideos.where((v) => v.startsWith('loading_')).toList();
-          
+          final allVideos = currentTask.generatedVideos
+              .where((v) => !v.startsWith('failed_'))
+              .toList();
+
+          final realVideos = allVideos
+              .where((v) => !v.startsWith('loading_'))
+              .toList();
+          final loadingVideos = allVideos
+              .where((v) => v.startsWith('loading_'))
+              .toList();
+
           // ✅ 如果有生成中的视频，定期刷新对话框
           if (loadingVideos.isNotEmpty) {
             Future.delayed(const Duration(seconds: 1), () {
@@ -3021,7 +3667,7 @@ taskIndex 从 0 开始，对应任务序号。''';
               }
             });
           }
-          
+
           return AlertDialog(
             backgroundColor: AppTheme.surfaceBackground,
             title: Text(
@@ -3038,19 +3684,21 @@ taskIndex 从 0 开始，对应任务序号。''';
                   mainAxisSpacing: 12,
                   childAspectRatio: 16 / 9,
                 ),
-                itemCount: allVideos.length,  // ✅ 显示所有视频（包括生成中的）
+                itemCount: allVideos.length, // ✅ 显示所有视频（包括生成中的）
                 itemBuilder: (context, index) {
                   final videoPath = allVideos[index];
-                  
+
                   // ✅ 如果是加载中的视频，显示进度
                   if (videoPath.startsWith('loading_')) {
                     final progress = _batchVideoProgress[videoPath] ?? 0;
-                    
+
                     return Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         color: AppTheme.inputBackground,
-                        border: Border.all(color: AppTheme.accentColor.withOpacity(0.3)),
+                        border: Border.all(
+                          color: AppTheme.accentColor.withOpacity(0.3),
+                        ),
                       ),
                       child: Center(
                         child: Column(
@@ -3065,9 +3713,13 @@ taskIndex 从 0 开始，对应任务序号。''';
                                   CircularProgressIndicator(
                                     value: progress / 100.0,
                                     strokeWidth: 3,
-                                    backgroundColor: Colors.grey.withOpacity(0.2),
+                                    backgroundColor: Colors.grey.withOpacity(
+                                      0.2,
+                                    ),
                                     valueColor: AlwaysStoppedAnimation<Color>(
-                                      progress == 0 ? Colors.blue : AppTheme.accentColor,
+                                      progress == 0
+                                          ? Colors.blue
+                                          : AppTheme.accentColor,
                                     ),
                                   ),
                                   Text(
@@ -3084,25 +3736,30 @@ taskIndex 从 0 开始，对应任务序号。''';
                             const SizedBox(height: 8),
                             Text(
                               progress == 0 ? '等待中...' : '生成中...',
-                              style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+                              style: TextStyle(
+                                color: AppTheme.subTextColor,
+                                fontSize: 11,
+                              ),
                             ),
                           ],
                         ),
                       ),
                     );
                   }
-                  
+
                   // ✅ 真实视频
                   final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
                   final thumbnailFile = File(thumbnailPath);
-                  
+
                   // ✅ 检查缩略图是否存在
                   return FutureBuilder<bool>(
                     key: ValueKey('${thumbnailPath}_exists'),
                     future: thumbnailFile.exists(),
                     builder: (context, thumbnailSnapshot) {
-                      final coverUrl = thumbnailSnapshot.data == true ? thumbnailPath : null;
-                      
+                      final coverUrl = thumbnailSnapshot.data == true
+                          ? thumbnailPath
+                          : null;
+
                       // ✅ 构建缩略图 Widget
                       final thumbnailWidget = ClipRRect(
                         borderRadius: BorderRadius.circular(8),
@@ -3119,20 +3776,23 @@ taskIndex 从 0 开始，对应任务序号。''';
                             return Container(
                               color: AppTheme.inputBackground,
                               child: const Center(
-                                child: Icon(Icons.videocam, 
-                                  color: Colors.white54, size: 32),
+                                child: Icon(
+                                  Icons.videocam,
+                                  color: Colors.white54,
+                                  size: 32,
+                                ),
                               ),
                             );
                           },
                         ),
                       );
-                      
+
                       // ✅ 使用 VideoGridItem 支持原位播放
                       final videoGridItem = VideoGridItem(
                         videoUrl: videoPath,
                         thumbnailWidget: thumbnailWidget,
                       );
-                      
+
                       // ✅ 使用 DraggableMediaItem 包装支持拖动
                       return DraggableMediaItem(
                         filePath: videoPath,
@@ -3142,13 +3802,14 @@ taskIndex 从 0 开始，对应任务序号。''';
                           children: [
                             // ✅ 右键菜单
                             GestureDetector(
-                              onSecondaryTapDown: (details) => _showVideoContextMenu(
-                                context, 
-                                details, 
-                                videoPath, 
-                                currentTask,
-                                setDialogState,
-                              ),
+                              onSecondaryTapDown: (details) =>
+                                  _showVideoContextMenu(
+                                    context,
+                                    details,
+                                    videoPath,
+                                    currentTask,
+                                    setDialogState,
+                                  ),
                               child: videoGridItem,
                             ),
                             // 视频编号
@@ -3185,7 +3846,10 @@ taskIndex 从 0 开始，对应任务序号。''';
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
-                child: Text('关闭', style: TextStyle(color: AppTheme.accentColor)),
+                child: Text(
+                  '关闭',
+                  style: TextStyle(color: AppTheme.accentColor),
+                ),
               ),
             ],
           );
@@ -3206,7 +3870,7 @@ taskIndex 从 0 开始，对应任务序号。''';
       Rect.fromPoints(details.globalPosition, details.globalPosition),
       Offset.zero & overlay.size,
     );
-    
+
     showMenu(
       context: context,
       position: menuPosition,
@@ -3217,7 +3881,11 @@ taskIndex 从 0 开始，对应任务序号。''';
           value: 'play',
           child: Row(
             children: [
-              Icon(Icons.play_circle_outline, size: 18, color: AppTheme.textColor),
+              Icon(
+                Icons.play_circle_outline,
+                size: 18,
+                color: AppTheme.textColor,
+              ),
               const SizedBox(width: 12),
               Text('使用播放器播放', style: TextStyle(color: AppTheme.textColor)),
             ],
@@ -3260,9 +3928,9 @@ taskIndex 从 0 开始，对应任务序号。''';
         final newVideos = List<String>.from(task.generatedVideos);
         newVideos.remove(videoPath);
         _updateTask(task.copyWith(generatedVideos: newVideos));
-        
+
         _logger.info('删除视频', module: '批量空间', extra: {'path': videoPath});
-        
+
         // 删除本地文件
         try {
           if (!videoPath.startsWith('http')) {
@@ -3298,7 +3966,7 @@ taskIndex 从 0 开始，对应任务序号。''';
       Rect.fromPoints(details.globalPosition, details.globalPosition),
       Offset.zero & overlay.size,
     );
-    
+
     showMenu(
       context: context,
       position: menuPosition,
@@ -3309,7 +3977,11 @@ taskIndex 从 0 开始，对应任务序号。''';
           value: 'play',
           child: Row(
             children: [
-              Icon(Icons.play_circle_outline, size: 18, color: AppTheme.textColor),
+              Icon(
+                Icons.play_circle_outline,
+                size: 18,
+                color: AppTheme.textColor,
+              ),
               const SizedBox(width: 12),
               Text('使用播放器播放', style: TextStyle(color: AppTheme.textColor)),
             ],
@@ -3352,19 +4024,19 @@ taskIndex 从 0 开始，对应任务序号。''';
         final newVideos = List<String>.from(task.generatedVideos);
         newVideos.remove(videoPath);
         _updateTask(task.copyWith(generatedVideos: newVideos));
-        
+
         // 刷新对话框
         setDialogState(() {});
-        
+
         // 如果没有视频了，关闭对话框
-        if (newVideos.where((v) => 
-          !v.startsWith('loading_') && !v.startsWith('failed_')
-        ).isEmpty) {
+        if (newVideos
+            .where((v) => !v.startsWith('loading_') && !v.startsWith('failed_'))
+            .isEmpty) {
           Navigator.pop(context);
         }
-        
+
         _logger.info('删除视频', module: '批量空间', extra: {'path': videoPath});
-        
+
         // 删除本地文件
         try {
           if (!videoPath.startsWith('http')) {
@@ -3397,9 +4069,7 @@ taskIndex 从 0 开始，对应任务序号。''';
         child: Stack(
           children: [
             Center(
-              child: InteractiveViewer(
-                child: Image.file(File(imagePath)),
-              ),
+              child: InteractiveViewer(child: Image.file(File(imagePath))),
             ),
             Positioned(
               top: 20,
@@ -3414,7 +4084,11 @@ taskIndex 从 0 开始，对应任务序号。''';
                       color: Colors.black.withOpacity(0.6),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.close, color: Colors.white, size: 24),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 24,
+                    ),
                   ),
                 ),
               ),
@@ -3429,17 +4103,27 @@ taskIndex 从 0 开始，对应任务序号。''';
   Future<void> _playVideo(String videoPath) async {
     try {
       final isLocalFile = !videoPath.startsWith('http');
-      
+
       if (isLocalFile) {
         final file = File(videoPath);
         if (await file.exists()) {
-          await Process.run('cmd', ['/c', 'start', '', videoPath], runInShell: true);
+          await Process.run('cmd', [
+            '/c',
+            'start',
+            '',
+            videoPath,
+          ], runInShell: true);
           _logger.success('已用默认播放器打开视频', module: '批量空间');
         } else {
           _showMessage('视频文件不存在', isError: true);
         }
       } else {
-        await Process.run('cmd', ['/c', 'start', '', videoPath], runInShell: true);
+        await Process.run('cmd', [
+          '/c',
+          'start',
+          '',
+          videoPath,
+        ], runInShell: true);
         _logger.success('已在浏览器中打开', module: '批量空间');
       }
     } catch (e) {
@@ -3454,7 +4138,11 @@ taskIndex 从 0 开始，对应任务序号。''';
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.table_chart, size: 100, color: AppTheme.subTextColor.withOpacity(0.2)),
+          Icon(
+            Icons.table_chart,
+            size: 100,
+            color: AppTheme.subTextColor.withOpacity(0.2),
+          ),
           const SizedBox(height: 24),
           Text(
             '开始批量创作',
@@ -3478,18 +4166,36 @@ taskIndex 从 0 开始，对应任务序号。''';
                 child: GestureDetector(
                   onTap: _importCSV,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF4C83FF), Color(0xFF2AFADF)]),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF4C83FF), Color(0xFF2AFADF)],
+                      ),
                       borderRadius: BorderRadius.circular(10),
-                      boxShadow: [BoxShadow(color: const Color(0xFF4C83FF).withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF4C83FF).withOpacity(0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: const [
                         Icon(Icons.upload_file, color: Colors.white, size: 20),
                         SizedBox(width: 10),
-                        Text('导入CSV', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                        Text(
+                          '导入CSV',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -3501,18 +4207,40 @@ taskIndex 从 0 开始，对应任务序号。''';
                 child: GestureDetector(
                   onTap: _addNewTask,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+                      ),
                       borderRadius: BorderRadius.circular(10),
-                      boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF2AF598).withOpacity(0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: const [
-                        Icon(Icons.add_circle_outline, color: Colors.white, size: 20),
+                        Icon(
+                          Icons.add_circle_outline,
+                          color: Colors.white,
+                          size: 20,
+                        ),
                         SizedBox(width: 10),
-                        Text('新建行', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                        Text(
+                          '新建行',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -3557,12 +4285,16 @@ class _WindowControlButtonState extends State<_WindowControlButton> {
           width: 46,
           height: 32,
           color: _isHovered
-              ? (widget.isClose ? Colors.red : AppTheme.textColor.withOpacity(0.1))
+              ? (widget.isClose
+                    ? Colors.red
+                    : AppTheme.textColor.withOpacity(0.1))
               : Colors.transparent,
           child: Icon(
             widget.icon,
             size: 16,
-            color: _isHovered && widget.isClose ? Colors.white : AppTheme.subTextColor,
+            color: _isHovered && widget.isClose
+                ? Colors.white
+                : AppTheme.subTextColor,
           ),
         ),
       ),

@@ -19,6 +19,9 @@ import 'widgets/draggable_media_item.dart'; // ✅ 导入拖动组件
 import 'widgets/video_grid_item.dart'; // ✅ 导入视频格子组件
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
+import '../../../services/api/providers/yunwu_service.dart';
+import '../../../services/api/api_factory.dart';
+import '../../../services/api/base/api_config.dart';
 import '../../../services/ffmpeg_service.dart';
 import '../../../core/aigc_engine/automation_api_client.dart'; // ✅ 网页服务商
 
@@ -3451,7 +3454,35 @@ ${widget.scriptContent}
             if (response.isSuccess &&
                 response.data != null &&
                 response.data!.isNotEmpty) {
-              final videoUrl = response.data!.first.videoUrl;
+              final videoData = response.data!.first;
+              final isTask = videoData.metadata?['isTask'] == true;
+
+              String videoUrl;
+              if (isTask && provider.toLowerCase() == 'yunwu') {
+                final taskId = videoData.videoId;
+                if (taskId == null) throw Exception('未返回任务ID');
+
+                print('      ⏳ [${storyboardIndex + 1}] Yunwu 任务: $taskId');
+                final baseUrl2 = await storage.getBaseUrl(provider: provider, modelType: 'video');
+                final apiKey2 = await storage.getApiKey(provider: provider, modelType: 'video');
+                if (baseUrl2 == null || apiKey2 == null) throw Exception('未配置视频 API');
+                final yunwuConfig = ApiConfig(provider: provider, baseUrl: baseUrl2, apiKey: apiKey2);
+                final yunwuSvc = YunwuService(yunwuConfig);
+                final yunwuHlp = YunwuHelper(yunwuSvc);
+
+                final statusResult = await yunwuHlp.pollTaskUntilComplete(
+                  taskId: taskId,
+                  maxWaitMinutes: 15,
+                );
+
+                if (statusResult.isSuccess && statusResult.data != null && statusResult.data!.videoUrl != null) {
+                  videoUrl = statusResult.data!.videoUrl!;
+                } else {
+                  throw Exception('视频生成失败: ${statusResult.error ?? "轮询超时"}');
+                }
+              } else {
+                videoUrl = videoData.videoUrl;
+              }
 
               // ✅ 下载并保存视频到本地
               final savedPath = await _downloadAndSaveVideo(
@@ -5463,7 +5494,36 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       if (response.isSuccess &&
           response.data != null &&
           response.data!.isNotEmpty) {
-        final videoUrl = response.data!.first.videoUrl;
+        final videoData = response.data!.first;
+        final isTask = videoData.metadata?['isTask'] == true;
+
+        String videoUrl;
+        if (isTask && provider.toLowerCase() == 'yunwu') {
+          // Yunwu 异步任务：需要轮询
+          final taskId = videoData.videoId;
+          if (taskId == null) throw Exception('未返回任务ID');
+
+          print('⏳ Yunwu 异步任务已提交: $taskId，开始轮询...');
+          final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'video');
+          final apiKey = await storage.getApiKey(provider: provider, modelType: 'video');
+          if (baseUrl == null || apiKey == null) throw Exception('未配置视频 API');
+          final yunwuConfig = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+          final yunwuService = YunwuService(yunwuConfig);
+          final yunwuHelper = YunwuHelper(yunwuService);
+
+          final statusResult = await yunwuHelper.pollTaskUntilComplete(
+            taskId: taskId,
+            maxWaitMinutes: 15,
+          );
+
+          if (statusResult.isSuccess && statusResult.data != null && statusResult.data!.videoUrl != null) {
+            videoUrl = statusResult.data!.videoUrl!;
+          } else {
+            throw Exception('视频生成失败: ${statusResult.error ?? "轮询超时"}');
+          }
+        } else {
+          videoUrl = videoData.videoUrl;
+        }
 
         print('✅ 视频生成成功: $videoUrl');
         print('💾 下载并保存到本地...');

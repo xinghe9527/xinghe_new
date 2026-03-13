@@ -4,6 +4,7 @@ import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
+import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';  // ✅ 导入 API 工厂
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
@@ -478,11 +479,15 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         throw Exception('未配置视频 API');
       }
       
+      // 从设置中读取用户保存的模型，优先使用设置模型
+      final savedModel = await SecureStorageManager().getModel(provider: provider, modelType: 'video');
+      final effectiveModel = savedModel ?? task.model;
+      
       final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
       final apiFactory = ApiFactory();
       final service = apiFactory.createService(provider, config);
       
-      final size = _convertRatioToSize(task.ratio, task.quality, task.model);
+      final size = _convertRatioToSize(task.ratio, task.quality, effectiveModel);
       final seconds = _parseSeconds(task.seconds);
       
       // ComfyUI 同步生成
@@ -493,7 +498,7 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
           try {
             final result = await service.generateVideos(
               prompt: task.prompt,
-              model: task.model,
+              model: effectiveModel,
               ratio: size,
               referenceImages: task.referenceImages,
               parameters: {'seconds': seconds},
@@ -533,6 +538,81 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         });
         
         await Future.wait(generateFutures, eagerError: false);
+      } else if (provider.toLowerCase() == 'yunwu') {
+        // Yunwu 服务的异步轮询模式
+        final yunwuService = service as YunwuService;
+        final yunwuHelper = YunwuHelper(yunwuService);
+        
+        final submitFutures = List.generate(batchCount, (i) async {
+          final result = await service.generateVideos(
+            prompt: task.prompt,
+            model: effectiveModel,
+            ratio: size,
+            referenceImages: task.referenceImages,
+            parameters: {'seconds': seconds},
+          );
+          
+          if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
+            return {'index': i, 'taskId': result.data!.first.videoId, 'placeholder': placeholders[i]};
+          } else {
+            throw Exception('提交失败: ${result.errorMessage}');
+          }
+        });
+        
+        final submittedTasks = await Future.wait(submitFutures);
+        
+        final pollFutures = submittedTasks.map((taskInfo) async {
+          final index = taskInfo['index'] as int;
+          final taskId = taskInfo['taskId'] as String?;
+          final placeholder = taskInfo['placeholder'] as String;
+          
+          if (taskId == null) return false;
+          
+          try {
+            final statusResult = await yunwuHelper.pollTaskUntilComplete(
+              taskId: taskId,
+              maxWaitMinutes: 15,
+              onProgress: (progress, status) {
+                _globalVideoProgress[placeholder] = progress;
+                if (mounted) setState(() {});
+              },
+            );
+            
+            print('📊 [视频空间] 轮询完成: isSuccess=${statusResult.isSuccess}, hasData=${statusResult.data != null}, videoUrl=${statusResult.data?.videoUrl}, error=${statusResult.errorMessage}');
+            
+            if (statusResult.isSuccess && statusResult.data != null && statusResult.data!.videoUrl != null) {
+              final videoUrl = statusResult.data!.videoUrl!;
+              final savedPath = await _downloadSingleVideoForTask(videoUrl, index, task.id);
+              
+              final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+              final currentVideos = List<String>.from(currentTask.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+              
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = savedPath;
+                _globalVideoProgress.remove(placeholder);
+                _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+              }
+              
+              return true;
+            }
+          } catch (e) {
+            print('❌ [视频空间] yunwu轮询异常: $e');
+            final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _globalVideoProgress.remove(placeholder);
+              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+            }
+          }
+          
+          return false;
+        }).toList();
+        
+        await Future.wait(pollFutures, eagerError: false);
       } else {
         // 其他服务的异步轮询模式
         final helper = VeoVideoHelper(service as VeoVideoService);
@@ -540,7 +620,7 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         final submitFutures = List.generate(batchCount, (i) async {
           final result = await service.generateVideos(
             prompt: task.prompt,
-            model: task.model,
+            model: effectiveModel,
             ratio: size,
             referenceImages: task.referenceImages,
             parameters: {'seconds': seconds},
@@ -606,6 +686,7 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         await Future.wait(pollFutures, eagerError: false);
       }
     } catch (e) {
+      print('❌ [视频空间] 外层异常捕获(所有占位符标记失败): $e');
       _logger.error('任务生成失败: $e', module: '视频空间');
       
       // 清理占位符
@@ -772,9 +853,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 当应用从后台恢复时，重新加载服务商配置
+    // 当应用从后台恢复时，检查服务商是否变化
     if (state == AppLifecycleState.resumed) {
-      _loadVideoProvider();
+      _checkAndReloadProvider();
     }
   }
 
@@ -801,21 +882,30 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       
       _logger.info('加载视频服务商配置', module: '视频空间', extra: {'provider': provider});
       
+      final models = _getModelsForProvider(provider);
+      
+      // 如果当前任务的模型不在新列表中，优先使用用户在设置中保存的模型
+      String? resolvedModel;
+      if (!models.contains(widget.task.model)) {
+        final savedModel = await _storage.getModel(provider: provider, modelType: 'video');
+        if (savedModel != null && models.contains(savedModel)) {
+          resolvedModel = savedModel;
+        } else {
+          resolvedModel = models.first;
+        }
+        _logger.warning(
+          '当前模型不在服务商模型列表中，已切换', 
+          module: '视频空间',
+          extra: {'旧模型': widget.task.model, '新模型': resolvedModel, '服务商': provider}
+        );
+      }
+
       if (mounted) {
         setState(() {
-          _currentProvider = provider;  // 记录当前服务商
-          _models = _getModelsForProvider(provider);
-          
-          // 如果当前任务的模型不在新列表中，设置为列表第一个并更新任务
-          if (!_models.contains(widget.task.model)) {
-            final newModel = _models.first;
-            _logger.warning(
-              '当前模型不在服务商模型列表中，已切换', 
-              module: '视频空间',
-              extra: {'旧模型': widget.task.model, '新模型': newModel, '服务商': provider}
-            );
-            // 立即更新任务的模型
-            widget.onUpdate(widget.task.copyWith(model: newModel));
+          _currentProvider = provider;
+          _models = models;
+          if (resolvedModel != null) {
+            widget.onUpdate(widget.task.copyWith(model: resolvedModel));
           }
         });
       }
@@ -833,15 +923,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         // Yunwu（云雾）视频模型列表
         return [
           // Sora 系列
-          'sora-2', 'sora-2-all', 'sora-2-pro',
-          // VEO2 系列
-          'veo2', 'veo2-fast', 'veo2-fast-frames', 'veo2-fast-components',
-          'veo2-pro', 'veo2-pro-components',
-          // VEO3 系列
-          'veo3', 'veo3-fast', 'veo3-fast-frames', 'veo3-frames',
-          'veo3-pro', 'veo3-pro-frames',
-          // VEO3.1 系列
-          'veo3.1', 'veo3.1-fast', 'veo3.1-pro', 'veo3.1-components',
+          'sora-2-all',
+          // VEO3.1 4K 系列（OpenAI视频格式）
+          'veo_3_1-4K', 'veo_3_1-fast-4K',
+          // Grok 视频系列（xAI）
+          'grok-video-3', 'grok-video-3-10s', 'grok-video-3-15s',
         ];
       case 'openai':
         return ['sora-2', 'sora-turbo'];
@@ -881,10 +967,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         PopupMenuItem(
           value: 'delete',
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.delete_outline, color: Colors.red, size: 18),
+              Icon(Icons.delete_outline, color: AppTheme.subTextColor, size: 16),
               const SizedBox(width: 8),
-              Text('删除', style: TextStyle(color: Colors.red, fontSize: 13)),
+              Text('删除', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
             ],
           ),
         ),
@@ -897,6 +984,49 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   }
   
   /// 显示错误对话框
+  /// 将技术错误信息转换为用户友好的中文描述
+  String _friendlyErrorMessage(String raw) {
+    // 移除 'Exception: ' 前缀
+    String msg = raw.replaceFirst(RegExp(r'^Exception:\s*'), '');
+    
+    // 常见错误模式的中文翻译
+    if (msg.contains('No available channel')) {
+      return '当前模型暂时没有可用通道，请稍后重试或更换其他模型';
+    }
+    if (msg.contains('HandshakeException') || msg.contains('CERTIFICATE_VERIFY_FAILED')) {
+      return '网络连接安全验证失败，请检查网络设置或 API 地址是否正确';
+    }
+    if (msg.contains('SocketException') || msg.contains('Connection refused')) {
+      return '无法连接到服务器，请检查网络连接和 API 地址';
+    }
+    if (msg.contains('TimeoutException') || msg.contains('轮询超时')) {
+      return '视频生成超时，服务器处理时间过长，请稍后重试';
+    }
+    if (msg.contains('401') || msg.contains('Unauthorized')) {
+      return 'API 密钥无效或已过期，请前往设置页面检查密钥配置';
+    }
+    if (msg.contains('403') || msg.contains('Forbidden')) {
+      return '没有权限访问该服务，请检查账户权限或 API 密钥';
+    }
+    if (msg.contains('429') || msg.contains('rate limit')) {
+      return '请求过于频繁，已达到速率限制，请稍后重试';
+    }
+    if (msg.contains('500') || msg.contains('Internal Server Error')) {
+      return '服务器内部错误，请稍后重试';
+    }
+    if (msg.contains('502') || msg.contains('Bad Gateway')) {
+      return '服务器网关错误，请稍后重试';
+    }
+    if (msg.contains('503') || msg.contains('Service Unavailable')) {
+      return '服务暂时不可用，请稍后重试';
+    }
+    if (msg.contains('未配置')) {
+      return msg; // 已经是中文提示
+    }
+    
+    return msg;
+  }
+
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -1339,6 +1469,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
       
+      // 从设置中读取用户保存的模型，优先使用设置模型
+      final savedModel = await _storage.getModel(provider: provider, modelType: 'video');
+      final effectiveModel = savedModel ?? widget.task.model;
+      
       _logger.info('视频生成配置', module: '视频空间', extra: {
         'provider': provider,
         'baseUrl': baseUrl ?? '(未配置)',
@@ -1386,11 +1520,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       });
       
       // 准备参数
-      final size = _convertRatioToSize(widget.task.ratio, widget.task.quality, widget.task.model);
+      final size = _convertRatioToSize(widget.task.ratio, widget.task.quality, effectiveModel);
       final seconds = _parseSeconds(widget.task.seconds);
       
       _logger.info('开始并发生成 $batchCount 个视频', module: '视频空间', extra: {
-        'model': widget.task.model,
+        'model': effectiveModel,
         'size': size,
         'seconds': seconds,
       });
@@ -1409,7 +1543,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             // ComfyUI的generateVideos内部已处理轮询，直接返回视频URL
             final result = await service.generateVideos(
               prompt: widget.task.prompt,
-              model: widget.task.model,
+              model: effectiveModel,
               ratio: size,
               referenceImages: widget.task.referenceImages,  // ✅ 修复：直接传递参考图片
               parameters: {
@@ -1470,7 +1604,94 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         return;  // ✅ ComfyUI处理完成，直接返回
       }
       
-      // ✅ 其他服务（GeekNow/Yunwu/OpenAI等）的异步轮询模式
+      // ✅ Yunwu 服务的异步轮询模式
+      if (provider.toLowerCase() == 'yunwu') {
+        _logger.info('使用 Yunwu 异步轮询模式', module: '视频空间');
+        final yunwuService = service as YunwuService;
+        final yunwuHelper = YunwuHelper(yunwuService);
+
+        final submitFutures = List.generate(batchCount, (i) async {
+          _logger.info('提交第 ${i + 1}/$batchCount 个视频任务', module: '视频空间');
+          final result = await service.generateVideos(
+            prompt: widget.task.prompt,
+            model: effectiveModel,
+            ratio: size,
+            referenceImages: widget.task.referenceImages,
+            parameters: {'seconds': seconds},
+          );
+
+          if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
+            final taskId = result.data!.first.videoId;
+            if (taskId == null || taskId.isEmpty) {
+              throw Exception('任务 ${i + 1} 返回的 taskId 为空');
+            }
+            _logger.success('任务 ${i + 1} 提交成功: $taskId', module: '视频空间');
+            return {'index': i, 'taskId': taskId, 'placeholder': placeholders[i]};
+          } else {
+            throw Exception('任务 ${i + 1} 提交失败: ${result.errorMessage}');
+          }
+        });
+
+        final submittedTasks = await Future.wait(submitFutures);
+        _logger.success('所有 Yunwu 任务已提交，开始并发轮询', module: '视频空间');
+
+        final pollFutures = submittedTasks.map((task) async {
+          final index = task['index'] as int;
+          final taskId = task['taskId'] as String?;
+          final placeholder = task['placeholder'] as String;
+
+          if (taskId == null || taskId.isEmpty) return false;
+
+          try {
+            final statusResult = await yunwuHelper.pollTaskUntilComplete(
+              taskId: taskId,
+              maxWaitMinutes: 15,
+              onProgress: (progress, status) {
+                _globalVideoProgress[placeholder] = progress;
+                if (mounted && widget.task.generatedVideos.contains(placeholder)) {
+                  setState(() {});
+                }
+                _logger.info('任务 ${index + 1} 进度: $progress%', module: '视频空间');
+              },
+            );
+
+            if (statusResult.isSuccess && statusResult.data != null && statusResult.data!.videoUrl != null) {
+              final videoUrl = statusResult.data!.videoUrl!;
+              _logger.success('任务 ${index + 1} 完成', module: '视频空间', extra: {'url': videoUrl});
+
+              final savedPath = await _downloadSingleVideo(videoUrl, index);
+              final currentVideos = List<String>.from(widget.task.generatedVideos);
+              final placeholderIndex = currentVideos.indexOf(placeholder);
+
+              if (placeholderIndex != -1) {
+                currentVideos[placeholderIndex] = savedPath;
+                _globalVideoProgress.remove(placeholder);
+                _update(widget.task.copyWith(generatedVideos: currentVideos));
+                if (mounted) setState(() {});
+              }
+              return true;
+            } else {
+              throw Exception('任务 ${index + 1} 失败: ${statusResult.errorMessage}');
+            }
+          } catch (e) {
+            _logger.error('任务 ${index + 1} 处理失败: $e', module: '视频空间');
+            final currentVideos = List<String>.from(widget.task.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _globalVideoProgress.remove(placeholder);
+              _update(widget.task.copyWith(generatedVideos: currentVideos));
+              if (mounted) setState(() {});
+            }
+            return false;
+          }
+        }).toList();
+
+        await Future.wait(pollFutures, eagerError: false);
+        return;
+      }
+
+      // ✅ 其他服务（GeekNow/OpenAI等）的异步轮询模式
       _logger.info('使用异步轮询模式（适用于 $provider）', module: '视频空间');
       
       // 创建辅助类（用于轮询和下载）
@@ -1482,7 +1703,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         
         final result = await service.generateVideos(
           prompt: widget.task.prompt,
-          model: widget.task.model,
+          model: effectiveModel,
           ratio: size,
           referenceImages: widget.task.referenceImages,  // ✅ 修复：直接传递参考图片
           parameters: {
@@ -1639,10 +1860,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       
       // ✅ 显示详细的错误信息给用户
       if (mounted) {
-        final errorMessage = e.toString();
         _showErrorDialog(
           '视频生成失败',
-          errorMessage,
+          _friendlyErrorMessage(e.toString()),
         );
       }
     }

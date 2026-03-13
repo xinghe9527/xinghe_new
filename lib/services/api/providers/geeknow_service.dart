@@ -21,6 +21,7 @@ import 'veo_video_service.dart' show
 /// 
 /// GeekNow 是一个统一的 AI API Gateway，提供多种 AI 模型的访问
 /// 包括：LLM、图片生成、视频生成、文件上传等功能
+/// 本地API文档: api_docs/geeknow/
 class GeekNowService extends ApiServiceBase {
   GeekNowService(super.config);
 

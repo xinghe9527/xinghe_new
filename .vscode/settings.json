@@ -1,4 +1,5 @@
 {
   "github.copilot.chat.agent.maxRequests": 99999,
-  "kiroAgent.configureMCP": "Disabled"
+  "kiroAgent.configureMCP": "Disabled",
+  "debug.saveBeforeStart": "nonUntitledEditorsInGroup"
 }

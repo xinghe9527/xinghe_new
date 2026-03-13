@@ -36,7 +36,7 @@ class AuthProvider extends ChangeNotifier {
       // 先用本地缓存恢复状态（快速启动）
       _authState = savedAuthState;
       notifyListeners();
-      
+
       // 后台静默调用 auth-refresh 同步云端最新数据（含设备雷达比对）
       _silentRefresh();
     }
@@ -55,16 +55,15 @@ class AuthProvider extends ChangeNotifier {
         final User user = result['user'];
         final String newToken = result['token'];
 
-        debugPrint('🔄 静默同步成功: verified=${user.verified}, isExpired=${user.isExpired}');
+        debugPrint(
+          '🔄 静默同步成功: verified=${user.verified}, isExpired=${user.isExpired}',
+        );
 
         // 🚨 雷达比对：检查设备指纹是否匹配
         final kicked = await _checkDeviceConflict(user);
         if (kicked) return; // 已被踢，不再更新状态
-        
-        _authState = AuthState.authenticated(
-          user: user,
-          token: newToken,
-        );
+
+        _authState = AuthState.authenticated(user: user, token: newToken);
         await storageService.saveAuthState(_authState);
         notifyListeners();
       } else {
@@ -119,23 +118,23 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     try {
       final result = await _apiService.login(email: email, password: password);
-      
+
       if (result != null) {
         _authState = AuthState.authenticated(
           user: result['user'],
           token: result['token'],
         );
-        
+
         await storageService.saveAuthState(_authState);
         await storageService.saveCredentials(
           email: email,
           password: password,
           rememberMe: rememberMe,
         );
-        
+
         // 🚀 宣誓设备主权：将 last_device_id 更新为当前设备
         await _claimDevice();
-        
+
         notifyListeners();
       }
     } catch (e) {
@@ -157,16 +156,16 @@ class AuthProvider extends ChangeNotifier {
         password: password,
         invitationCode: invitationCode,
       );
-      
+
       if (result != null) {
         _authState = AuthState.authenticated(
           user: result['user'],
           token: result['token'],
         );
-        
+
         // 注册成功后 PocketBase 已自动发送激活邮件，记录时间戳
         _lastVerificationEmailSentTime = DateTime.now();
-        
+
         await storageService.saveAuthState(_authState);
 
         // 🚀 宣誓设备主权：将 last_device_id 更新为当前设备
@@ -232,10 +231,7 @@ class AuthProvider extends ChangeNotifier {
         final kicked = await _checkDeviceConflict(user);
         if (kicked) return; // 已被踢，不再更新状态
 
-        _authState = AuthState.authenticated(
-          user: user,
-          token: newToken,
-        );
+        _authState = AuthState.authenticated(user: user, token: newToken);
         await storageService.saveAuthState(_authState);
         notifyListeners();
       } else {

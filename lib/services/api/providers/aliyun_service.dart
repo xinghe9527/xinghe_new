@@ -8,6 +8,7 @@ import '../base/api_response.dart';
 /// 
 /// 使用 OpenAI 兼容格式的 Chat API
 /// Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+/// 本地API文档: api_docs/aliyun/
 /// 
 /// 支持的模型：
 /// - qwen-plus (推荐)

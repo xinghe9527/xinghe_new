@@ -5,7 +5,7 @@ import 'package:xinghe_new/features/auth/presentation/auth_provider.dart';
 import 'package:xinghe_new/features/auth/presentation/widgets/login_register_dialog.dart';
 
 /// 全局认证守卫包装器
-/// 
+///
 /// 三道防线：
 /// - 防线 A：是否登录（isAuthenticated）
 /// - 防线 B：是否激活邮箱（verified）
@@ -62,10 +62,18 @@ class _AuthGuardWrapperState extends State<AuthGuardWrapper> {
               borderRadius: BorderRadius.circular(16),
               side: const BorderSide(color: Colors.redAccent, width: 2),
             ),
-            icon: const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 56),
+            icon: const Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.redAccent,
+              size: 56,
+            ),
             title: const Text(
               '强制下线通知',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             content: Text(
               message,
@@ -80,10 +88,15 @@ class _AuthGuardWrapperState extends State<AuthGuardWrapper> {
                     backgroundColor: Colors.redAccent,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('我知道了', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    '我知道了',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
             ],
@@ -131,16 +144,12 @@ class _AuthGuardWrapperState extends State<AuthGuardWrapper> {
           Positioned.fill(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.7),
-              ),
+              child: Container(color: Colors.black.withValues(alpha: 0.7)),
             ),
           ),
 
           // 对应的拦截 UI
-          Positioned.fill(
-            child: _buildGuardOverlay(guardState),
-          ),
+          Positioned.fill(child: _buildGuardOverlay(guardState)),
         ],
       ],
     );
@@ -160,12 +169,7 @@ class _AuthGuardWrapperState extends State<AuthGuardWrapper> {
   }
 }
 
-enum _AuthGuardState {
-  notAuthenticated,
-  notVerified,
-  expired,
-  passed,
-}
+enum _AuthGuardState { notAuthenticated, notVerified, expired, passed }
 
 // ============================================================
 // 防线 A：未登录拦截页
@@ -316,15 +320,17 @@ class _VerificationRequiredOverlay extends StatefulWidget {
   const _VerificationRequiredOverlay({required this.authProvider});
 
   @override
-  State<_VerificationRequiredOverlay> createState() => _VerificationRequiredOverlayState();
+  State<_VerificationRequiredOverlay> createState() =>
+      _VerificationRequiredOverlayState();
 }
 
-class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverlay> {
+class _VerificationRequiredOverlayState
+    extends State<_VerificationRequiredOverlay> {
   bool _isSending = false;
   bool _sent = false;
   bool _isRefreshing = false;
   String? _errorMessage;
-  
+
   // 基于全局时间戳的倒计时
   int _countdown = 0;
   Timer? _countdownTimer;
@@ -410,7 +416,9 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
       await widget.authProvider.refreshUserInfo();
       // refreshUserInfo 可能会触发 logout（token 失效时）
       // 如果用户已被登出，AuthGuardWrapper 会自动切到防线 A
-      if (mounted && widget.authProvider.currentUser != null && !widget.authProvider.currentUser!.verified) {
+      if (mounted &&
+          widget.authProvider.currentUser != null &&
+          !widget.authProvider.currentUser!.verified) {
         setState(() {
           _errorMessage = '邮箱尚未激活，请检查邮箱（包括垃圾邮件文件夹）';
           _isRefreshing = false;
@@ -504,12 +512,19 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.mail_outline, color: Colors.orange, size: 20),
+                  const Icon(
+                    Icons.mail_outline,
+                    color: Colors.orange,
+                    size: 20,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       email,
-                      style: const TextStyle(color: Colors.orange, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.orange,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ],
@@ -523,12 +538,18 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.green.withValues(alpha: 0.1),
-                  border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: Colors.green.withValues(alpha: 0.3),
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                    Icon(
+                      Icons.check_circle_outline,
+                      color: Colors.green,
+                      size: 20,
+                    ),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -553,7 +574,11 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 20,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -575,7 +600,7 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
               child: Container(
                 decoration: BoxDecoration(
                   gradient: _countdown > 0
-                      ? null  // 倒计时中不使用渐变
+                      ? null // 倒计时中不使用渐变
                       : const LinearGradient(
                           colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
                           begin: Alignment.centerLeft,
@@ -605,7 +630,9 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
                               height: 24,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2.5,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
                               ),
                             )
                           : Text(
@@ -615,7 +642,9 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: _countdown > 0 ? Colors.white38 : Colors.white,
+                                color: _countdown > 0
+                                    ? Colors.white38
+                                    : Colors.white,
                                 letterSpacing: 1,
                               ),
                             ),
@@ -635,7 +664,9 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
                 onPressed: _isRefreshing ? null : _refreshUserInfo,
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 child: _isRefreshing
                     ? const SizedBox(
@@ -643,7 +674,9 @@ class _VerificationRequiredOverlayState extends State<_VerificationRequiredOverl
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white54),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white54,
+                          ),
                         ),
                       )
                     : Text(
@@ -806,7 +839,11 @@ class _ExpiredOverlayState extends State<_ExpiredOverlay> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.card_giftcard, color: Colors.white.withValues(alpha: 0.4), size: 18),
+                    Icon(
+                      Icons.card_giftcard,
+                      color: Colors.white.withValues(alpha: 0.4),
+                      size: 18,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       '邀请码',
@@ -864,7 +901,11 @@ class _ExpiredOverlayState extends State<_ExpiredOverlay> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 20,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -884,12 +925,18 @@ class _ExpiredOverlayState extends State<_ExpiredOverlay> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.green.withValues(alpha: 0.1),
-                  border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: Colors.green.withValues(alpha: 0.3),
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                    Icon(
+                      Icons.check_circle_outline,
+                      color: Colors.green,
+                      size: 20,
+                    ),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -936,7 +983,9 @@ class _ExpiredOverlayState extends State<_ExpiredOverlay> {
                               height: 24,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2.5,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
                               ),
                             )
                           : const Text(

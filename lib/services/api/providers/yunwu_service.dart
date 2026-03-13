@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io' as io;
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../base/api_service_base.dart';
 import '../base/api_response.dart';
@@ -9,6 +11,7 @@ import '../base/api_response.dart';
 /// 支持 LLM、图像、视频等多种 AI 能力
 /// 
 /// API 文档来源: https://yunwu.ai
+/// 本地API文档: api_docs/yunwu/
 class YunwuService extends ApiServiceBase {
   YunwuService(super.config);
 
@@ -206,39 +209,74 @@ class YunwuService extends ApiServiceBase {
     Map<String, dynamic>? parameters,
   }) async {
     try {
-      final useModel = model ?? 'gemini-2.5-flash-image-preview';
-      
-      // 构建 Gemini 图像生成请求
-      final requestBody = <String, dynamic>{
-        'contents': [
-          {
-            'role': 'user',
-            'parts': [
-              {'text': prompt}
-            ],
-          }
-        ],
-        'generationConfig': {
-          'responseModalities': ['TEXT', 'IMAGE'],
-        },
-      };
+      final useModel = model ?? 'gemini-3.1-flash-image-preview';
 
-      // 如果有参考图片，添加到 parts 中
+      // 构建 parts
+      final parts = <Map<String, dynamic>>[];
+
+      // 1. 添加参考图片（文件路径 → base64）
       if (referenceImages != null && referenceImages.isNotEmpty) {
-        final parts = requestBody['contents'][0]['parts'] as List;
-        for (final imageUrl in referenceImages) {
+        for (final imagePath in referenceImages) {
+          Uint8List imageBytes;
+          String mimeType;
+
+          if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+            final resp = await http.get(Uri.parse(imagePath));
+            if (resp.statusCode == 200) {
+              imageBytes = resp.bodyBytes;
+              mimeType = resp.headers['content-type'] ?? 'image/jpeg';
+            } else {
+              continue;
+            }
+          } else {
+            final file = io.File(imagePath);
+            if (!await file.exists()) continue;
+            imageBytes = await file.readAsBytes();
+            final ext = imagePath.split('.').last.toLowerCase();
+            mimeType = const {
+              'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+              'gif': 'image/gif', 'webp': 'image/webp', 'bmp': 'image/bmp',
+            }[ext] ?? 'image/jpeg';
+          }
+
           parts.add({
             'inline_data': {
-              'mime_type': 'image/jpeg',
-              'data': imageUrl,  // 注意：这里应该是 base64 数据，不是 URL
+              'mime_type': mimeType,
+              'data': base64Encode(imageBytes),
             }
           });
         }
       }
 
+      // 2. 添加文本提示词
+      parts.add({'text': prompt});
+
+      // 3. 构建 generationConfig（含 imageConfig）
+      final aspectRatio = parameters?['size'] ?? ratio ?? '1:1';
+      final imageSize = parameters?['quality'] ?? quality ?? '1K';
+
+      final requestBody = <String, dynamic>{
+        'contents': [
+          {
+            'role': 'user',
+            'parts': parts,
+          }
+        ],
+        'generationConfig': {
+          'responseModalities': ['TEXT', 'IMAGE'],
+          'imageConfig': {
+            'aspectRatio': aspectRatio,
+            'imageSize': imageSize,
+          },
+        },
+      };
+
       // 使用 query 参数传递 API Key
       final uri = Uri.parse('${config.baseUrl}/v1beta/models/$useModel:generateContent')
           .replace(queryParameters: {'key': config.apiKey});
+
+      print('🎨 [Yunwu] generateImages: model=$useModel, aspectRatio=$aspectRatio, imageSize=$imageSize');
+      print('🔗 [Yunwu] URL: $uri');
 
       final response = await http.post(
         uri,
@@ -248,30 +286,62 @@ class YunwuService extends ApiServiceBase {
         body: jsonEncode(requestBody),
       );
 
+      print('📥 [Yunwu] 响应状态: ${response.statusCode}');
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        
-        // 解析 Gemini 图像响应
         final images = <ImageResponse>[];
         final candidates = data['candidates'] as List?;
-        
+
         if (candidates != null) {
           for (final candidate in candidates) {
             final content = (candidate as Map<String, dynamic>)['content'] as Map<String, dynamic>?;
-            final parts = content?['parts'] as List?;
-            
-            if (parts != null) {
-              for (final part in parts) {
-                if (part is Map<String, dynamic> && part.containsKey('text')) {
-                  final text = part['text'] as String;
-                  
-                  // 提取图片 URL（Markdown 或普通 URL）
-                  final markdownPattern = RegExp(r'!\[.*?\]\((https?://[^)]+)\)');
-                  final match = markdownPattern.firstMatch(text);
-                  if (match != null && match.group(1) != null) {
+            final partsList = content?['parts'] as List?;
+            if (partsList == null) continue;
+
+            for (final part in partsList) {
+              if (part is! Map<String, dynamic>) continue;
+
+              // 格式1: inlineData（base64 图片）→ 保存到临时文件
+              if (part.containsKey('inlineData')) {
+                final inlineData = part['inlineData'] as Map<String, dynamic>;
+                final imageData = inlineData['data'] as String?;
+                final mimeType = inlineData['mimeType'] as String? ?? 'image/png';
+                if (imageData != null) {
+                  final ext = mimeType.contains('png') ? 'png' : 'jpg';
+                  final tempDir = io.Directory.systemTemp;
+                  final tempFile = io.File(
+                    '${tempDir.path}/yunwu_${DateTime.now().millisecondsSinceEpoch}_${images.length}.$ext',
+                  );
+                  await tempFile.writeAsBytes(base64Decode(imageData));
+                  images.add(ImageResponse(
+                    imageUrl: tempFile.path,
+                    imageId: '${candidates.indexOf(candidate)}_${partsList.indexOf(part)}',
+                    metadata: candidate,
+                  ));
+                  print('✅ [Yunwu] inlineData 图片已保存: ${tempFile.path}');
+                }
+                continue;
+              }
+
+              // 格式2: text 中提取 URL
+              if (part.containsKey('text')) {
+                final text = part['text'] as String;
+                final markdownPattern = RegExp(r'!\[.*?\]\((https?://[^)]+)\)');
+                final match = markdownPattern.firstMatch(text);
+                if (match != null && match.group(1) != null) {
+                  images.add(ImageResponse(
+                    imageUrl: match.group(1)!,
+                    imageId: '${candidates.indexOf(candidate)}',
+                    metadata: candidate,
+                  ));
+                } else {
+                  final urlPattern = RegExp(r'https?://[^\s)]+');
+                  final urlMatch = urlPattern.firstMatch(text);
+                  if (urlMatch != null) {
                     images.add(ImageResponse(
-                      imageUrl: match.group(1)!,
-                      imageId: (candidate as Map)['index']?.toString(),
+                      imageUrl: urlMatch.group(0)!,
+                      imageId: '${candidates.indexOf(candidate)}',
                       metadata: candidate,
                     ));
                   }
@@ -281,17 +351,26 @@ class YunwuService extends ApiServiceBase {
           }
         }
 
+        print('🎨 [Yunwu] 解析到 ${images.length} 张图片');
         return ApiResponse.success(images, statusCode: 200);
       } else {
+        print('❌ [Yunwu] 生成失败: ${response.statusCode} - ${response.body}');
         return ApiResponse.failure(
           '图像生成失败: ${response.statusCode} - ${response.body}',
           statusCode: response.statusCode,
         );
       }
     } catch (e) {
+      print('❌ [Yunwu] 图像生成异常: $e');
       return ApiResponse.failure('图像生成错误: $e');
     }
   }
+
+  /// 判断是否为 VEO OpenAI 格式模型
+  bool _isVeoOpenAIModel(String model) => model.startsWith('veo_3_1');
+
+  /// 判断是否为 Grok 视频模型
+  bool _isGrokVideoModel(String model) => model.startsWith('grok-video');
 
   @override
   Future<ApiResponse<List<VideoResponse>>> generateVideos({
@@ -304,10 +383,245 @@ class YunwuService extends ApiServiceBase {
     Map<String, dynamic>? parameters,
   }) async {
     try {
-      // TODO: 根据 Yunwu API 文档实现视频生成
-      return ApiResponse.failure('Yunwu 视频生成 API 待实现');
+      final useModel = model ?? 'sora-2-all';
+      print('🎬 [Yunwu] generateVideos: model=$useModel, ratio=$ratio, quality=$quality');
+
+      // VEO 模型走 OpenAI 视频格式 (/v1/videos)
+      if (_isVeoOpenAIModel(useModel)) {
+        print('🎬 [Yunwu] → VEO OpenAI 格式');
+        return _generateVeoVideoOpenAI(
+          prompt: prompt,
+          model: useModel,
+          ratio: ratio,
+          referenceImages: referenceImages,
+          parameters: parameters,
+        );
+      }
+
+      // Grok 视频模型走统一格式但使用 Grok 参数
+      if (_isGrokVideoModel(useModel)) {
+        print('🎬 [Yunwu] → Grok 统一格式');
+        return _generateGrokVideo(
+          prompt: prompt,
+          model: useModel,
+          ratio: ratio,
+          quality: quality,
+          referenceImages: referenceImages,
+          parameters: parameters,
+        );
+      }
+
+      // Sora 等模型走统一格式 (/v1/video/create)
+      final seconds = parameters?['seconds'] as int? ?? 10;
+      final characterUrl = parameters?['character_url'] as String?;
+      final characterTimestamps = parameters?['character_timestamps'] as String?;
+
+      // 从 ratio 推断 orientation (e.g. "720x1280" → portrait, "1280x720" → landscape)
+      String orientation = 'portrait';
+      if (ratio != null && ratio.contains('x')) {
+        final parts = ratio.split('x');
+        final w = int.tryParse(parts[0]) ?? 720;
+        final h = int.tryParse(parts[1]) ?? 1280;
+        orientation = w >= h ? 'landscape' : 'portrait';
+      } else if (ratio == '16:9') {
+        orientation = 'landscape';
+      } else if (ratio == '9:16') {
+        orientation = 'portrait';
+      }
+
+      // quality 映射 size: "1080p"/"hd" → large, 默认 small
+      String size = 'small';
+      if (quality == '1080p' || quality == 'hd' || quality == 'large') {
+        size = 'large';
+      }
+
+      final request = YunwuVideoCreateRequest(
+        images: referenceImages ?? [],
+        model: useModel,
+        orientation: orientation,
+        prompt: prompt,
+        size: size,
+        duration: seconds,
+        characterUrl: characterUrl,
+        characterTimestamps: characterTimestamps,
+      );
+
+      final result = await createVideo(request);
+
+      if (result.isSuccess && result.data != null) {
+        final task = result.data!;
+        return ApiResponse.success([
+          VideoResponse(
+            videoUrl: '',
+            videoId: task.id,
+            duration: seconds,
+            metadata: {
+              'taskId': task.id,
+              'status': task.status,
+              'isTask': true,
+            },
+          ),
+        ], statusCode: 200);
+      } else {
+        return ApiResponse.failure(result.error ?? '创建视频失败');
+      }
     } catch (e) {
-      return ApiResponse.failure('生成错误: $e');
+      return ApiResponse.failure('视频生成错误: $e');
+    }
+  }
+
+  /// VEO 视频生成（OpenAI 视频格式 /v1/videos，multipart/form-data）
+  Future<ApiResponse<List<VideoResponse>>> _generateVeoVideoOpenAI({
+    required String prompt,
+    required String model,
+    String? ratio,
+    List<String>? referenceImages,
+    Map<String, dynamic>? parameters,
+  }) async {
+    final seconds = parameters?['seconds'] as int? ?? 8;
+
+    // 转换比例格式: "1280x720" → "16x9", "720x1280" → "9x16", "16:9" → "16x9"
+    String size = '16x9';
+    if (ratio != null) {
+      if (ratio == '16:9' || ratio == '1280x720') {
+        size = '16x9';
+      } else if (ratio == '9:16' || ratio == '720x1280') {
+        size = '9x16';
+      } else if (ratio.contains('x')) {
+        final parts = ratio.split('x');
+        final w = int.tryParse(parts[0]) ?? 1280;
+        final h = int.tryParse(parts[1]) ?? 720;
+        size = w >= h ? '16x9' : '9x16';
+      }
+    }
+
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${config.baseUrl}/v1/videos'),
+    );
+
+    request.headers['Authorization'] = 'Bearer ${config.apiKey}';
+    request.fields['model'] = model;
+    request.fields['prompt'] = prompt;
+    request.fields['seconds'] = seconds.toString();
+    request.fields['size'] = size;
+    request.fields['watermark'] = 'false';
+
+    // 添加参考图片（垫图）
+    if (referenceImages != null && referenceImages.isNotEmpty) {
+      for (final imagePath in referenceImages) {
+        if (imagePath.startsWith('http')) {
+          // URL 方式：作为字段传递
+          request.fields['input_reference'] = imagePath;
+        } else {
+          // 本地文件方式
+          request.files.add(
+            await http.MultipartFile.fromPath('input_reference', imagePath),
+          );
+        }
+      }
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final taskId = data['id'] as String;
+      final status = data['status'] as String? ?? 'queued';
+      return ApiResponse.success([
+        VideoResponse(
+          videoUrl: '',
+          videoId: taskId,
+          duration: seconds,
+          metadata: {
+            'taskId': taskId,
+            'status': status,
+            'isTask': true,
+          },
+        ),
+      ], statusCode: 200);
+    } else {
+      return ApiResponse.failure(
+        '创建 VEO 视频失败: ${response.statusCode} - ${response.body}',
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  /// Grok 视频生成（统一视频格式 /v1/video/create，JSON body）
+  ///
+  /// Grok 使用 aspect_ratio(2:3/3:2/1:1) + size(720P/1080P)，与 Sora 的参数格式不同
+  Future<ApiResponse<List<VideoResponse>>> _generateGrokVideo({
+    required String prompt,
+    required String model,
+    String? ratio,
+    String? quality,
+    List<String>? referenceImages,
+    Map<String, dynamic>? parameters,
+  }) async {
+    // 转换比例: "16:9" → "3:2", "9:16" → "2:3", "1:1" → "1:1"
+    String aspectRatio = '3:2';
+    if (ratio != null) {
+      if (ratio == '16:9' || ratio == '1280x720' || ratio == '3:2') {
+        aspectRatio = '3:2';
+      } else if (ratio == '9:16' || ratio == '720x1280' || ratio == '2:3') {
+        aspectRatio = '2:3';
+      } else if (ratio == '1:1' || ratio == '1024x1024') {
+        aspectRatio = '1:1';
+      } else if (ratio.contains('x')) {
+        final parts = ratio.split('x');
+        final w = int.tryParse(parts[0]) ?? 1280;
+        final h = int.tryParse(parts[1]) ?? 720;
+        aspectRatio = w > h ? '3:2' : (w < h ? '2:3' : '1:1');
+      }
+    }
+
+    // 分辨率映射
+    String size = '720P';
+    if (quality == '1080p' || quality == 'hd' || quality == 'large') {
+      size = '1080P';
+    }
+
+    final requestBody = <String, dynamic>{
+      'model': model,
+      'prompt': prompt,
+      'aspect_ratio': aspectRatio,
+      'size': size,
+      'images': referenceImages ?? [],
+    };
+
+    final response = await http.post(
+      Uri.parse('${config.baseUrl}/v1/video/create'),
+      headers: {
+        'Authorization': 'Bearer ${config.apiKey}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode(requestBody),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final taskId = data['id'] as String;
+      final status = data['status'] as String? ?? 'pending';
+      return ApiResponse.success([
+        VideoResponse(
+          videoUrl: '',
+          videoId: taskId,
+          duration: null,
+          metadata: {
+            'taskId': taskId,
+            'status': status,
+            'isTask': true,
+          },
+        ),
+      ], statusCode: 200);
+    } else {
+      return ApiResponse.failure(
+        '创建 Grok 视频失败: ${response.statusCode} - ${response.body}',
+        statusCode: response.statusCode,
+      );
     }
   }
 
@@ -357,14 +671,17 @@ class YunwuService extends ApiServiceBase {
   /// **后续操作**: 使用返回的任务ID调用 `queryVideoTask()` 轮询状态
   Future<ApiResponse<YunwuVideoTaskStatus>> createVideo(YunwuVideoCreateRequest request) async {
     try {
+      final requestJson = request.toJson();
+      final url = '${config.baseUrl}/v1/video/create';
+      
       final response = await http.post(
-        Uri.parse('${config.baseUrl}/v1/video/create'),
+        Uri.parse(url),
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: jsonEncode(request.toJson()),
+        body: jsonEncode(requestJson),
       );
 
       if (response.statusCode == 200) {
@@ -374,8 +691,19 @@ class YunwuService extends ApiServiceBase {
           statusCode: 200,
         );
       } else {
+        // 尝试解析 API 返回的中文错误信息
+        String errorMsg = '服务器返回错误 (${response.statusCode})';
+        try {
+          final errorData = jsonDecode(response.body) as Map<String, dynamic>;
+          final error = errorData['error'] as Map<String, dynamic>?;
+          if (error != null) {
+            errorMsg = (error['message_zh'] as String?) ??
+                       (error['message'] as String?) ??
+                       errorMsg;
+          }
+        } catch (_) {}
         return ApiResponse.failure(
-          '创建视频失败: ${response.statusCode} - ${response.body}',
+          errorMsg,
           statusCode: response.statusCode,
         );
       }
@@ -497,7 +825,9 @@ class YunwuService extends ApiServiceBase {
   /// **API 文档**: GET /v1/video/query
   /// 
   /// **参数**:
-  /// - [taskId] 任务ID，格式如 "sora-2:task_01kbfq03gpe0wr9ge11z09xqrj"
+  /// - [taskId] 任务ID
+  ///   - 统一格式: "sora-2:task_01kbfq03gpe0wr9ge11z09xqrj"
+  ///   - OpenAI格式: "video_55cb73b3-60af-40c8-95fd-eae8fd758ade"
   /// 
   /// **返回**:
   /// - id: 任务ID
@@ -507,10 +837,17 @@ class YunwuService extends ApiServiceBase {
   /// - status_update_time: 状态更新时间戳
   Future<ApiResponse<YunwuVideoTaskStatus>> queryVideoTask(String taskId) async {
     try {
+      // OpenAI 视频格式的任务ID以 video_ 开头，使用 /v1/videos/{id}
+      final isOpenAIFormat = taskId.startsWith('video_');
+
+      final Uri uri = isOpenAIFormat
+          ? Uri.parse('${config.baseUrl}/v1/videos/$taskId')
+          : Uri.parse('${config.baseUrl}/v1/video/query').replace(queryParameters: {'id': taskId});
+
+      print('🔍 [Yunwu] queryVideoTask: taskId=$taskId, isOpenAI=$isOpenAIFormat, uri=$uri');
+
       final response = await http.get(
-        Uri.parse('${config.baseUrl}/v1/video/query').replace(queryParameters: {
-          'id': taskId,
-        }),
+        uri,
         headers: {
           'Authorization': 'Bearer ${config.apiKey}',
           'Content-Type': 'application/json',
@@ -520,37 +857,98 @@ class YunwuService extends ApiServiceBase {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        return ApiResponse.success(
-          YunwuVideoTaskStatus.fromJson(data),
-          statusCode: 200,
-        );
+        print('🔍 [Yunwu] queryVideoTask 响应: ${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
+        final taskStatus = YunwuVideoTaskStatus.fromJson(data);
+        print('🔍 [Yunwu] 解析状态: status=${taskStatus.status}, videoUrl=${taskStatus.videoUrl}, isCompleted=${taskStatus.isCompleted}, isFailed=${taskStatus.isFailed}');
+
+        // OpenAI 格式：任务完成但无 videoUrl 时，从 /content 端点获取下载地址
+        if (isOpenAIFormat && taskStatus.isCompleted && taskStatus.videoUrl == null) {
+          final contentUrl = '${config.baseUrl}/v1/videos/$taskId/content';
+          try {
+            // 使用 HttpClient 禁止自动跟随重定向，以获取 CDN 下载地址
+            final httpClient = io.HttpClient();
+            httpClient.autoUncompress = false;
+            try {
+              final req = await httpClient.getUrl(Uri.parse(contentUrl));
+              req.headers.set('Authorization', 'Bearer ${config.apiKey}');
+              req.followRedirects = false;
+              final res = await req.close();
+
+              String? downloadUrl;
+              if (res.statusCode == 302 || res.statusCode == 301) {
+                // 重定向到 CDN 公开地址
+                downloadUrl = res.headers.value('location');
+              } else if (res.statusCode == 200) {
+                final contentType = res.headers.contentType?.value ?? '';
+                if (contentType.contains('json')) {
+                  final body = await res.transform(io.SystemEncoding().decoder).join();
+                  final contentData = jsonDecode(body) as Map<String, dynamic>;
+                  downloadUrl = contentData['url'] as String? ??
+                      contentData['download_url'] as String? ??
+                      contentData['video_url'] as String?;
+                } else {
+                  // 二进制视频：保存到临时文件
+                  final tempDir = await io.Directory.systemTemp.createTemp('veo_');
+                  final tempFile = io.File('${tempDir.path}/video.mp4');
+                  await res.pipe(tempFile.openWrite());
+                  downloadUrl = tempFile.path;
+                }
+              }
+              httpClient.close();
+
+              if (downloadUrl != null) {
+                return ApiResponse.success(
+                  YunwuVideoTaskStatus(
+                    id: taskStatus.id,
+                    status: taskStatus.status,
+                    videoUrl: downloadUrl,
+                    enhancedPrompt: taskStatus.enhancedPrompt,
+                    statusUpdateTime: taskStatus.statusUpdateTime,
+                    failReason: taskStatus.failReason,
+                  ),
+                  statusCode: 200,
+                );
+              }
+            } finally {
+              httpClient.close(force: true);
+            }
+          } catch (_) {
+            // /content 请求失败，回退使用 content URL
+          }
+          // 兜底：直接使用 content 端点 URL（可能需要 auth）
+          return ApiResponse.success(
+            YunwuVideoTaskStatus(
+              id: taskStatus.id,
+              status: taskStatus.status,
+              videoUrl: contentUrl,
+              enhancedPrompt: taskStatus.enhancedPrompt,
+              statusUpdateTime: taskStatus.statusUpdateTime,
+              failReason: taskStatus.failReason,
+            ),
+            statusCode: 200,
+          );
+        }
+
+        return ApiResponse.success(taskStatus, statusCode: 200);
       } else {
+        print('❌ [Yunwu] queryVideoTask 失败: ${response.statusCode} - ${response.body}');
         return ApiResponse.failure(
           '查询任务失败: ${response.statusCode} - ${response.body}',
           statusCode: response.statusCode,
         );
       }
     } catch (e) {
+      print('❌ [Yunwu] queryVideoTask 异常: $e');
       return ApiResponse.failure('查询任务错误: $e');
     }
   }
 
-  /// 创建视频（VEO 格式 - Google VEO 模型）
+  /// 创建视频（VEO 统一格式 - 旧版 API）
   /// 
   /// **API 文档**: POST /v1/video/create
   /// 
-  /// **支持的模型**:
-  /// - VEO2: veo2, veo2-fast, veo2-fast-frames, veo2-fast-components, veo2-pro, veo2-pro-components
-  /// - VEO3: veo3, veo3-fast, veo3-fast-frames, veo3-frames, veo3-pro, veo3-pro-frames（支持音频）
-  /// - VEO3.1: veo3.1, veo3.1-fast, veo3.1-pro（自适应首帧）
-  /// 
-  /// **参数**:
-  /// - [request] VEO 视频创建请求对象
-  /// 
-  /// **特点**:
-  /// - VEO3 系列支持自动配音
-  /// - 支持首帧、尾帧、组件等多种模式
-  /// - 支持中文提示词自动转英文
+  /// **注意**: 新的 VEO 模型(veo_3_1-4K, veo_3_1-fast-4K)已改用 OpenAI 视频格式(/v1/videos)
+  /// 此方法保留用于兼容旧模型
   /// 
   /// **返回**: 任务ID + 状态
   Future<ApiResponse<YunwuVideoTaskStatus>> createVeoVideo(YunwuVeoCreateRequest request) async {
@@ -656,7 +1054,7 @@ class YunwuService extends ApiServiceBase {
 
 /// Yunwu 视频任务状态
 class YunwuVideoTaskStatus {
-  // 状态码常量
+  // 状态码常量（统一格式）
   static const String statusPending = 'pending';
   static const String statusImageDownloading = 'image_downloading';
   static const String statusVideoGenerating = 'video_generating';
@@ -668,12 +1066,16 @@ class YunwuVideoTaskStatus {
   static const String statusCompleted = 'completed';
   static const String statusFailed = 'failed';
   static const String statusError = 'error';
+  // OpenAI 视频格式状态
+  static const String statusQueued = 'queued';
+  static const String statusProcessing = 'processing';
 
   final String id;
   final String status;
   final String? videoUrl;
   final String? enhancedPrompt;
   final int? statusUpdateTime;
+  final String? failReason;
 
   YunwuVideoTaskStatus({
     required this.id,
@@ -681,15 +1083,39 @@ class YunwuVideoTaskStatus {
     this.videoUrl,
     this.enhancedPrompt,
     this.statusUpdateTime,
+    this.failReason,
   });
 
   factory YunwuVideoTaskStatus.fromJson(Map<String, dynamic> json) {
+    // 尝试从多个字段获取失败原因
+    String? reason = json['fail_reason'] as String? ??
+                     json['error'] as String? ??
+                     json['message'] as String?;
+    // 如果有嵌套 error 对象
+    if (reason == null && json['error'] is Map) {
+      final err = json['error'] as Map<String, dynamic>;
+      reason = (err['message_zh'] as String?) ?? (err['message'] as String?);
+    }
+    // 兼容多种 video URL 字段名（统一格式用 video_url，OpenAI 格式可能用 url/output 等）
+    String? videoUrl = json['video_url'] as String?;
+    videoUrl ??= json['url'] as String?;
+    videoUrl ??= json['download_url'] as String?;
+    if (videoUrl == null && json['output'] is Map) {
+      final output = json['output'] as Map<String, dynamic>;
+      videoUrl = output['url'] as String? ?? output['video_url'] as String?;
+    }
+    if (videoUrl == null && json['result'] is Map) {
+      final result = json['result'] as Map<String, dynamic>;
+      videoUrl = result['url'] as String? ?? result['video_url'] as String?;
+    }
+
     return YunwuVideoTaskStatus(
       id: json['id'] as String,
       status: json['status'] as String,
-      videoUrl: json['video_url'] as String?,
+      videoUrl: videoUrl,
       enhancedPrompt: json['enhanced_prompt'] as String?,
       statusUpdateTime: json['status_update_time'] as int?,
+      failReason: reason,
     );
   }
 
@@ -700,6 +1126,7 @@ class YunwuVideoTaskStatus {
       'video_url': videoUrl,
       'enhanced_prompt': enhancedPrompt,
       'status_update_time': statusUpdateTime,
+      if (failReason != null) 'fail_reason': failReason,
     };
   }
 
@@ -722,7 +1149,10 @@ class YunwuVideoTaskStatus {
   String get statusDescription {
     switch (status) {
       case statusPending:
+      case statusQueued:
         return '排队中';
+      case statusProcessing:
+        return '处理中';
       case statusImageDownloading:
         return '下载图片中';
       case statusVideoGenerating:
@@ -759,6 +1189,8 @@ class YunwuVideoCreateRequest {
   final int duration;               // 时长（秒），支持 10, 15, 25
   final bool watermark;             // 水印控制
   final bool private;               // 是否隐藏视频（true-不发布，无法remix）
+  final String? characterUrl;       // 角色视频链接（不能含真人）
+  final String? characterTimestamps; // 角色出现的秒数范围，格式 "{start},{end}"（差值1-3秒）
 
   YunwuVideoCreateRequest({
     required this.images,
@@ -767,12 +1199,14 @@ class YunwuVideoCreateRequest {
     required this.prompt,
     required this.size,
     required this.duration,
-    this.watermark = true,   // 默认 true（优先无水印，出错兜底有水印）
-    this.private = false,    // 默认 false（公开，可 remix）
+    this.watermark = true,
+    this.private = false,
+    this.characterUrl,
+    this.characterTimestamps,
   });
 
   Map<String, dynamic> toJson() {
-    return {
+    final json = <String, dynamic>{
       'images': images,
       'model': model,
       'orientation': orientation,
@@ -782,6 +1216,13 @@ class YunwuVideoCreateRequest {
       'watermark': watermark,
       'private': private,
     };
+    if (characterUrl != null) {
+      json['character_url'] = characterUrl;
+    }
+    if (characterTimestamps != null) {
+      json['character_timestamps'] = characterTimestamps;
+    }
+    return json;
   }
 }
 
@@ -915,31 +1356,57 @@ class YunwuHelper {
   /// 轮询任务直到完成
   Future<ApiResponse<YunwuVideoTaskStatus>> pollTaskUntilComplete({
     required String taskId,
-    Duration interval = const Duration(seconds: 3),
-    int maxAttempts = 100,
-    void Function(int progress)? onProgress,
+    Duration interval = const Duration(seconds: 5),
+    int maxWaitMinutes = 15,
+    void Function(int progress, String status)? onProgress,
   }) async {
+    final maxAttempts = (maxWaitMinutes * 60 / interval.inSeconds).ceil();
     for (var i = 0; i < maxAttempts; i++) {
       final result = await service.queryVideoTask(taskId);
       
       if (!result.isSuccess) {
+        // 可能是网络抖动，前几次重试
+        if (i < 3) {
+          print('⚠️ [Yunwu] 轮询第${i+1}次失败，重试... error=${result.errorMessage}');
+          await Future.delayed(interval);
+          continue;
+        }
+        print('❌ [Yunwu] 轮询连续失败，放弃: ${result.errorMessage}');
         return result;
       }
 
       final status = result.data!;
+
+      // 估算进度
+      final estimatedProgress = status.isCompleted ? 100 : (i * 100 ~/ maxAttempts).clamp(0, 95);
+      onProgress?.call(estimatedProgress, status.statusDescription);
       
       if (status.isCompleted) {
         return result;
       }
       
       if (status.isFailed) {
-        return ApiResponse.failure('任务失败');
+        final reason = status.failReason ?? status.statusDescription;
+        // 翻译常见英文错误为中文
+        final zhReason = _translateFailReason(reason);
+        return ApiResponse.failure('视频生成失败: $zhReason');
       }
 
-      // 等待后重试
       await Future.delayed(interval);
     }
 
-    return ApiResponse.failure('轮询超时');
+    return ApiResponse.failure('轮询超时：已等待 $maxWaitMinutes 分钟');
+  }
+
+  /// 翻译常见的英文失败原因为中文
+  String _translateFailReason(String reason) {
+    final lower = reason.toLowerCase();
+    if (lower == 'task failed' || lower == 'failed') return '任务处理失败，请重试或更换模型';
+    if (lower.contains('timeout')) return '服务器处理超时';
+    if (lower.contains('content policy') || lower.contains('safety')) return '内容不符合安全策略';
+    if (lower.contains('rate limit')) return '请求过于频繁，请稍后重试';
+    if (lower.contains('no available channel')) return '当前模型暂无可用通道，请更换模型或稍后重试';
+    if (lower.contains('quota') || lower.contains('balance')) return '账户额度不足';
+    return reason;
   }
 }

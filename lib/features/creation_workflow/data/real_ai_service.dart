@@ -2,6 +2,8 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
+import '../../../services/api/providers/yunwu_service.dart';
+import '../../../services/api/base/api_config.dart';
 import '../../../core/logger/log_manager.dart';
 import '../domain/models/script_line.dart';
 import '../domain/models/entity.dart';
@@ -455,7 +457,31 @@ $scriptContent
       );
 
       if (response.isSuccess && response.data != null && response.data!.isNotEmpty) {
-        return response.data!.first.videoUrl;
+        final videoData = response.data!.first;
+        final isTask = videoData.metadata?['isTask'] == true;
+
+        if (isTask && provider.toLowerCase() == 'yunwu') {
+          final taskId = videoData.videoId;
+          if (taskId == null) throw Exception('未返回任务ID');
+
+          final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
+          final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
+          if (baseUrl == null || apiKey == null) throw Exception('未配置视频 API');
+          final yunwuConfig = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+          final yunwuHelper = YunwuHelper(YunwuService(yunwuConfig));
+
+          final statusResult = await yunwuHelper.pollTaskUntilComplete(
+            taskId: taskId,
+            maxWaitMinutes: 15,
+          );
+
+          if (statusResult.isSuccess && statusResult.data != null && statusResult.data!.videoUrl != null) {
+            return statusResult.data!.videoUrl!;
+          } else {
+            throw Exception('视频生成失败: ${statusResult.error ?? "轮询超时"}');
+          }
+        }
+        return videoData.videoUrl;
       } else {
         throw Exception('生成视频失败: ${response.error ?? "未知错误"}');
       }

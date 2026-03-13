@@ -213,6 +213,15 @@ class _SceneGenerationPageState extends State<SceneGenerationPage> with WidgetsB
             break;
           }
         }
+      } else if (task.status == UploadTaskStatus.failed) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('上传失败: ${task.error ?? "未知错误"}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     });
   }

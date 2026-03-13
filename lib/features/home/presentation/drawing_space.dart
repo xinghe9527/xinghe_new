@@ -642,9 +642,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       case 'yunwu':
         // Yunwu（云雾）图片模型列表
         return [
+          'gemini-3.1-flash-image-preview',
+          'gemini-2.5-flash-image',
           'gemini-2.5-flash-image-preview',
           'gemini-3-pro-image-preview',
-          'gemini-3-pro-image-preview-lite',
         ];
       case 'openai':
         return ['gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2'];
@@ -668,20 +669,35 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void _update(DrawingTask task) => widget.onUpdate(task);
 
   /// 显示任务菜单
-  void _showTaskMenu(BuildContext context) {
+  void _showTaskMenu(BuildContext buttonContext) {
+    // 获取按钮的 RenderBox 以计算实际位置
+    final RenderBox button = buttonContext.findRenderObject() as RenderBox;
+    final RenderBox overlay = Overlay.of(buttonContext).context.findRenderObject() as RenderBox;
+    final Offset buttonPosition = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final Size buttonSize = button.size;
+    
+    // 菜单出现在按钮正下方
+    final position = RelativeRect.fromLTRB(
+      buttonPosition.dx,
+      buttonPosition.dy + buttonSize.height,
+      overlay.size.width - buttonPosition.dx - buttonSize.width,
+      0,
+    );
+    
     showMenu(
-      context: context,
-      position: const RelativeRect.fromLTRB(1000, 80, 20, 0),  // 右上角位置
+      context: buttonContext,
+      position: position,
       color: AppTheme.surfaceBackground,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       items: [
         PopupMenuItem(
           value: 'delete',
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.delete_outline, color: Colors.red, size: 18),
+              Icon(Icons.delete_outline, color: AppTheme.subTextColor, size: 16),
               const SizedBox(width: 8),
-              Text('删除', style: TextStyle(color: Colors.red, fontSize: 13)),
+              Text('删除', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
             ],
           ),
         ),
@@ -1635,9 +1651,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           right: 6,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => _showTaskMenu(context),
-              child: Container(
+            child: Builder(
+              builder: (buttonContext) => GestureDetector(
+                onTap: () => _showTaskMenu(buttonContext),
+                child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 decoration: BoxDecoration(
                   color: AppTheme.surfaceBackground.withOpacity(0.95),
@@ -1651,7 +1668,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                     ),
                   ],
                 ),
-                child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
+                  child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
+                ),
               ),
             ),
           ),

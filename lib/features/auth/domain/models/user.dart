@@ -30,13 +30,13 @@ class User {
     debugPrint('name 字段: ${json['name']}');
     debugPrint('username 字段: ${json['username']}');
     debugPrint('========================');
-    
+
     // PocketBase 可能使用 name 或 username 字段，优先使用 name
     String username = json['name'] ?? json['username'] ?? '';
     if (username.isEmpty) {
       username = '未命名用户';
     }
-    
+
     return User(
       id: json['_id'] ?? json['id'] ?? '',
       username: username,
@@ -44,7 +44,11 @@ class User {
       avatar: json['avatar'],
       verified: json['verified'] ?? false,
       expireDate: DateTime.parse(json['expire_date'] ?? json['expireDate']),
-      createdAt: DateTime.parse(json['created_at'] ?? json['createdAt'] ?? DateTime.now().toIso8601String()),
+      createdAt: DateTime.parse(
+        json['created_at'] ??
+            json['createdAt'] ??
+            DateTime.now().toIso8601String(),
+      ),
       lastDeviceId: json['last_device_id'] ?? json['lastDeviceId'],
     );
   }

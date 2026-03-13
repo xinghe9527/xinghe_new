@@ -6,6 +6,7 @@ import '../base/api_service_base.dart';
 import '../base/api_response.dart';
 
 /// OpenAI API服务实现
+/// 本地API文档: api_docs/openai/
 class OpenAIService extends ApiServiceBase {
   OpenAIService(super.config);
 

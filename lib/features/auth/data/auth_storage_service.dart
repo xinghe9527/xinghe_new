@@ -42,14 +42,13 @@ class AuthStorageService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final authStateJson = prefs.getString(_authStateKey);
-      
+
       if (authStateJson != null) {
         final authState = AuthState.fromJson(json.decode(authStateJson));
-        
+
         // 只检查 token 是否有效和用户是否存在
         // 注意：不再检查 isExpired，过期用户由 AuthGuard 在 UI 层拦截
-        if (authState.isAuthenticated && 
-            authState.user != null) {
+        if (authState.isAuthenticated && authState.user != null) {
           return authState;
         }
       }
@@ -74,7 +73,7 @@ class AuthStorageService {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_rememberMeKey, rememberMe);
-    
+
     if (rememberMe) {
       await prefs.setString(_savedEmailKey, email);
       await prefs.setString(_savedPasswordKey, password);
@@ -88,7 +87,7 @@ class AuthStorageService {
   Future<Map<String, dynamic>> loadCredentials() async {
     final prefs = await SharedPreferences.getInstance();
     final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
-    
+
     return {
       'rememberMe': rememberMe,
       'email': rememberMe ? (prefs.getString(_savedEmailKey) ?? '') : '',

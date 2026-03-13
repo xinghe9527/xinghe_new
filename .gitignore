@@ -67,3 +67,8 @@ python_backend/user_data/
 *.db
 *.db/CURRENT
 *.db/LOG*
+
+# =========================
+# 7. 本地 API 文档（仅本地使用，不上传）
+# =========================
+api_docs/

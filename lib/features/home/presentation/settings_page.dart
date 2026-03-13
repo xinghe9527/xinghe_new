@@ -10,7 +10,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:path/path.dart' as path;
-import 'package:xinghe_new/pages/web_automation_test_page.dart';  // ✅ Python 通信测试页面
 
 class SettingsPage extends StatefulWidget {
   final VoidCallback onBack;
@@ -144,26 +143,18 @@ class _SettingsPageState extends State<SettingsPage> {
     ],
     'image': [
       // Gemini 图像生成系列（Google）
+      'gemini-3.1-flash-image-preview',
+      'gemini-2.5-flash-image',
       'gemini-2.5-flash-image-preview',
       'gemini-3-pro-image-preview',
-      'gemini-3-pro-image-preview-lite',
     ],
     'video': [
-      // Sora 系列（根据 API 文档）
-      'sora-2',        // 支持 duration: 10
-      'sora-2-all',    // 支持 duration: 10, 15
-      'sora-2-pro',    // 支持 duration: 15, 25; size: large (1080p)
-      
-      // VEO2 系列（Google）
-      'veo2', 'veo2-fast', 'veo2-fast-frames', 'veo2-fast-components', 
-      'veo2-pro', 'veo2-pro-components',
-      
-      // VEO3 系列（Google，支持音频）
-      'veo3', 'veo3-fast', 'veo3-fast-frames', 'veo3-frames', 
-      'veo3-pro', 'veo3-pro-frames',
-      
-      // VEO3.1 系列（Google，最新）
-      'veo3.1', 'veo3.1-fast', 'veo3.1-pro', 'veo3.1-components',
+      // Sora 系列
+      'sora-2-all',
+      // VEO3.1 4K 系列（Google，OpenAI视频格式）
+      'veo_3_1-4K', 'veo_3_1-fast-4K',
+      // Grok 视频系列（xAI）
+      'grok-video-3', 'grok-video-3-10s', 'grok-video-3-15s',
     ],
   };
 
@@ -556,7 +547,7 @@ class _SettingsPageState extends State<SettingsPage> {
       case 'geeknow':
         return 'https://www.geeknow.top/v1';  // ✅ 用户的标准配置（包含 /v1）
       case 'yunwu':
-        return 'https://api.yunwu.ai/v1';
+        return 'https://yunwu.ai';
       case 'deepseek':
         return 'https://api.deepseek.com';
       case 'aliyun':  // ✅ 添加阿里云默认地址
@@ -1455,93 +1446,11 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
           ),
-          
-          // ✅ 临时测试按钮 - Python 通信测试（测试通过后可删除）
-          const SizedBox(height: 40),
-          Divider(color: AppTheme.dividerColor, thickness: 1),
-          const SizedBox(height: 40),
-          _buildPythonTestSection(),
         ],
       ),
     );
   }
   
-  /// ✅ Python 通信测试区域（临时）
-  Widget _buildPythonTestSection() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.science, color: Colors.orange, size: 24),
-              const SizedBox(width: 12),
-              Text(
-                '🧪 开发测试区域',
-                style: TextStyle(
-                  color: AppTheme.textColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '测试 Flutter 与 Python 脚本的通信功能（网页服务商功能的基础）',
-            style: TextStyle(
-              color: AppTheme.subTextColor,
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(height: 20),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const WebAutomationTestPage(),
-                  ),
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  gradient: LinearGradient(
-                    colors: [Colors.orange, Colors.deepOrange],
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(Icons.play_arrow, color: Colors.white, size: 20),
-                    SizedBox(width: 8),
-                    Text(
-                      '打开 Python 通信测试页面',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildPathSelector({
     required String title,
@@ -1948,22 +1857,23 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ] else ...[
           // API 服务商配置界面（原有逻辑）
-          _buildFieldLabel('API Key'),
-          const SizedBox(height: 10),
-          _buildEditableTextField(
-            _imageApiKeyController, 
-            '请输入您的 API 密钥...', 
-            isPassword: true,
-            isVisible: _imageApiKeyVisible,
-            onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
-            onCopy: () async {
-              await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
-              _showMessage('API Key 已复制', isError: false);
-            },
-            onSave: () => _debouncedSave(_saveImageConfig),
-          ),
-          
-          const SizedBox(height: 30),
+          if (_imageProvider != 'comfyui') ...[  // ComfyUI 不需要 API Key
+            _buildFieldLabel('API Key'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _imageApiKeyController, 
+              '请输入您的 API 密钥...', 
+              isPassword: true,
+              isVisible: _imageApiKeyVisible,
+              onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
+              onCopy: () async {
+                await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
+                _showMessage('API Key 已复制', isError: false);
+              },
+              onSave: () => _debouncedSave(_saveImageConfig),
+            ),
+            const SizedBox(height: 30),
+          ],
           _buildFieldLabel('Base URL (API 地址)'),
           const SizedBox(height: 10),
           _buildEditableTextField(
@@ -1972,15 +1882,17 @@ class _SettingsPageState extends State<SettingsPage> {
             onSave: () => _debouncedSave(_saveImageConfig),
           ),
           
-          const SizedBox(height: 30),
-          _buildFieldLabel('选择推理模型'),
-          const SizedBox(height: 10),
-          _buildModelSelector(
-            provider: _imageProvider,
-            modelType: 'image',
-            controller: _imageModelController,
-            hint: '例如: dall-e-3',
-          ),
+          if (_imageProvider != 'comfyui') ...[  // ComfyUI 不需要推理模型
+            const SizedBox(height: 30),
+            _buildFieldLabel('选择推理模型'),
+            const SizedBox(height: 10),
+            _buildModelSelector(
+              provider: _imageProvider,
+              modelType: 'image',
+              controller: _imageModelController,
+              hint: '例如: dall-e-3',
+            ),
+          ],
           
           // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
           if (_imageProvider == 'comfyui') ...[
@@ -2075,22 +1987,23 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ] else ...[
           // API 服务商配置界面（原有逻辑）
-          _buildFieldLabel('API Key'),
-          const SizedBox(height: 10),
-          _buildEditableTextField(
-            _videoApiKeyController, 
-            '请输入您的 API 密钥...', 
-            isPassword: true,
-            isVisible: _videoApiKeyVisible,
-            onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
-            onCopy: () async {
-              await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
-              _showMessage('API Key 已复制', isError: false);
-            },
-            onSave: () => _debouncedSave(_saveVideoConfig),
-          ),
-          
-          const SizedBox(height: 30),
+          if (_videoProvider != 'comfyui') ...[  // ComfyUI 不需要 API Key
+            _buildFieldLabel('API Key'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _videoApiKeyController, 
+              '请输入您的 API 密钥...', 
+              isPassword: true,
+              isVisible: _videoApiKeyVisible,
+              onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
+              onCopy: () async {
+                await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
+                _showMessage('API Key 已复制', isError: false);
+              },
+              onSave: () => _debouncedSave(_saveVideoConfig),
+            ),
+            const SizedBox(height: 30),
+          ],
           _buildFieldLabel('Base URL (API 地址)'),
           const SizedBox(height: 10),
           _buildEditableTextField(
@@ -2099,15 +2012,17 @@ class _SettingsPageState extends State<SettingsPage> {
             onSave: () => _debouncedSave(_saveVideoConfig),
           ),
           
-          const SizedBox(height: 30),
-          _buildFieldLabel('选择推理模型'),
-          const SizedBox(height: 10),
-          _buildModelSelector(
-            provider: _videoProvider,
-            modelType: 'video',
-            controller: _videoModelController,
-            hint: '例如: veo_3_1 或 sora-2',
-          ),
+          if (_videoProvider != 'comfyui') ...[  // ComfyUI 不需要推理模型
+            const SizedBox(height: 30),
+            _buildFieldLabel('选择推理模型'),
+            const SizedBox(height: 10),
+            _buildModelSelector(
+              provider: _videoProvider,
+              modelType: 'video',
+              controller: _videoModelController,
+              hint: '例如: veo_3_1 或 sora-2',
+            ),
+          ],
           
           // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
           if (_videoProvider == 'comfyui') ...[
@@ -2490,7 +2405,7 @@ class _SettingsPageState extends State<SettingsPage> {
       providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng'];
     } else {
       // 其他（上传等）：只有 API 服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'azure', 'anthropic'];
+      providers = ['openai', 'geeknow', 'yunwu'];
     }
     
     final displayNames = {
@@ -2776,8 +2691,6 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() {
                 controller.text = v;
               });
-              // ✅ 添加自动保存（根据 modelType 调用对应的保存方法）
-              _saveModelByType(modelType);
             }
           },
         ),

@@ -150,7 +150,7 @@ class UploadQueueManager {
       
     } catch (e, stackTrace) {
       task.status = UploadTaskStatus.failed;
-      task.error = e.toString();
+      task.error = _translateError(e.toString());
       
       _logger.error('上传任务失败', module: '上传队列', extra: {
         'taskId': task.id,
@@ -228,6 +228,71 @@ class UploadQueueManager {
       _logger.error('Sora API 调用失败: $e', module: '上传队列');
       rethrow;
     }
+  }
+
+  /// 将 API 错误翻译为用户友好的中文提示
+  String _translateError(String error) {
+    final lower = error.toLowerCase();
+    
+    // 认证错误
+    if (lower.contains('401') || lower.contains('invalid token') || lower.contains('unauthorized')) {
+      return '密钥无效，请在设置中检查上传服务商的 API Key';
+    }
+    if (lower.contains('403') || lower.contains('forbidden')) {
+      return '没有权限访问角色创建功能，请检查 API Key 权限';
+    }
+    
+    // 渠道/服务不可用
+    if (lower.contains('no_available_channel') || lower.contains('channel not found')) {
+      return '当前套餐不支持角色上传功能，请联系服务商确认';
+    }
+    if (lower.contains('503') || lower.contains('service unavailable')) {
+      return '服务暂时不可用，请稍后重试';
+    }
+    
+    // 内容审核
+    if (lower.contains('realistic human') || lower.contains('depict a realistic')) {
+      return '图片包含真实人物，角色功能仅支持动漫/插画风格';
+    }
+    if (lower.contains('content policy') || lower.contains('safety')) {
+      return '图片未通过内容审核，请更换图片重试';
+    }
+    
+    // 初始化失败
+    if (lower.contains('init failed')) {
+      return '服务端初始化失败，请稍后重试';
+    }
+    
+    // 网络错误
+    if (lower.contains('timeout') || lower.contains('timed out')) {
+      return '网络超时，请检查网络后重试';
+    }
+    if (lower.contains('socketexception') || lower.contains('connection refused')) {
+      return '无法连接服务器，请检查网络';
+    }
+    
+    // 配置错误
+    if (lower.contains('未配置上传api') || lower.contains('未配置')) {
+      return '请先在设置的「上传设置」中配置 API 信息';
+    }
+    
+    // 429 限流
+    if (lower.contains('429') || lower.contains('rate limit') || lower.contains('too many')) {
+      return '请求过于频繁，请稍后再试';
+    }
+    
+    // 通用服务端错误
+    if (lower.contains('500') || lower.contains('internal server error')) {
+      return '服务端异常，请稍后重试';
+    }
+    
+    // 无法识别的错误，尝试提取中文部分
+    final zhMatch = RegExp(r'[\u4e00-\u9fa5]+[^\]]*').firstMatch(error);
+    if (zhMatch != null) {
+      return zhMatch.group(0) ?? '操作失败，请稍后重试';
+    }
+    
+    return '操作失败，请稍后重试';
   }
 
   /// 通知状态变化

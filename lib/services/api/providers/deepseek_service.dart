@@ -8,6 +8,7 @@ import '../base/api_response.dart';
 /// 
 /// DeepSeek 使用与 OpenAI 完全兼容的 API 格式
 /// Base URL: https://api.deepseek.com 或 https://api.deepseek.com/v1
+/// 本地API文档: api_docs/deepseek/
 class DeepSeekService extends ApiServiceBase {
   DeepSeekService(super.config);
 
