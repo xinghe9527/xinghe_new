@@ -679,13 +679,10 @@ class VeoVideoHelper {
     );
   }
 
-  /// 轮询任务直到完成
-  /// 
-  /// 参数：
-  /// - taskId: 任务 ID
-  /// - maxWaitMinutes: 最大等待时间（分钟）
-  /// - onProgress: 进度回调（可选）
-  Future<ApiResponse<VeoTaskStatus>> pollTaskUntilComplete({
+  /// 通用静态轮询方法，接受任意 getVideoTaskStatus 回调
+  /// 支持 VeoVideoService、GeekNowService 等任何具有相同签名的服务
+  static Future<ApiResponse<VeoTaskStatus>> pollUntilComplete({
+    required Future<ApiResponse<VeoTaskStatus>> Function({required String taskId}) getStatus,
     required String taskId,
     int maxWaitMinutes = 10,
     Function(int progress, String status)? onProgress,
@@ -693,7 +690,7 @@ class VeoVideoHelper {
     final maxAttempts = (maxWaitMinutes * 60 / 5).ceil();
     
     for (int i = 0; i < maxAttempts; i++) {
-      final result = await service.getVideoTaskStatus(taskId: taskId);
+      final result = await getStatus(taskId: taskId);
       
       if (!result.isSuccess) {
         // 404 可能是数据同步延迟，继续等待
@@ -726,6 +723,25 @@ class VeoVideoHelper {
     }
 
     return ApiResponse.failure('任务超时：已等待 $maxWaitMinutes 分钟');
+  }
+
+  /// 轮询任务直到完成（实例方法，委托给静态方法）
+  /// 
+  /// 参数：
+  /// - taskId: 任务 ID
+  /// - maxWaitMinutes: 最大等待时间（分钟）
+  /// - onProgress: 进度回调（可选）
+  Future<ApiResponse<VeoTaskStatus>> pollTaskUntilComplete({
+    required String taskId,
+    int maxWaitMinutes = 10,
+    Function(int progress, String status)? onProgress,
+  }) {
+    return pollUntilComplete(
+      getStatus: service.getVideoTaskStatus,
+      taskId: taskId,
+      maxWaitMinutes: maxWaitMinutes,
+      onProgress: onProgress,
+    );
   }
 
   /// 选择合适的模型

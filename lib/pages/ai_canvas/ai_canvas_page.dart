@@ -28,9 +28,8 @@ import 'package:xinghe_new/pages/ai_canvas/canvas_agent_service.dart';
 /// GeekNow 图片模型列表（与设置界面保持一致）
 class GeekNowImageModels {
   static const List<String> models = [
-    // Gemini 图像生成系列
+    'gemini-3.1-flash-image-preview',
     'gemini-3-pro-image-preview',
-    'gemini-3-pro-image-preview-lite',
     'gemini-2.5-flash-image-preview',
   ];
 }
@@ -38,20 +37,14 @@ class GeekNowImageModels {
 /// GeekNow 视频模型列表
 class GeekNowVideoModels {
   static const List<String> models = [
-    // VEO 系列
-    'veo_3_1', 'veo_3_1-4K', 'veo_3_1-fast', 'veo_3_1-fast-4K',
-    'veo_3_1-components', 'veo_3_1-components-4K',
-    'veo_3_1-fast-components', 'veo_3_1-fast-components-4K',
-    // Sora 系列
-    'sora-2', 'sora-turbo',
-    // Kling
-    'kling-video-o1',
-    // Doubao 系列
-    'doubao-seedance-1-5-pro_480p',
-    'doubao-seedance-1-5-pro_720p',
-    'doubao-seedance-1-5-pro_1080p',
-    // Grok
+    'sora-2',
+    'sora-2[vip]',
+    'veo_3_1',
+    'veo_3_1-components-4K',
+    'veo_3_1-fast-components',
+    'veo_3_1-fast-components-4K',
     'grok-video-3',
+    'grok-video-3-max',
   ];
 }
 
@@ -59,9 +52,8 @@ class GeekNowVideoModels {
 class YunwuImageModels {
   static const List<String> models = [
     'gemini-3.1-flash-image-preview',
-    'gemini-2.5-flash-image',
-    'gemini-2.5-flash-image-preview',
     'gemini-3-pro-image-preview',
+    'gemini-2.5-flash-image-preview',
   ];
 }
 

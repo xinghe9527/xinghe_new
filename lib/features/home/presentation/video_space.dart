@@ -4,6 +4,8 @@ import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
+import 'package:xinghe_new/services/api/providers/geeknow_service.dart';
+import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';  // ✅ 导入 API 工厂
@@ -23,20 +25,14 @@ import 'dart:convert';
 /// GeekNow 视频模型列表（与设置界面保持一致）
 class GeekNowVideoModels {
   static const List<String> models = [
-    // VEO 系列（8个）
-    'veo_3_1', 'veo_3_1-4K', 'veo_3_1-fast', 'veo_3_1-fast-4K',
-    'veo_3_1-components', 'veo_3_1-components-4K',
-    'veo_3_1-fast-components', 'veo_3_1-fast-components-4K',
-    // Sora 系列（2个）
-    'sora-2', 'sora-turbo',
-    // Kling（1个）
-    'kling-video-o1',
-    // Doubao 系列（3个）
-    'doubao-seedance-1-5-pro_480p',
-    'doubao-seedance-1-5-pro_720p',
-    'doubao-seedance-1-5-pro_1080p',
-    // Grok（1个）
+    'sora-2',
+    'sora-2[vip]',
+    'veo_3_1',
+    'veo_3_1-components-4K',
+    'veo_3_1-fast-components',
+    'veo_3_1-fast-components-4K',
     'grok-video-3',
+    'grok-video-3-max',
   ];
 }
 
@@ -614,8 +610,16 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
         
         await Future.wait(pollFutures, eagerError: false);
       } else {
-        // 其他服务的异步轮询模式
-        final helper = VeoVideoHelper(service as VeoVideoService);
+        // 其他服务的异步轮询模式（GeekNow/Veo/OpenAI等）
+        // 解析轮询函数：根据服务类型选择对应的 getVideoTaskStatus
+        final Future<ApiResponse<VeoTaskStatus>> Function({required String taskId}) getStatusFn;
+        if (service is VeoVideoService) {
+          getStatusFn = service.getVideoTaskStatus;
+        } else if (service is GeekNowService) {
+          getStatusFn = service.getVideoTaskStatus;
+        } else {
+          throw UnsupportedError('${service.runtimeType} 不支持视频任务轮询');
+        }
         
         final submitFutures = List.generate(batchCount, (i) async {
           final result = await service.generateVideos(
@@ -643,7 +647,8 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
           if (taskId == null) return false;
           
           try {
-            final statusResult = await helper.pollTaskUntilComplete(
+            final statusResult = await VeoVideoHelper.pollUntilComplete(
+              getStatus: getStatusFn,
               taskId: taskId,
               maxWaitMinutes: 15,
               onProgress: (progress, status) {
@@ -1694,8 +1699,15 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // ✅ 其他服务（GeekNow/OpenAI等）的异步轮询模式
       _logger.info('使用异步轮询模式（适用于 $provider）', module: '视频空间');
       
-      // 创建辅助类（用于轮询和下载）
-      final helper = VeoVideoHelper(service as VeoVideoService);
+      // 解析轮询函数：根据服务类型选择对应的 getVideoTaskStatus
+      final Future<ApiResponse<VeoTaskStatus>> Function({required String taskId}) getStatusFn2;
+      if (service is VeoVideoService) {
+        getStatusFn2 = service.getVideoTaskStatus;
+      } else if (service is GeekNowService) {
+        getStatusFn2 = service.getVideoTaskStatus;
+      } else {
+        throw UnsupportedError('${service.runtimeType} 不支持视频任务轮询');
+      }
       
       // 步骤1：并发提交所有任务
       final submitFutures = List.generate(batchCount, (i) async {
@@ -1744,7 +1756,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         try {
           _logger.info('开始轮询任务 ${index + 1}: $taskId', module: '视频空间');
           
-          final statusResult = await helper.pollTaskUntilComplete(
+          final statusResult = await VeoVideoHelper.pollUntilComplete(
+            getStatus: getStatusFn2,
             taskId: taskId,
             maxWaitMinutes: 15,
             onProgress: (progress, status) {

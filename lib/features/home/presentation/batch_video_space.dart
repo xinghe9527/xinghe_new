@@ -4,6 +4,8 @@ import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
+import 'package:xinghe_new/services/api/providers/geeknow_service.dart';
+import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';
@@ -1314,8 +1316,16 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
 
         await Future.wait(pollFutures, eagerError: false);
       } else {
-        // 其他服务的异步轮询模式（GeekNow/OpenAI等）
-        final helper = VeoVideoHelper(service as VeoVideoService);
+        // 其他服务的异步轮询模式（GeekNow/Veo/OpenAI等）
+        // 解析轮询函数：根据服务类型选择对应的 getVideoTaskStatus
+        final Future<ApiResponse<VeoTaskStatus>> Function({required String taskId}) getStatusFn;
+        if (service is VeoVideoService) {
+          getStatusFn = service.getVideoTaskStatus;
+        } else if (service is GeekNowService) {
+          getStatusFn = service.getVideoTaskStatus;
+        } else {
+          throw UnsupportedError('${service.runtimeType} 不支持视频任务轮询');
+        }
 
         final submitFutures = List.generate(batchCount, (i) async {
           final result = await service.generateVideos(
@@ -1349,7 +1359,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           if (taskId == null) return false;
 
           try {
-            final statusResult = await helper.pollTaskUntilComplete(
+            final statusResult = await VeoVideoHelper.pollUntilComplete(
+              getStatus: getStatusFn,
               taskId: taskId,
               maxWaitMinutes: 15,
               onProgress: (progress, status) {

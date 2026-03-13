@@ -19,15 +19,9 @@ import 'package:xinghe_new/features/creation_workflow/presentation/widgets/dragg
 /// GeekNow 图片模型列表（与设置界面保持一致）
 class GeekNowImageModels {
   static const List<String> models = [
-    // OpenAI 系列
-    'gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2',
-    // Gemini 图像生成系列
-    'gemini-3-pro-image-preview', 'gemini-3-pro-image-preview-lite', 
-    'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-image', 'gemini-pro-vision',
-    // Stable Diffusion 系列
-    'stable-diffusion-xl', 'stable-diffusion-3',
-    // Midjourney 风格
-    'midjourney-v6', 'midjourney-niji',
+    'gemini-3.1-flash-image-preview',
+    'gemini-3-pro-image-preview',
+    'gemini-2.5-flash-image-preview',
   ];
 }
 
@@ -609,6 +603,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
       
+      // 如果服务商没变，跳过重复加载
+      if (provider == _imageProvider) return;
+      
       _logger.info('加载图片服务商配置', module: '绘图空间', extra: {'provider': provider});
       
       if (mounted) {
@@ -640,12 +637,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       case 'geeknow':
         return GeekNowImageModels.models;
       case 'yunwu':
-        // Yunwu（云雾）图片模型列表
         return [
           'gemini-3.1-flash-image-preview',
-          'gemini-2.5-flash-image',
-          'gemini-2.5-flash-image-preview',
           'gemini-3-pro-image-preview',
+          'gemini-2.5-flash-image-preview',
         ];
       case 'openai':
         return ['gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2'];
