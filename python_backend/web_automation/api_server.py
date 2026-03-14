@@ -40,7 +40,24 @@ except ImportError:
     print("⚠️  警告: pygetwindow 未安装，窗口控制功能将不可用")
 
 # 确保标准输出使用 UTF-8 编码
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+try:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+except:
+    pass
+
+# ============================================================================
+# 安全打印（stdout 管道断裂时不抛异常）
+# ============================================================================
+_original_print = print
+
+def _safe_print(*args, **kwargs):
+    """print() 的安全替代：当 stdout 管道断裂时（如 Dart 重启），静默忽略错误"""
+    try:
+        _original_print(*args, **kwargs)
+    except (OSError, IOError, ValueError):
+        pass  # stdout 不可写时跳过，不影响任务执行
+
+print = _safe_print
 
 # ============================================================================
 # 配置
@@ -287,6 +304,19 @@ async def execute_vidu_automation(
                             reference_file=reference_file,
                             character_name=character_name,
                         )
+                        
+                        # ✅ submit_generate 内部吞掉异常返回 dict，需要手动检查浏览器断连
+                        if not submit_result.get('success'):
+                            err = submit_result.get('error', '')
+                            browser_keywords = [
+                                'browser has been closed',
+                                'Target page, context or browser has been closed',
+                                'cannot switch to a different thread',
+                                'Connection refused', 'not connected',
+                                'target closed', 'Session closed',
+                            ]
+                            if any(kw in err for kw in browser_keywords):
+                                raise Exception(err)  # 抛出让重试逻辑处理
                         
                         return submit_result
                         

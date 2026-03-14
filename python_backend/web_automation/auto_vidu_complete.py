@@ -8,14 +8,24 @@ Vidu 完整自动视频生成脚本（包含下载功能）
     python auto_vidu_complete.py "提示词" [--save-path 保存路径] [--max-wait 最大等待分钟数]
 """
 
+import sys
+import io
+
+# 安全打印（stdout 管道断裂时不抛异常）
+_original_print = print
+def _safe_print(*args, **kwargs):
+    try:
+        _original_print(*args, **kwargs)
+    except (OSError, IOError, ValueError):
+        pass
+print = _safe_print
+
 # ✅ 立即输出，确保脚本启动
 print("="*60, flush=True)
 print("  🚀 Vidu 自动化脚本启动", flush=True)
 print("="*60, flush=True)
 
-import sys
 import json
-import io
 import os
 import argparse
 import time

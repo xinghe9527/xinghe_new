@@ -33,6 +33,15 @@ if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, io.TextIOWrapper
     except:
         pass
 
+# 安全打印（stdout 管道断裂时不抛异常）
+_original_print = print
+def _safe_print(*args, **kwargs):
+    try:
+        _original_print(*args, **kwargs)
+    except (OSError, IOError, ValueError):
+        pass
+print = _safe_print
+
 # 浏览器 profile 统一存储在 %APPDATA%/com.example/xinghe_new/user_data/
 # 这样 Debug、Release、Inno Setup 安装后都共享同一份登录态
 _APPDATA = os.environ.get('APPDATA', os.path.expanduser('~'))

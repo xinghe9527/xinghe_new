@@ -40,6 +40,15 @@ if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, io.TextIOWrapper
     except:
         pass
 
+# 安全打印（stdout 管道断裂时不抛异常）
+_original_print = print
+def _safe_print(*args, **kwargs):
+    try:
+        _original_print(*args, **kwargs)
+    except (OSError, IOError, ValueError):
+        pass
+print = _safe_print
+
 # ============================================================
 # 常量配置
 # ============================================================
