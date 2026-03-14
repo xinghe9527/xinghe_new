@@ -1334,7 +1334,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             // ✅ 添加视频参数（比例、分辨率、时长）
             payload['aspectRatio'] = widget.task.ratio;    // e.g. '16:9', '9:16', '1:1'
             payload['resolution'] = widget.task.quality;   // e.g. '1080P', '720P'
-            payload['duration'] = widget.task.seconds;     // e.g. '10秒'
+            payload['duration'] = _parseSeconds(widget.task.seconds);     // e.g. '10秒' → 10
             
             // 提交生成任务
             final result = await aigcClient.submitGenerationTask(
@@ -2671,7 +2671,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     // 视频参数
     payload['aspectRatio'] = widget.task.ratio;
     payload['resolution'] = widget.task.quality;
-    payload['duration'] = widget.task.seconds;
+    payload['duration'] = _parseSeconds(widget.task.seconds);
     
     return payload;
   }

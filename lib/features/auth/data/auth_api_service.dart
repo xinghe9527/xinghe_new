@@ -541,8 +541,6 @@ class AuthApiService {
           )
           .timeout(const Duration(seconds: 15));
 
-      debugPrint('authRefresh 响应状态码: ${response.statusCode}');
-
       if (response.statusCode >= 400) {
         debugPrint('❌ authRefresh 失败: ${response.body}');
         return null;

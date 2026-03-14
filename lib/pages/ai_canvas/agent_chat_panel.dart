@@ -28,11 +28,30 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
   bool _isLoading = false;
 
   // 配色
-  static const Color _panelBg = Color(0xFFF8F9FA);
-  static const Color _userBubble = Color(0xFF3B82F6);
+  static const Color _panelBg = Color(0xFFF8FBFF);
+  static const Color _panelSurface = Color(0xFFEEF4FF);
+  static const Color _panelSurfaceSoft = Color(0xFFFFFFFF);
+  static const Color _userBubble = Color(0xFF2563EB);
   static const Color _assistantBubble = Color(0xFFFFFFFF);
-  static const Color _borderColor = Color(0xFFE5E7EB);
+  static const Color _borderColor = Color(0xFFD9E5F5);
   static const Color _accentBlue = Color(0xFF3B82F6);
+  static const Color _accentCyan = Color(0xFF2AFADF);
+
+  // Skills 模板
+  static const List<_SkillTemplate> _skills = [
+    _SkillTemplate('社媒轮播图', Icons.view_carousel_outlined,
+        '帮我设计一组社交媒体轮播图，主题自由发挥，包含封面和3-4页内容'),
+    _SkillTemplate('社交媒体', Icons.phone_android_outlined,
+        '帮我设计一张社交媒体宣传图，适合 Instagram/小红书 的竖版比例'),
+    _SkillTemplate('Logo与品牌', Icons.palette_outlined,
+        '帮我设计一套品牌视觉素材，包含 Logo 文字和品牌配色展示'),
+    _SkillTemplate('分镜故事板', Icons.movie_creation_outlined,
+        '帮我设计一组分镜故事板，4-6 个画面，用于短视频脚本可视化'),
+    _SkillTemplate('营销宣传册', Icons.menu_book_outlined,
+        '帮我设计一份产品营销宣传册，包含封面、卖点展示和产品细节'),
+    _SkillTemplate('产品套图', Icons.inventory_2_outlined,
+        '帮我设计一组电商产品展示套图，包含主图、细节图和场景图'),
+  ];
 
   @override
   void initState() {
@@ -42,7 +61,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
       AgentMessage(
         role: 'assistant',
         content:
-            '你好！我是 AI 设计助手。\n\n告诉我你想设计什么，我会自动规划布局并生成设计方案。\n\n例如：\n• "设计一个运动鞋品牌的产品展示页"\n• "做一组咖啡店的宣传素材"\n• "制作一个科技产品发布海报"',
+            '你好！我是 AI 设计助手。\n\n你可以和我聊天讨论设计想法，也可以让我直接生成设计方案。\n\n试试：\n• "帮我设计一组咖啡店品牌素材"\n• "你觉得科技产品海报用什么配色好"\n• "做一个运动鞋品牌展示页"',
       ),
     );
   }
@@ -100,8 +119,19 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     return Container(
       width: 360,
       decoration: BoxDecoration(
-        color: _panelBg,
+        gradient: const LinearGradient(
+          colors: [_panelBg, _panelSurface],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
         border: Border(left: BorderSide(color: _borderColor, width: 1)),
+        boxShadow: [
+          BoxShadow(
+            color: _accentBlue.withValues(alpha: 0.12),
+            blurRadius: 22,
+            offset: const Offset(-8, 0),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -118,22 +148,56 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
 
   Widget _buildHeader() {
     return Container(
-      height: 48,
+      height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withValues(alpha: 0.72),
         border: Border(bottom: BorderSide(color: _borderColor, width: 1)),
       ),
       child: Row(
         children: [
-          Icon(Icons.auto_awesome, size: 20, color: _accentBlue),
-          const SizedBox(width: 8),
-          const Text(
-            'AI 设计助手',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF1F2937),
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [_accentCyan, _accentBlue],
+              ),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: _accentBlue.withValues(alpha: 0.30),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.auto_awesome,
+              size: 18,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'AI 设计助手',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  '帮你排版、拆解画面、讨论创意',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                ),
+              ],
             ),
           ),
           const Spacer(),
@@ -163,16 +227,88 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
   }
 
   Widget _buildMessageList() {
+    final showSkills = _messages.length == 1 && _messages.first.role == 'assistant' && !_isLoading;
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      itemCount: _messages.length + (_isLoading ? 1 : 0),
+      itemCount: _messages.length + (showSkills ? 1 : 0) + (_isLoading ? 1 : 0),
       itemBuilder: (context, index) {
-        if (index == _messages.length && _isLoading) {
-          return _buildLoadingBubble();
+        if (index < _messages.length) {
+          return _buildMessageBubble(_messages[index]);
         }
-        return _buildMessageBubble(_messages[index]);
+        if (showSkills && index == _messages.length) {
+          return _buildSkillsSection();
+        }
+        return _buildLoadingBubble();
       },
+    );
+  }
+
+  void _onSkillTap(_SkillTemplate skill) {
+    _inputController.text = skill.prompt;
+    _sendMessage();
+  }
+
+  Widget _buildSkillsSection() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 36, top: 4, bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: Text(
+              '试试这些 Skills',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF64748B),
+              ),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _skills.map((s) => _buildSkillChip(s)).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkillChip(_SkillTemplate skill) {
+    return GestureDetector(
+      onTap: () => _onSkillTap(skill),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _borderColor),
+          boxShadow: [
+            BoxShadow(
+              color: _accentBlue.withValues(alpha: 0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(skill.icon, size: 16, color: _accentBlue),
+            const SizedBox(width: 6),
+            Text(
+              skill.name,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF334155),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -193,10 +329,16 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
               width: 28,
               height: 28,
               decoration: BoxDecoration(
-                color: _accentBlue.withValues(alpha: 0.1),
+                gradient: const LinearGradient(
+                  colors: [_accentCyan, _accentBlue],
+                ),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(Icons.auto_awesome, size: 16, color: _accentBlue),
+              child: const Icon(
+                Icons.auto_awesome,
+                size: 16,
+                color: Colors.white,
+              ),
             ),
             const SizedBox(width: 8),
           ],
@@ -220,12 +362,18 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
                       bottomRight: Radius.circular(isUser ? 4 : 16),
                     ),
                     boxShadow: isUser
-                        ? null
+                        ? [
+                            BoxShadow(
+                              color: _accentBlue.withValues(alpha: 0.28),
+                              blurRadius: 14,
+                              offset: const Offset(0, 8),
+                            ),
+                          ]
                         : [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.05),
-                              blurRadius: 4,
-                              offset: const Offset(0, 1),
+                              color: Colors.black.withValues(alpha: 0.06),
+                              blurRadius: 12,
+                              offset: const Offset(0, 6),
                             ),
                           ],
                   ),
@@ -233,7 +381,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
                     message.content,
                     style: TextStyle(
                       fontSize: 13,
-                      color: isUser ? Colors.white : const Color(0xFF374151),
+                      color: isUser ? Colors.white : const Color(0xFF334155),
                       height: 1.5,
                     ),
                   ),
@@ -260,9 +408,16 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: _accentBlue.withValues(alpha: 0.05),
+        color: Colors.white.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _accentBlue.withValues(alpha: 0.2)),
+        border: Border.all(color: _accentBlue.withValues(alpha: 0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: _accentBlue.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -283,28 +438,44 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
             const SizedBox(height: 8),
             Text(
               '风格：${plan.style}',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
             ),
           ],
           const SizedBox(height: 10),
           // 应用方案按钮
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => widget.onPlanReady(plan),
-              icon: const Icon(Icons.auto_fix_high, size: 16),
-              label: const Text(
-                '应用到画布',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _accentBlue,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [_accentCyan, _accentBlue],
                 ),
-                elevation: 0,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: _accentBlue.withValues(alpha: 0.30),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: ElevatedButton.icon(
+                onPressed: () => widget.onPlanReady(plan),
+                icon: const Icon(Icons.auto_fix_high, size: 16),
+                label: const Text(
+                  '应用到画布',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
               ),
             ),
           ),
@@ -317,7 +488,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF8FBFF),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: _borderColor),
       ),
@@ -328,7 +499,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
           const SizedBox(width: 4),
           Text(
             label,
-            style: const TextStyle(fontSize: 12, color: Color(0xFF4B5563)),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
           ),
         ],
       ),
@@ -345,10 +516,16 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
             width: 28,
             height: 28,
             decoration: BoxDecoration(
-              color: _accentBlue.withValues(alpha: 0.1),
+              gradient: const LinearGradient(
+                colors: [_accentCyan, _accentBlue],
+              ),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(Icons.auto_awesome, size: 16, color: _accentBlue),
+            child: const Icon(
+              Icons.auto_awesome,
+              size: 16,
+              color: Colors.white,
+            ),
           ),
           const SizedBox(width: 8),
           Container(
@@ -363,9 +540,9 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
                 ),
               ],
             ),
@@ -382,8 +559,11 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '正在分析设计需求...',
-                  style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+                  '思考中...',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF475569),
+                  ),
                 ),
               ],
             ),
@@ -397,7 +577,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withValues(alpha: 0.65),
         border: Border(top: BorderSide(color: _borderColor, width: 1)),
       ),
       child: Row(
@@ -407,8 +587,16 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
             child: Container(
               constraints: const BoxConstraints(maxHeight: 100),
               decoration: BoxDecoration(
-                color: const Color(0xFFF3F4F6),
+                color: _panelSurfaceSoft,
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _borderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: _accentBlue.withValues(alpha: 0.06),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: TextField(
                 controller: _inputController,
@@ -416,36 +604,58 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _sendMessage(),
                 decoration: const InputDecoration(
-                  hintText: '描述你想设计的内容...',
-                  hintStyle: TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+                  hintText: '聊聊设计想法，或让我直接生成...',
+                  hintStyle: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   contentPadding: EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 10,
                   ),
                   border: InputBorder.none,
                 ),
-                style: const TextStyle(fontSize: 13, color: Color(0xFF1F2937)),
+                style: const TextStyle(fontSize: 13, color: Color(0xFF1E293B)),
               ),
             ),
           ),
           const SizedBox(width: 8),
           // 发送按钮
-          GestureDetector(
-            onTap: _isLoading ? null : _sendMessage,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: _isLoading ? Colors.grey[300] : _accentBlue,
-                borderRadius: BorderRadius.circular(18),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: _isLoading
+                  ? null
+                  : const LinearGradient(colors: [_accentCyan, _accentBlue]),
+              color: _isLoading ? const Color(0xFF475569) : null,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: (_isLoading ? Colors.black : _accentBlue).withValues(
+                    alpha: _isLoading ? 0.12 : 0.28,
+                  ),
+                  blurRadius: 14,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: GestureDetector(
+              onTap: _isLoading ? null : _sendMessage,
+              child: const SizedBox(
+                width: 40,
+                height: 40,
+                child: Icon(Icons.arrow_upward, size: 20, color: Colors.white),
               ),
-              child: Icon(Icons.arrow_upward, size: 20, color: Colors.white),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+/// Skills 模板数据
+class _SkillTemplate {
+  final String name;
+  final IconData icon;
+  final String prompt;
+  const _SkillTemplate(this.name, this.icon, this.prompt);
 }
 
 /// 顶栏小按钮
@@ -469,7 +679,7 @@ class _HeaderButton extends StatelessWidget {
         onTap: onPressed,
         child: Padding(
           padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 18, color: const Color(0xFF6B7280)),
+          child: Icon(icon, size: 18, color: const Color(0xFF64748B)),
         ),
       ),
     );

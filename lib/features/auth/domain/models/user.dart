@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 class User {
   final String id;
   final String username;
@@ -24,13 +22,6 @@ class User {
   bool get isExpired => DateTime.now().isAfter(expireDate);
 
   factory User.fromJson(Map<String, dynamic> json) {
-    // 调试输出：查看原始 JSON 数据
-    debugPrint('=== User.fromJson 解析 ===');
-    debugPrint('原始 JSON: $json');
-    debugPrint('name 字段: ${json['name']}');
-    debugPrint('username 字段: ${json['username']}');
-    debugPrint('========================');
-
     // PocketBase 可能使用 name 或 username 字段，优先使用 name
     String username = json['name'] ?? json['username'] ?? '';
     if (username.isEmpty) {

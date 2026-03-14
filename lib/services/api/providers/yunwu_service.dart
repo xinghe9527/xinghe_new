@@ -412,9 +412,12 @@ class YunwuService extends ApiServiceBase {
       }
 
       // Sora 等模型走统一格式 (/v1/video/create)
-      final seconds = parameters?['seconds'] as int? ?? 10;
+      var seconds = parameters?['seconds'] as int? ?? 10;
       final characterUrl = parameters?['character_url'] as String?;
       final characterTimestamps = parameters?['character_timestamps'] as String?;
+
+      // Sora 时长自动适配：只支持 10s/15s
+      seconds = seconds <= 12 ? 10 : 15;
 
       // 从 ratio 推断 orientation (e.g. "720x1280" → portrait, "1280x720" → landscape)
       String orientation = 'portrait';
@@ -429,11 +432,8 @@ class YunwuService extends ApiServiceBase {
         orientation = 'portrait';
       }
 
-      // quality 映射 size: "1080p"/"hd" → large, 默认 small
-      String size = 'small';
-      if (quality == '1080p' || quality == 'hd' || quality == 'large') {
-        size = 'large';
-      }
+      // Sora 仅支持 720P，强制使用 small 分辨率
+      const size = 'small';
 
       final request = YunwuVideoCreateRequest(
         images: referenceImages ?? [],
@@ -478,7 +478,8 @@ class YunwuService extends ApiServiceBase {
     List<String>? referenceImages,
     Map<String, dynamic>? parameters,
   }) async {
-    final seconds = parameters?['seconds'] as int? ?? 8;
+    // VEO 固定 8 秒
+    const seconds = 8;
 
     // 转换比例格式: "1280x720" → "16x9", "720x1280" → "9x16", "16:9" → "16x9"
     String size = '16x9';
@@ -577,10 +578,13 @@ class YunwuService extends ApiServiceBase {
       }
     }
 
-    // 分辨率映射
+    // 分辨率映射（Grok 最高 1080P）
     String size = '720P';
-    if (quality == '1080p' || quality == 'hd' || quality == 'large') {
-      size = '1080P';
+    if (quality != null) {
+      final q = quality.toUpperCase();
+      if (q.contains('1080') || q.contains('HD') || q == 'LARGE' || q.contains('2K') || q.contains('4K')) {
+        size = '1080P';
+      }
     }
 
     final requestBody = <String, dynamic>{

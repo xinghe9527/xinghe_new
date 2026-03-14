@@ -56,6 +56,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   Set<int> _selectedStoryboards = {}; // ✅ 选中的分镜索引（用于合并）
   final ApiRepository _apiRepository = ApiRepository(); // ✅ API Repository
 
+  // 分镜参数（比例、分辨率、时长）
+  String _storyboardRatio = '16:9';
+  String _storyboardResolution = '1K';
+  int _storyboardDuration = 8;
+
   // 全局主题提示词
   String _globalImageTheme = ''; // 图片全局主题
   String _globalVideoTheme = ''; // 视频全局主题
@@ -124,15 +129,30 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       final prefs = await SharedPreferences.getInstance();
       final showScript =
           prefs.getBool('show_script_column_${widget.workId}') ?? false;
+      final ratio = prefs.getString('storyboard_ratio_${widget.workId}') ?? '16:9';
+      final resolution = prefs.getString('storyboard_resolution_${widget.workId}') ?? '1K';
+      final duration = prefs.getInt('storyboard_duration_${widget.workId}') ?? 8;
       if (mounted) {
         setState(() {
           _showScriptColumn = showScript;
+          _storyboardRatio = ratio;
+          _storyboardResolution = resolution;
+          _storyboardDuration = duration;
         });
       }
-      debugPrint('✅ 加载剧本列显示状态: $showScript');
     } catch (e) {
-      debugPrint('⚠️ 加载剧本列状态失败: $e');
+      debugPrint('⚠️ 加载分镜空间状态失败: $e');
     }
+  }
+
+  /// 保存分镜参数
+  Future<void> _saveStoryboardParams() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('storyboard_ratio_${widget.workId}', _storyboardRatio);
+      await prefs.setString('storyboard_resolution_${widget.workId}', _storyboardResolution);
+      await prefs.setInt('storyboard_duration_${widget.workId}', _storyboardDuration);
+    } catch (_) {}
   }
 
   /// 保存剧本列显示状态
@@ -375,6 +395,39 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             label: '物品',
             onTap: _openItemGeneration,
           ),
+          const SizedBox(width: 16),
+          // 比例下拉
+          _buildToolbarDropdown(
+            label: '比例',
+            value: _storyboardRatio,
+            items: const ['16:9', '9:16', '1:1', '4:3', '3:4'],
+            onChanged: (v) {
+              setState(() => _storyboardRatio = v);
+              _saveStoryboardParams();
+            },
+          ),
+          const SizedBox(width: 8),
+          // 分辨率下拉
+          _buildToolbarDropdown(
+            label: '分辨率',
+            value: _storyboardResolution,
+            items: const ['720P', '1K', '1080P', '2K', '4K'],
+            onChanged: (v) {
+              setState(() => _storyboardResolution = v);
+              _saveStoryboardParams();
+            },
+          ),
+          const SizedBox(width: 8),
+          // 时长下拉
+          _buildToolbarDropdown(
+            label: '时长',
+            value: '${_storyboardDuration}秒',
+            items: const ['5秒', '6秒', '8秒', '10秒', '15秒'],
+            onChanged: (v) {
+              setState(() => _storyboardDuration = int.tryParse(v.replaceAll('秒', '')) ?? 8);
+              _saveStoryboardParams();
+            },
+          ),
           const Spacer(),
           // ✅ 合并按钮（选中多个分镜时显示）
           if (_selectedStoryboards.length >= 2)
@@ -492,6 +545,49 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 工具栏紧凑下拉按钮
+  Widget _buildToolbarDropdown({
+    required String label,
+    required String value,
+    required List<String> items,
+    required ValueChanged<String> onChanged,
+  }) {
+    return PopupMenuButton<String>(
+      onSelected: onChanged,
+      tooltip: label,
+      offset: const Offset(0, 36),
+      color: const Color(0xFF2A2A2C),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      itemBuilder: (_) => items.map((item) => PopupMenuItem(
+        value: item,
+        height: 32,
+        child: Text(item, style: TextStyle(
+          color: item == value ? const Color(0xFF6C8CFF) : const Color(0xFFCCCCCC),
+          fontSize: 13,
+        )),
+      )).toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF3A3A3C).withOpacity(0.5),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFFFFFFF).withOpacity(0.08)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$label:$value',
+              style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 12),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_drop_down, size: 14, color: Color(0xFF888888)),
+          ],
         ),
       ),
     );
@@ -673,6 +769,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   Widget _buildStoryboardTable() {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
+      cacheExtent: 500,
       itemCount: _storyboards.length,
       itemBuilder: (context, index) {
         return _buildStoryboardRow(_storyboards[index], index);
@@ -683,7 +780,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   /// 分镜行（可选显示左侧剧本列）
   Widget _buildStoryboardRow(StoryboardRow row, int index) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 20),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E20),
         borderRadius: BorderRadius.circular(12),
@@ -696,7 +793,8 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           ),
         ],
       ),
-      child: IntrinsicHeight(
+      child: SizedBox(
+        height: 340,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1162,7 +1260,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                   ),
                   // 4列内容（固定高度）
                   SizedBox(
-                    height: 270, // 缩小三分之一（400 → 270）
+                    height: 270,
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -1186,6 +1284,39 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                           flex: 2,
                           child: _buildVideoGenerationColumn(row, index),
                         ),
+                      ],
+                    ),
+                  ),
+                  // 底部分隔线延伸（当剧本列比内容区高时，填充空隙保持竖线连续）
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              border: Border(right: BorderSide(color: Color(0xFF3A3A3C), width: 1)),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              border: Border(right: BorderSide(color: Color(0xFF3A3A3C), width: 1)),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              border: Border(right: BorderSide(color: Color(0xFF3A3A3C), width: 1)),
+                            ),
+                          ),
+                        ),
+                        const Expanded(flex: 2, child: SizedBox.shrink()),
                       ],
                     ),
                   ),
@@ -2873,7 +3004,7 @@ ${widget.scriptContent}
             referenceImages: referenceImages.isNotEmpty
                 ? referenceImages
                 : null,
-            parameters: {'size': '16:9', 'quality': '1K'},
+            parameters: {'size': _storyboardRatio, 'quality': _storyboardResolution},
           );
 
           if (response.isSuccess &&
@@ -3166,8 +3297,8 @@ ${widget.scriptContent}
               }
 
               // 添加视频参数
-              payload['aspectRatio'] = '16:9';
-              payload['duration'] = '8秒';
+              payload['aspectRatio'] = _storyboardRatio;
+              payload['duration'] = '${_storyboardDuration}秒';
 
               // 提交任务
               final result = await aigcClient.submitGenerationTask(
@@ -3350,8 +3481,8 @@ ${widget.scriptContent}
               }
 
               // 添加视频参数
-              payload['aspectRatio'] = '16:9';
-              payload['duration'] = '8秒';
+              payload['aspectRatio'] = _storyboardRatio;
+              payload['duration'] = '${_storyboardDuration}秒';
 
               // 提交任务
               final result = await aigcClient.submitGenerationTask(
@@ -3489,7 +3620,7 @@ ${widget.scriptContent}
               prompt: fullPrompt,
               model: model,
               referenceImages: referenceImage != null ? [referenceImage] : null,
-              parameters: {'ratio': '16:9', 'seconds': 8},
+              parameters: {'ratio': _storyboardRatio, 'seconds': _storyboardDuration},
             );
 
             if (response.isSuccess &&
@@ -5201,7 +5332,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         prompt: fullPrompt,
         model: model,
         referenceImages: referenceImages.isNotEmpty ? referenceImages : null,
-        parameters: {'size': '16:9', 'quality': '1K'},
+        parameters: {'size': _storyboardRatio, 'quality': _storyboardResolution},
       );
 
       if (response.isSuccess &&
@@ -5443,8 +5574,8 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         }
 
         // 添加视频参数
-        payload['aspectRatio'] = '16:9';
-        payload['duration'] = '8秒';
+        payload['aspectRatio'] = _storyboardRatio;
+        payload['duration'] = '${_storyboardDuration}秒';
 
         // 提交生成任务
         print('🚀 提交网页服务商任务...');
@@ -5532,7 +5663,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         prompt: fullPrompt,
         model: model,
         referenceImages: selectedImageUrl != null ? [selectedImageUrl] : null,
-        parameters: {'ratio': '16:9', 'seconds': 8},
+        parameters: {'ratio': _storyboardRatio, 'seconds': _storyboardDuration},
       );
 
       if (response.isSuccess &&

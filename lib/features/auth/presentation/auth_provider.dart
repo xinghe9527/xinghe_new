@@ -222,11 +222,6 @@ class AuthProvider extends ChangeNotifier {
         final User user = result['user'];
         final String newToken = result['token'];
 
-        debugPrint('=== 刷新用户状态 ===');
-        debugPrint('新 verified: ${user.verified}');
-        debugPrint('新 isExpired: ${user.isExpired}');
-        debugPrint('========================');
-
         // 🚨 雷达比对：检查设备指纹是否匹配
         final kicked = await _checkDeviceConflict(user);
         if (kicked) return; // 已被踢，不再更新状态

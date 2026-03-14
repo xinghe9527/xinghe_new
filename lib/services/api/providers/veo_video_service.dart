@@ -62,7 +62,20 @@ class VeoVideoService extends ApiServiceBase {
     try {
       final targetModel = model ?? config.model ?? VeoModel.standard;
       final size = ratio ?? '720x1280';
-      final seconds = parameters?['seconds'] as int? ?? 8;
+      var seconds = parameters?['seconds'] as int? ?? 8;
+
+      // 模型级时长自动适配
+      if (targetModel.contains('grok')) {
+        if (targetModel.contains('max') || targetModel.contains('pro')) {
+          seconds = seconds.clamp(1, 10);
+        } else {
+          seconds = 6;
+        }
+      } else if (targetModel.contains('sora')) {
+        seconds = seconds <= 12 ? 10 : 15;
+      } else if (targetModel.contains('veo')) {
+        seconds = 8;
+      }
       final referenceImagePaths = parameters?['referenceImagePaths'] as List<String>?;
       final characterUrl = parameters?['character_url'] as String?;
       final characterTimestamps = parameters?['character_timestamps'] as String?;
@@ -74,8 +87,35 @@ class VeoVideoService extends ApiServiceBase {
       final videoUrl = parameters?['video'] as String?;
       
       // Grok 模型特有参数
-      final aspectRatio = parameters?['aspect_ratio'] as String?;
-      final grokSize = parameters?['grok_size'] as String?;
+      String? aspectRatio = parameters?['aspect_ratio'] as String?;
+      String? grokSize = parameters?['grok_size'] as String?;
+
+      // Grok 分辨率自动适配（最高 1080P）
+      if (targetModel.contains('grok') && grokSize == null) {
+        final resParam = parameters?['resolution'] as String? ?? quality ?? '720P';
+        if (resParam.contains('4K') || resParam.contains('2K') || resParam.contains('1080')) {
+          grokSize = '1080P';
+        } else {
+          grokSize = '720P';
+        }
+      }
+
+      // Grok 模型自动转换比例格式
+      if (aspectRatio == null && targetModel.contains('grok')) {
+        final sizeParam = parameters?['size'] as String? ?? ratio;
+        if (sizeParam != null) {
+          if (sizeParam == '16:9' || sizeParam == '3:2') {
+            aspectRatio = '3:2';
+          } else if (sizeParam == '9:16' || sizeParam == '2:3') {
+            aspectRatio = '2:3';
+          } else if (sizeParam == '1:1') {
+            aspectRatio = '1:1';
+          } else if (sizeParam == '4:3' || sizeParam == '3:4') {
+            aspectRatio = sizeParam == '4:3' ? '3:2' : '2:3';
+          }
+        }
+        aspectRatio ??= '3:2';
+      }
 
       // 智能处理 baseUrl，避免重复 /v1
       String baseUrl = config.baseUrl;

@@ -782,7 +782,21 @@ class GeekNowService extends ApiServiceBase {
     try {
       final targetModel = model ?? config.model ?? 'veo_3_1';
       final size = ratio ?? '720x1280';
-      final seconds = parameters?['seconds'] as int? ?? 8;
+      var seconds = parameters?['seconds'] as int? ?? 8;
+
+      // 模型级时长自动适配
+      if (targetModel.contains('grok')) {
+        if (targetModel.contains('max') || targetModel.contains('pro')) {
+          seconds = seconds.clamp(1, 10);
+        } else {
+          seconds = 6; // grok-video-3 标准版固定 6s
+        }
+      } else if (targetModel.contains('sora')) {
+        // Sora 只支持 10s/15s
+        seconds = seconds <= 12 ? 10 : 15;
+      } else if (targetModel.contains('veo')) {
+        seconds = 8; // VEO 固定 8s
+      }
       final referenceImagePaths = parameters?['referenceImagePaths'] as List<String>?;
       
       // Sora 角色引用参数
@@ -800,8 +814,35 @@ class GeekNowService extends ApiServiceBase {
       final videoUrl = parameters?['video'] as String?;
       
       // Grok 特有参数
-      final aspectRatio = parameters?['aspect_ratio'] as String?;
-      final grokSize = parameters?['grok_size'] as String?;
+      String? aspectRatio = parameters?['aspect_ratio'] as String?;
+      String? grokSize = parameters?['grok_size'] as String?;
+
+      // Grok 分辨率自动适配（最高 1080P）
+      if (targetModel.contains('grok') && grokSize == null) {
+        final resParam = parameters?['resolution'] as String? ?? quality ?? '720P';
+        if (resParam.contains('4K') || resParam.contains('2K') || resParam.contains('1080')) {
+          grokSize = '1080P';
+        } else {
+          grokSize = '720P';
+        }
+      }
+
+      // Grok 模型自动转换比例格式
+      if (aspectRatio == null && targetModel.contains('grok')) {
+        final sizeParam = parameters?['size'] as String? ?? ratio;
+        if (sizeParam != null) {
+          if (sizeParam == '16:9' || sizeParam == '3:2') {
+            aspectRatio = '3:2';
+          } else if (sizeParam == '9:16' || sizeParam == '2:3') {
+            aspectRatio = '2:3';
+          } else if (sizeParam == '1:1') {
+            aspectRatio = '1:1';
+          } else if (sizeParam == '4:3' || sizeParam == '3:4') {
+            aspectRatio = sizeParam == '4:3' ? '3:2' : '2:3';
+          }
+        }
+        aspectRatio ??= '3:2';
+      }
 
       // 使用 multipart/form-data 格式
       var request = http.MultipartRequest(

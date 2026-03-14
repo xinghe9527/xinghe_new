@@ -222,7 +222,6 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      debugPrint('📱 [素材库] 应用返回前台');
       if (!_isUpdating) {
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) {
