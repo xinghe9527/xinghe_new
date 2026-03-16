@@ -336,6 +336,7 @@ def launch_browser_for_login(platform_name: str, cdp_port: int = DEFAULT_CDP_POR
         'jimeng': 'https://jimeng.jianying.com',
         'keling': 'https://klingai.kuaishou.com',
         'hailuo': 'https://hailuoai.com',
+        'google_flow': 'https://labs.google/fx/flow',
     }
     
     if platform_name not in platform_urls:

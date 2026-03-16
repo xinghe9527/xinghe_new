@@ -46,6 +46,11 @@ PLATFORMS = {
         'name': '海螺',
         'url': 'https://hailuoai.com/',
         'user_data_dir': os.path.join(USER_DATA_ROOT, 'hailuo_profile')
+    },
+    'google_flow': {
+        'name': 'Google Flow',
+        'url': 'https://labs.google/fx/flow',
+        'user_data_dir': os.path.join(USER_DATA_ROOT, 'google_flow_profile')
     }
 }
 

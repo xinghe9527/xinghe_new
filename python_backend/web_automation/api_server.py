@@ -854,6 +854,214 @@ async def execute_jimeng_automation(
 
 
 # ============================================================================
+# Google Flow 自动化执行（图片生成）
+# ============================================================================
+
+_google_flow_auto_instance = None
+_google_flow_auto_lock = None
+_google_flow_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='google_flow_playwright')
+
+def _get_google_flow_lock():
+    """延迟创建 Google Flow 浏览器锁"""
+    global _google_flow_auto_lock
+    if _google_flow_auto_lock is None:
+        _google_flow_auto_lock = asyncio.Lock()
+    return _google_flow_auto_lock
+
+
+async def execute_google_flow_automation(
+    task_id: str,
+    prompt: str,
+    save_path: Optional[str] = None,
+    tool_type: Optional[str] = 'text2image',
+    model: Optional[str] = None,
+    max_wait: int = 300,
+    reference_file = None,
+    aspect_ratio: Optional[str] = None,
+    batch_count: Optional[int] = None,
+):
+    """
+    后台异步执行 Google Flow 图片生成自动化
+    
+    两阶段架构：
+    - 阶段1：提交生成（需要浏览器锁，保护 UI 操作）
+    - 阶段2：轮询结果（无需锁，可并发等待）
+    """
+    try:
+        task_manager.update_task(task_id, status=TaskStatus.RUNNING)
+        
+        print(f"\n{'='*60}")
+        print(f"  🚀 开始执行 Google Flow 任务: {task_id}")
+        print(f"  📝 提示词: {prompt}")
+        if save_path:
+            print(f"  📁 保存路径: {save_path}")
+        print(f"{'='*60}\n")
+        
+        if save_path is None:
+            downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+            os.makedirs(downloads_dir, exist_ok=True)
+            save_path = os.path.join(downloads_dir, f'{task_id}.png')
+        else:
+            try:
+                save_dir = os.path.dirname(save_path)
+                if save_dir:
+                    os.makedirs(save_dir, exist_ok=True)
+            except OSError as path_err:
+                print(f"  ⚠️  保存路径无效: {save_path}\n  错误: {path_err}")
+                downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+                os.makedirs(downloads_dir, exist_ok=True)
+                save_path = os.path.join(downloads_dir, f'{task_id}.png')
+                print(f"  📁 已回退到默认路径: {save_path}")
+        
+        # ============================================================
+        # 阶段1：提交生成（需要浏览器锁）
+        # ============================================================
+        lock = _get_google_flow_lock()
+        print(f"   🔒 [{task_id}] 等待 Google Flow 浏览器锁...")
+        
+        async with lock:
+            print(f"   🔓 [{task_id}] 获取到 Google Flow 浏览器锁")
+            
+            def _run_submit():
+                from auto_google_flow import GoogleFlowAutomation
+                
+                global _google_flow_auto_instance
+                
+                for attempt in range(2):
+                    try:
+                        if _google_flow_auto_instance is None or not _google_flow_auto_instance._started:
+                            _google_flow_auto_instance = GoogleFlowAutomation()
+                            if not _google_flow_auto_instance.start():
+                                raise Exception("无法启动 Google Flow 浏览器，请先登录")
+                        
+                        auto = _google_flow_auto_instance
+                        
+                        if not auto.check_login():
+                            raise Exception("Google Flow 未登录，请先运行: python init_login.py google_flow")
+                        
+                        submit_result = auto.submit_generate(
+                            prompt=prompt,
+                            tool_type=tool_type or 'text2image',
+                            model=model,
+                            reference_file=reference_file,
+                            aspect_ratio=aspect_ratio,
+                            batch_count=int(batch_count) if batch_count else None,
+                        )
+                        
+                        if not submit_result.get('success'):
+                            err = submit_result.get('error', '')
+                            browser_keywords = [
+                                'browser has been closed',
+                                'Target page, context or browser has been closed',
+                                'cannot switch to a different thread',
+                                'Connection refused', 'not connected',
+                                'target closed', 'Session closed',
+                            ]
+                            if any(kw in err for kw in browser_keywords):
+                                raise Exception(err)
+                        
+                        return submit_result
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        if any(keyword in error_msg for keyword in [
+                            'cannot switch to a different thread',
+                            'browser has been closed',
+                            'Target page, context or browser has been closed',
+                            'Connection refused', 'not connected',
+                            'target closed', 'Session closed',
+                        ]):
+                            print(f"   ⚠️  浏览器断开（尝试 {attempt + 1}/2）: {error_msg[:80]}")
+                            print(f"   🔄 自动重建浏览器实例...")
+                            try:
+                                if _google_flow_auto_instance is not None:
+                                    _google_flow_auto_instance.stop()
+                            except:
+                                pass
+                            _google_flow_auto_instance = None
+                            
+                            if attempt == 0:
+                                continue
+                            else:
+                                raise Exception(f"浏览器重建后仍然失败: {error_msg}")
+                        else:
+                            raise
+            
+            loop = asyncio.get_event_loop()
+            submit_result = await loop.run_in_executor(_google_flow_thread_pool, _run_submit)
+        
+        print(f"   🔒 [{task_id}] Google Flow 浏览器锁已释放")
+        
+        if not submit_result.get('success'):
+            error_message = submit_result.get('error', '提交失败')
+            task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
+            print(f"❌ Google Flow 任务提交失败: {task_id}\n错误: {error_message}")
+            return
+        
+        task_key = submit_result.get('task_key', '')
+        generation_id = submit_result.get('generation_id', '')
+        initial_images = submit_result.get('initial_images', [])
+        has_reference = submit_result.get('has_reference', False)
+        print(f"   ✅ [{task_id}] 提交成功，task_key={task_key}")
+        
+        # ============================================================
+        # 阶段2：轮询结果（无需锁）
+        # ============================================================
+        def _run_poll():
+            global _google_flow_auto_instance
+            auto = _google_flow_auto_instance
+            if auto is None:
+                raise Exception("Google Flow 自动化实例丢失")
+            
+            result = auto.poll_result(
+                task_key=task_key,
+                initial_images=initial_images,
+                initial_image_count=len(initial_images),
+                max_wait=max_wait,
+                save_path=save_path,
+                generation_id=generation_id,
+                has_reference=has_reference,
+            )
+            return result
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(_google_flow_thread_pool, _run_poll)
+        
+        if result.get('success'):
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.SUCCESS,
+                result={
+                    'success': True,
+                    'local_image_path': result.get('image_path', save_path),
+                    'image_url': result.get('image_url', ''),
+                    'task_key': task_key,
+                    'message': 'Google Flow 图片生成成功',
+                },
+                message="Google Flow 图片生成成功",
+            )
+            print(f"✅ Google Flow 任务成功: {task_id}")
+        else:
+            error_message = result.get('error', '未知错误')
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=error_message,
+            )
+            print(f"❌ Google Flow 任务失败: {task_id}\n错误: {error_message}")
+    
+    except asyncio.CancelledError:
+        task_manager.update_task(task_id, status=TaskStatus.CANCELLED, error="任务被取消")
+        print(f"⚠️  Google Flow 任务取消: {task_id}")
+    except Exception as e:
+        error_message = f"执行异常: {str(e)}"
+        task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
+        import traceback
+        traceback.print_exc()
+        print(f"❌ Google Flow 任务异常: {task_id}\n{error_message}")
+
+
+# ============================================================================
 # 浏览器窗口控制
 # ============================================================================
 
@@ -1048,7 +1256,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
     立即返回任务 ID，后台异步执行
     """
     # 验证平台
-    supported_platforms = ['vidu', 'jimeng', 'keling', 'hailuo']
+    supported_platforms = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow']
     if request.platform not in supported_platforms:
         raise HTTPException(
             status_code=400,
@@ -1164,6 +1372,27 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
             model,
             mode,
             reference_file,
+        )
+    elif request.platform == 'google_flow':
+        # ✅ Google Flow：图片生成自动化
+        save_path = request.payload.get('savePath')
+        model = request.payload.get('model')
+        max_wait = int(request.payload.get('maxWait', 300))
+        reference_file = request.payload.get('referenceFile')
+        aspect_ratio = request.payload.get('aspectRatio')
+        batch_count = request.payload.get('batchCount')
+        
+        background_tasks.add_task(
+            execute_google_flow_automation,
+            task_id,
+            request.payload.get('prompt'),
+            save_path,
+            request.tool_type,
+            model,
+            max_wait,
+            reference_file,
+            aspect_ratio,
+            batch_count,
         )
     else:
         # 其他平台暂未实现

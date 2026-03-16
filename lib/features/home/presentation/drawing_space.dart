@@ -9,6 +9,7 @@ import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
+import 'package:xinghe_new/core/aigc_engine/automation_api_client.dart';
 import '../domain/drawing_task.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
@@ -225,6 +226,79 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
       // 读取服务商配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
+      
+      // ✅ 检查是否为网页服务商
+      final isWebProvider = ['google_flow'].contains(provider);
+      
+      if (isWebProvider) {
+        // === 网页服务商：通过 Python 后端浏览器自动化 ===
+        final aigcClient = AutomationApiClient();
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception('Python 后端服务未启动');
+        }
+        
+        final imageSavePath = prefs.getString('image_save_path') ?? '';
+        final saveDir = Directory(imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path);
+        if (!await saveDir.exists()) await saveDir.create(recursive: true);
+        
+        final savedPaths = <String>[];
+        for (int i = 0; i < task.batchCount; i++) {
+          final filename = 'flow_${DateTime.now().millisecondsSinceEpoch}_$i.png';
+          final savePath = '${saveDir.path}${Platform.pathSeparator}$filename';
+          
+          try {
+            final taskResult = await aigcClient.submitGenerationTask(
+              platform: provider,
+              toolType: 'text2image',
+              payload: {
+                'prompt': task.prompt,
+                'model': task.model,
+                'savePath': savePath,
+              },
+            );
+            
+            final pollResult = await aigcClient.pollTaskStatus(
+              taskId: taskResult.taskId,
+              interval: const Duration(seconds: 5),
+              maxAttempts: 60,
+            );
+            
+            if (pollResult.isSuccess) {
+              final imagePath = pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
+              if (imagePath.startsWith('http')) {
+                final response = await http.get(Uri.parse(imagePath));
+                if (response.statusCode == 200) {
+                  final file = File(savePath);
+                  await file.writeAsBytes(response.bodyBytes);
+                  savedPaths.add(savePath);
+                }
+              } else {
+                savedPaths.add(File(imagePath).existsSync() ? imagePath : savePath);
+              }
+            }
+          } catch (e) {
+            _logger.error('[Web] 批量第 ${i + 1} 张异常: $e', module: '绘图空间');
+          }
+          
+          if (i < task.batchCount - 1) {
+            await Future.delayed(const Duration(seconds: 2));
+          }
+        }
+        
+        if (savedPaths.isNotEmpty) {
+          final completedTask = task.copyWith(
+            status: TaskStatus.idle,
+            generatedImages: [...task.generatedImages, ...savedPaths],
+          );
+          _updateTask(completedTask);
+          _logger.success('[Web] 任务完成: ${savedPaths.length} 张图片', module: '绘图空间');
+        } else {
+          throw Exception('网页自动化生成失败');
+        }
+        return;
+      }
+
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
       
@@ -648,6 +722,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         return ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image', 'gemini-pro-vision'];
       case 'midjourney':
         return ['midjourney-v6', 'midjourney-v5.2', 'midjourney-niji'];
+      case 'google_flow':
+        return ['nano-banana-pro', 'nano-banana-2'];
       default:
         return ['DALL-E 3', 'Midjourney', 'Stable Diffusion', 'Flux'];
     }
@@ -808,6 +884,21 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // 从设置中读取图片 API 配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'geeknow';
+      
+      // ✅ 检查是否为网页服务商（走 AutomationApiClient 路径）
+      final isWebProvider = ['google_flow'].contains(provider);
+      
+      if (isWebProvider) {
+        // === 网页服务商：通过 Python 后端浏览器自动化生成图片 ===
+        await _generateImagesViaWebAutomation(
+          provider: provider,
+          prefs: prefs,
+          batchCount: batchCount,
+          placeholders: placeholders,
+        );
+        return;
+      }
+
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
 
@@ -977,6 +1068,119 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         generatedImages: currentImages,
         status: hasLoadingPlaceholder ? TaskStatus.generating : TaskStatus.completed,
       ));
+    }
+  }
+
+  /// 通过网页自动化（Python 后端）生成图片
+  Future<void> _generateImagesViaWebAutomation({
+    required String provider,
+    required SharedPreferences prefs,
+    required int batchCount,
+    required List<String> placeholders,
+  }) async {
+    final aigcClient = AutomationApiClient();
+    
+    // 先检查 Python 后端是否在运行
+    final isHealthy = await aigcClient.checkHealth();
+    if (!isHealthy) {
+      throw Exception('Python 后端服务未启动，请先启动 api_server.py');
+    }
+    
+    // 获取保存路径
+    final imageSavePath = prefs.getString('image_save_path') ?? '';
+    final saveDir = Directory(imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path);
+    if (!await saveDir.exists()) await saveDir.create(recursive: true);
+    
+    // 逐张生成（每张通过 web 自动化提交 + 轮询）
+    final savedPaths = <String>[];
+    
+    for (int i = 0; i < batchCount; i++) {
+      _logger.info('🎯 [Web] 生成第 ${i + 1}/$batchCount 张', module: '绘图空间');
+      
+      final filename = 'flow_${DateTime.now().millisecondsSinceEpoch}_$i.png';
+      final savePath = '${saveDir.path}${Platform.pathSeparator}$filename';
+      
+      try {
+        // 提交生成任务
+        final taskResult = await aigcClient.submitGenerationTask(
+          platform: provider,
+          toolType: 'text2image',
+          payload: {
+            'prompt': widget.task.prompt,
+            'model': widget.task.model,
+            'savePath': savePath,
+            'aspectRatio': widget.task.ratio,
+            if (widget.task.referenceImages.isNotEmpty)
+              'referenceFile': widget.task.referenceImages,
+          },
+        );
+        
+        _logger.info('[Web] 任务已提交: ${taskResult.taskId}', module: '绘图空间');
+        
+        // 轮询等待结果
+        final pollResult = await aigcClient.pollTaskStatus(
+          taskId: taskResult.taskId,
+          interval: const Duration(seconds: 5),
+          maxAttempts: 60, // 最多 5 分钟
+          onProgress: (result) {
+            if (result.isRunning) {
+              _logger.info('[Web] 第 ${i + 1} 张生成中...', module: '绘图空间');
+            }
+          },
+        );
+        
+        if (pollResult.isSuccess) {
+          final imagePath = pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
+          
+          // 如果返回的是 URL 而不是本地路径，需要下载
+          if (imagePath.startsWith('http')) {
+            final response = await http.get(Uri.parse(imagePath));
+            if (response.statusCode == 200) {
+              final file = File(savePath);
+              await file.writeAsBytes(response.bodyBytes);
+              savedPaths.add(savePath);
+            }
+          } else {
+            // 本地路径，直接使用
+            if (File(imagePath).existsSync()) {
+              savedPaths.add(imagePath);
+            } else {
+              savedPaths.add(savePath);
+            }
+          }
+          
+          _logger.success('[Web] 第 ${i + 1} 张生成成功', module: '绘图空间');
+        } else {
+          _logger.error('[Web] 第 ${i + 1} 张生成失败: ${pollResult.error ?? pollResult.message}', module: '绘图空间');
+        }
+      } catch (e) {
+        _logger.error('[Web] 第 ${i + 1} 张异常: $e', module: '绘图空间');
+      }
+      
+      // 间隔
+      if (i < batchCount - 1) {
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+    
+    // 替换占位符
+    final currentImages = List<String>.from(widget.task.generatedImages);
+    for (var placeholder in placeholders) {
+      final index = currentImages.indexOf(placeholder);
+      if (index != -1) {
+        currentImages.removeAt(index);
+      }
+    }
+    currentImages.addAll(savedPaths);
+    
+    if (savedPaths.isNotEmpty) {
+      _update(widget.task.copyWith(
+        generatedImages: currentImages,
+        status: TaskStatus.completed,
+      ));
+      _logger.success('[Web] 批量生成完成，共 ${savedPaths.length} 张图片', module: '绘图空间');
+    } else {
+      throw Exception('网页自动化生成失败：没有生成任何图片');
     }
   }
 

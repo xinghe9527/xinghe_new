@@ -253,6 +253,21 @@ class _SettingsPageState extends State<SettingsPage> {
     },
   };
 
+  // ✅ Google Flow 网页服务商配置
+  final Map<String, dynamic> _googleFlowConfig = {
+    'tools': {
+      'image': [
+        {'id': 'text2image', 'name': '文生图片', 'icon': Icons.image},
+      ],
+    },
+    'models': {
+      'text2image': [
+        {'id': 'nano-banana-pro', 'name': 'Nano Banana Pro', 'desc': '高质量图片生成'},
+        {'id': 'nano-banana-2', 'name': 'Nano Banana 2', 'desc': '第二代模型'},
+      ],
+    },
+  };
+
   final List<Map<String, dynamic>> _styleOptions = [
     {
       'name': '深邃黑',
@@ -593,7 +608,7 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setString('image_provider', _imageProvider);
       
       // ✅ 判断是否为网页服务商
-      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_imageProvider);
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(_imageProvider);
       
       if (isWebProvider) {
         // 保存网页服务商配置
@@ -1802,7 +1817,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildImageForm() {
     // ✅ 判断是否为网页服务商
-    final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_imageProvider);
+    final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(_imageProvider);
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1815,7 +1830,7 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() {
               _imageProvider = v;
               // 切换服务商时重置配置
-              if (['vidu', 'jimeng', 'keling', 'hailuo'].contains(v)) {
+              if (['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(v)) {
                 _imageWebTool = null;
                 _imageWebModel = null;
               } else {
@@ -2390,7 +2405,7 @@ class _SettingsPageState extends State<SettingsPage> {
       providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun'];
     } else if (modelType == 'image') {
       // 图片模型：API服务商 + ComfyUI + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng'];
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng', 'google_flow'];
     } else if (modelType == 'video') {
       // 视频模型：API服务商 + ComfyUI + 网页服务商
       providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng'];
@@ -2413,6 +2428,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'jimeng': '即梦（网页服务商）',
       'keling': '可灵（网页服务商）',
       'hailuo': '海螺（网页服务商）',
+      'google_flow': 'Google Flow（网页服务商）',
     };
 
     return Container(
@@ -3368,6 +3384,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'jimeng': 'https://jimeng.jianying.com/ai-tool/home',
       'keling': 'https://klingai.kuaishou.com',
       'hailuo': 'https://hailuoai.com',
+      'google_flow': 'https://labs.google/fx/zh/tools/flow',
     };
     
     // ✅ 网页服务商显示名称
@@ -3376,6 +3393,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'jimeng': '即梦AI - 一站式AI创作平台',
       'keling': '可灵AI - 视频生成',
       'hailuo': '海螺AI - 视频创作',
+      'google_flow': 'Google Flow - AI 图片生成',
     };
     
     final websiteUrl = providerUrls[provider];
@@ -3396,6 +3414,9 @@ class _SettingsPageState extends State<SettingsPage> {
       case 'hailuo':
         config = _hailuoConfig;
         break;
+      case 'google_flow':
+        config = _googleFlowConfig;
+        break;
     }
 
     if (config == null) {
@@ -3408,16 +3429,28 @@ class _SettingsPageState extends State<SettingsPage> {
     // 获取工具列表
     final tools = (config['tools']?[modelType] as List<dynamic>?) ?? [];
     
+    // ✅ 只有一个工具时，自动选中并通知外部
+    final bool singleTool = tools.length == 1;
+    String? effectiveTool = selectedTool;
+    if (singleTool && selectedTool == null) {
+      final autoTool = tools[0]['id'] as String;
+      effectiveTool = autoTool;
+      // 延迟回调，避免在 build 中直接 setState
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onToolChanged(autoTool);
+      });
+    }
+    
     // 获取当前选择工具的模型列表
     List<dynamic> models = [];
-    if (selectedTool != null) {
-      models = (config['models']?[selectedTool] as List<dynamic>?) ?? [];
+    if (effectiveTool != null) {
+      models = (config['models']?[effectiveTool] as List<dynamic>?) ?? [];
     }
 
     // 获取当前选择工具的方式列表（如即梦视频生成的：全能参考/首尾帧/智能多帧/主体参考）
     List<dynamic> modes = [];
-    if (selectedTool != null) {
-      modes = (config['modes']?[selectedTool] as List<dynamic>?) ?? [];
+    if (effectiveTool != null) {
+      modes = (config['modes']?[effectiveTool] as List<dynamic>?) ?? [];
     }
 
     return Column(
@@ -3493,6 +3526,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           'vidu': '9223',
                           'keling': '9224',
                           'hailuo': '9225',
+                          'google_flow': '9226',
                         };
                         final cdpPort = portMap[provider] ?? '9222';
                         
@@ -3604,54 +3638,56 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 24),
         ],
         
-        // 工具选择
-        _buildFieldLabel('选择工具'),
-        const SizedBox(height: 6),
-        Text(
-          '选择要使用的生成工具类型',
-          style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
-        ),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceBackground,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+        // 工具选择（只有多个工具时才显示下拉）
+        if (!singleTool) ...[
+          _buildFieldLabel('选择工具'),
+          const SizedBox(height: 6),
+          Text(
+            '选择要使用的生成工具类型',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
           ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: tools.any((t) => t['id'] == selectedTool) ? selectedTool : null,
-              hint: Text('请选择工具', style: TextStyle(color: AppTheme.subTextColor)),
-              isExpanded: true,
-              dropdownColor: AppTheme.surfaceBackground,
-              icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
-              items: tools.map<DropdownMenuItem<String>>((tool) {
-                return DropdownMenuItem<String>(
-                  value: tool['id'],
-                  child: Row(
-                    children: [
-                      Icon(tool['icon'] as IconData, size: 16, color: AppTheme.accentColor),
-                      const SizedBox(width: 12),
-                      Text(
-                        tool['name'],
-                        style: TextStyle(color: AppTheme.textColor, fontSize: 14),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (v) {
-                if (v != null) {
-                  onToolChanged(v);
-                }
-              },
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceBackground,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: tools.any((t) => t['id'] == selectedTool) ? selectedTool : null,
+                hint: Text('请选择工具', style: TextStyle(color: AppTheme.subTextColor)),
+                isExpanded: true,
+                dropdownColor: AppTheme.surfaceBackground,
+                icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+                items: tools.map<DropdownMenuItem<String>>((tool) {
+                  return DropdownMenuItem<String>(
+                    value: tool['id'],
+                    child: Row(
+                      children: [
+                        Icon(tool['icon'] as IconData, size: 16, color: AppTheme.accentColor),
+                        const SizedBox(width: 12),
+                        Text(
+                          tool['name'],
+                          style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    onToolChanged(v);
+                  }
+                },
+              ),
             ),
           ),
-        ),
+        ],
 
         // 模型选择（只在选择了工具后显示）
-        if (selectedTool != null && models.isNotEmpty) ...[
+        if (effectiveTool != null && models.isNotEmpty) ...[
           const SizedBox(height: 30),
           _buildFieldLabel('选择模型'),
           const SizedBox(height: 6),
@@ -3712,7 +3748,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
 
         // ✅ 方式选择（仅在有方式列表时显示，如即梦视频生成的自定义下拉）
-        if (selectedTool != null && modes.isNotEmpty) ...[
+        if (effectiveTool != null && modes.isNotEmpty) ...[
           const SizedBox(height: 30),
           _buildFieldLabel('选择方式'),
           const SizedBox(height: 6),

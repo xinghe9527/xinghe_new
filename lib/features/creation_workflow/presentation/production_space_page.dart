@@ -2958,16 +2958,128 @@ ${widget.scriptContent}
       // ✅ 读取图片 API 配置（一次性读取）
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'geeknow';
-      final storage = SecureStorageManager();
-      final model = await storage.getModel(
-        provider: provider,
-        modelType: 'image',
-      );
 
       print('\n🎨 批量生成分镜图片');
       print('   待生成数量: ${storyboardsToGenerate.length}');
-      print('   Provider: $provider');
-      print('   Model: ${model ?? "未设置"}\n');
+      print('   Provider: $provider\n');
+
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(provider);
+
+      if (isWebProvider) {
+        // ========== 网页服务商路线（顺序生成）==========
+        print('🌐 使用网页服务商批量生成图片: $provider');
+
+        final webTool = prefs.getString('image_web_tool');
+        final webModel = prefs.getString('image_web_model');
+
+        if (webTool == null || webTool.isEmpty) {
+          throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型');
+        }
+        if (webModel == null || webModel.isEmpty) {
+          throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型');
+        }
+
+        final aigcClient = AutomationApiClient();
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception('Python API 服务未启动');
+        }
+
+        // 获取保存路径
+        final workPath = workSavePathNotifier.value;
+        final imgSavePath = imageSavePathNotifier.value;
+        String? saveDirPath;
+        if (workPath != '未设置' && workPath.isNotEmpty) {
+          saveDirPath = path.join(workPath, widget.workName);
+        } else if (imgSavePath != '未设置' && imgSavePath.isNotEmpty) {
+          saveDirPath = imgSavePath;
+        }
+
+        // 顺序生成每个分镜
+        for (var i = 0; i < storyboardsToGenerate.length; i++) {
+          final sb = storyboardsToGenerate[i];
+          final storyboardIndex = _storyboards.indexWhere((s) => s.id == sb.id);
+
+          try {
+            print('   📸 顺序提交 ${i + 1}/${storyboardsToGenerate.length} (分镜${storyboardIndex + 1})');
+
+            String fullPrompt = sb.imagePrompt;
+            if (_globalImageTheme.isNotEmpty) {
+              fullPrompt = '$_globalImageTheme。$fullPrompt';
+            }
+
+            final payload = <String, dynamic>{
+              'prompt': fullPrompt,
+              'model': webModel,
+              'aspectRatio': _storyboardRatio,
+            };
+
+            if (saveDirPath != null) {
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              final fileName = 'storyboard_${storyboardIndex + 1}_$timestamp.png';
+              payload['savePath'] = path.join(saveDirPath, fileName);
+            }
+
+            final result = await aigcClient.submitGenerationTask(
+              platform: provider,
+              toolType: webTool,
+              payload: payload,
+            );
+
+            final pollResult = await aigcClient.pollTaskStatus(
+              taskId: result.taskId,
+              interval: const Duration(seconds: 3),
+              maxAttempts: 200,
+              onProgress: (taskResult) {
+                if (taskResult.isRunning) {
+                  print('   ⏳ [${storyboardIndex + 1}] 进行中...');
+                }
+              },
+            );
+
+            if (pollResult.isSuccess) {
+              final imagePath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+              if (imagePath2 == null || imagePath2.isEmpty) {
+                throw Exception('任务完成但未返回图片地址');
+              }
+
+              if (storyboardIndex != -1 && mounted) {
+                setState(() {
+                  final newUrls = List<String>.from(
+                    _storyboards[storyboardIndex].imageUrls,
+                  )..add(imagePath2);
+                  _storyboards[storyboardIndex] = _storyboards[storyboardIndex]
+                      .copyWith(
+                        imageUrls: newUrls,
+                        selectedImageIndex: newUrls.length == 1
+                            ? 0
+                            : _storyboards[storyboardIndex].selectedImageIndex,
+                      );
+                });
+              }
+
+              print('   ✅ [${storyboardIndex + 1}] 成功: $imagePath2');
+              successCount++;
+            } else {
+              throw Exception(pollResult.error ?? '生成失败');
+            }
+          } catch (e) {
+            print('   ❌ [${storyboardIndex + 1}] 失败: $e');
+            failCount++;
+          }
+        }
+
+        aigcClient.dispose();
+      } else {
+        // ========== API 服务商路线（并发生成）==========
+        final storage = SecureStorageManager();
+        final model = await storage.getModel(
+          provider: provider,
+          modelType: 'image',
+        );
+
+        print('   Model: ${model ?? "未设置"}\n');
 
       // ✅ 一次性并发生成所有分镜的图片（API 支持 100 条并发）
       print('🚀 开始并发生成 ${storyboardsToGenerate.length} 个分镜图片\n');
@@ -3084,6 +3196,7 @@ ${widget.scriptContent}
       final results = await Future.wait(futures);
       successCount = results.where((r) => r == true).length;
       failCount = results.where((r) => r == false).length;
+      } // end of API provider else block
 
       // 保存所有结果
       await _saveProductionData();
@@ -5275,6 +5388,128 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       // ✅ 读取图片 API 配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'geeknow';
+
+      print('🔧 Provider: $provider');
+
+      // ✅ 构建完整提示词（添加全局主题）
+      String fullPrompt = row.imagePrompt;
+      if (_globalImageTheme.isNotEmpty) {
+        fullPrompt = '$_globalImageTheme。$fullPrompt';
+        print('🎨 全局主题: $_globalImageTheme');
+      }
+
+      print(
+        '📝 图片提示词: ${fullPrompt.substring(0, fullPrompt.length > 100 ? 100 : fullPrompt.length)}...',
+      );
+
+      // ✅ 判断是否为网页服务商
+      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(provider);
+
+      if (isWebProvider) {
+        // ========== 网页服务商路线 ==========
+        print('🌐 使用网页服务商生成图片: $provider');
+
+        final webTool = prefs.getString('image_web_tool');
+        final webModel = prefs.getString('image_web_model');
+
+        if (webTool == null || webTool.isEmpty) {
+          throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型');
+        }
+        if (webModel == null || webModel.isEmpty) {
+          throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型');
+        }
+
+        print('🔧 Web工具: $webTool, Web模型: $webModel');
+
+        final aigcClient = AutomationApiClient();
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception(
+            'Python API 服务未启动\n\n'
+            '请先启动 Python 服务：\n'
+            'python python_backend/web_automation/api_server.py',
+          );
+        }
+
+        // 构建 payload
+        final payload = <String, dynamic>{
+          'prompt': fullPrompt,
+          'model': webModel,
+          'aspectRatio': _storyboardRatio,
+        };
+
+        // 添加保存路径
+        final workPath = workSavePathNotifier.value;
+        final imagePath = imageSavePathNotifier.value;
+        String? saveDirPath;
+        if (workPath != '未设置' && workPath.isNotEmpty) {
+          saveDirPath = path.join(workPath, widget.workName);
+        } else if (imagePath != '未设置' && imagePath.isNotEmpty) {
+          saveDirPath = imagePath;
+        }
+        if (saveDirPath != null) {
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = 'storyboard_${index + 1}_$timestamp.png';
+          payload['savePath'] = path.join(saveDirPath, fileName);
+        }
+
+        print('🚀 提交网页服务商图片任务...');
+        final result = await aigcClient.submitGenerationTask(
+          platform: provider,
+          toolType: webTool,
+          payload: payload,
+        );
+
+        print('✅ 任务已提交: ${result.taskId}');
+
+        final pollResult = await aigcClient.pollTaskStatus(
+          taskId: result.taskId,
+          interval: const Duration(seconds: 3),
+          maxAttempts: 200,
+          onProgress: (taskResult) {
+            if (taskResult.isRunning) {
+              print('   ⏳ 任务进行中...');
+            }
+          },
+        );
+
+        if (pollResult.isSuccess) {
+          final imagePath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+          if (imagePath2 == null || imagePath2.isEmpty) {
+            throw Exception('任务完成但未返回图片地址');
+          }
+
+          print('✅ 网页服务商图片生成成功: $imagePath2');
+
+          if (mounted) {
+            setState(() {
+              final newUrls = List<String>.from(row.imageUrls)..add(imagePath2);
+              _storyboards[index] = row.copyWith(imageUrls: newUrls);
+            });
+            await _saveProductionData();
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '✅ 分镜${index + 1}图片生成成功 (${row.imageUrls.length + 1}/4) [网页服务商]',
+                  ),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          }
+
+          aigcClient.dispose();
+        } else {
+          aigcClient.dispose();
+          throw Exception(pollResult.error ?? '网页服务商图片生成失败');
+        }
+
+        return;
+      }
+
+      // ========== API 服务商路线 ==========
       final storage = SecureStorageManager();
       final baseUrl = await storage.getBaseUrl(
         provider: provider,
@@ -5293,18 +5528,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         throw Exception('未配置图片 API');
       }
 
-      print('🔧 Provider: $provider');
       print('🎯 Model: ${model ?? "未设置"}');
-      print(
-        '📝 图片提示词: ${row.imagePrompt.substring(0, row.imagePrompt.length > 100 ? 100 : row.imagePrompt.length)}...',
-      );
-
-      // ✅ 构建完整提示词（添加全局主题）
-      String fullPrompt = row.imagePrompt;
-      if (_globalImageTheme.isNotEmpty) {
-        fullPrompt = '$_globalImageTheme。$fullPrompt';
-        print('🎨 全局主题: $_globalImageTheme');
-      }
 
       // ✅ 收集选中资产的图片作为参考图片
       final referenceImages = <String>[];
