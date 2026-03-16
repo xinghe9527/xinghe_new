@@ -53,6 +53,22 @@ USER_DATA_DIR = os.path.join(USER_DATA_ROOT, 'vidu_profile')
 DEFAULT_DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, 'downloads')
 
 
+def _sanitize_filename(text: str, max_len: int = 80) -> str:
+    """移除 Windows 非法文件名字符，并截断长度"""
+    illegal = '<>:"/\\|?*'
+    result = ''.join(c if c not in illegal else '_' for c in text)
+    return result[:max_len]
+
+
+def _safe_debug_screenshot(page, filename: str):
+    """安全地保存调试截图，失败时仅打印警告，不抛异常"""
+    try:
+        filepath = os.path.join(SCRIPT_DIR, filename)
+        page.screenshot(path=filepath)
+    except Exception as e:
+        print(f"   ⚠️  调试截图保存失败（非致命）: {e}", flush=True)
+
+
 def human_like_delay(min_seconds=0.5, max_seconds=2.0):
     """模拟人类操作的随机延迟"""
     delay = random.uniform(min_seconds, max_seconds)
@@ -127,7 +143,7 @@ def upload_reference_file(page, file_path):
         
         if not upload_area_clicked:
             print("❌ 未找到「上传图片/主体」区域")
-            page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_upload_area_{int(time.time())}.png'))
+            _safe_debug_screenshot(page, f'debug_no_upload_area_{int(time.time())}.png')
             return False
         
         # 等待菜单弹出
@@ -196,20 +212,20 @@ def upload_reference_file(page, file_path):
         
         if not pic_button_clicked:
             print("❌ 未找到「+ 图片」按钮或文件选择失败")
-            page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_pic_btn_{int(time.time())}.png'))
+            _safe_debug_screenshot(page, f'debug_no_pic_btn_{int(time.time())}.png')
             return False
         
         # ========== 第3步：等待上传完成 ==========
         print("⏳ 等待上传处理（3秒）...")
         time.sleep(3)
         
-        page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_after_upload_{int(time.time())}.png'))
+        _safe_debug_screenshot(page, f'debug_after_upload_{int(time.time())}.png')
         print("✅ 参考文件上传完成")
         return True
         
     except Exception as e:
         print(f"❌ 上传异常: {e}")
-        page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_upload_error_{int(time.time())}.png'))
+        _safe_debug_screenshot(page, f'debug_upload_error_{int(time.time())}.png')
         return False
 
 def select_character_from_library(page, character_names):
@@ -251,7 +267,7 @@ def select_character_from_library(page, character_names):
         
         # 每次迭代前截图（特别是第二个及之后的主体）
         if idx > 0:
-            page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_before_char{idx+1}_{char_name}_{int(time.time())}.png'))
+            _safe_debug_screenshot(page, f'debug_before_char{idx+1}_{_sanitize_filename(char_name)}_{int(time.time())}.png')
             _print(f"📸 已截图保存选择第{idx+1}个主体前的页面状态")
         
         try:
@@ -357,7 +373,7 @@ def select_character_from_library(page, character_names):
                     _print("✅ 已点击「主体库」按钮，等待面板打开...")
                     time.sleep(2.5)
                     panel_already_open = True  # 面板已打开，跳过 Step1+Step2
-                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_strategy_d_clicked_{int(time.time())}.png'))
+                    _safe_debug_screenshot(page, f'debug_strategy_d_clicked_{int(time.time())}.png')
                 else:
                     _print("⚠️  策略D未找到「主体库」按钮，将使用常规 Step1+Step2 流程")
             
@@ -493,7 +509,7 @@ def select_character_from_library(page, character_names):
                     _print("📋 页面上相关元素:")
                     for dt in (debug_texts or []):
                         _print(f"   '{dt.get('text')}' tag={dt.get('tag')} x={dt.get('x')} y={dt.get('y')} w={dt.get('w')} h={dt.get('h')}")
-                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_upload_entry_{char_name}_{int(time.time())}.png'))
+                    _safe_debug_screenshot(page, f'debug_no_upload_entry_{_sanitize_filename(char_name)}_{int(time.time())}.png')
                     continue
                 
                 # 用真实鼠标点击
@@ -503,7 +519,7 @@ def select_character_from_library(page, character_names):
                 _print("✅ 已点击入口")
                 time.sleep(1.5)
                 
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_after_upload_click_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_after_upload_click_{int(time.time())}.png')
                 
                 # ========== 第2步：点击「+ 主体库」==========
                 _print("🔍 第2步：点击「+ 主体库」...")
@@ -590,7 +606,7 @@ def select_character_from_library(page, character_names):
                     _print("📋 页面上相关文本元素:")
                     for dt in (debug_texts or []):
                         _print(f"   '{dt.get('text')}' x={dt.get('x')} y={dt.get('y')} w={dt.get('w')} h={dt.get('h')}")
-                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_lib_btn_{int(time.time())}.png'))
+                    _safe_debug_screenshot(page, f'debug_no_lib_btn_{int(time.time())}.png')
                     continue
                 
                 # 用真实鼠标点击"主体库"
@@ -664,7 +680,7 @@ def select_character_from_library(page, character_names):
                 time.sleep(0.5)
                 
                 # 截图确认输入内容
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_search_typed_{char_name}_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_search_typed_{_sanitize_filename(char_name)}_{int(time.time())}.png')
                 
                 # ✅ 关键：按 Enter 确认搜索
                 _print(f"⏎ 按 Enter 确认搜索...")
@@ -672,7 +688,7 @@ def select_character_from_library(page, character_names):
                 time.sleep(2.5)  # 等待搜索结果加载
                 
                 # 截图确认搜索结果
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_search_result_{char_name}_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_search_result_{_sanitize_filename(char_name)}_{int(time.time())}.png')
                 
                 search_used = True
                 _print(f"✅ 已输入并确认搜索: {char_name}")
@@ -720,7 +736,7 @@ def select_character_from_library(page, character_names):
             
             if not search_used:
                 _print("❌ 未找到搜索框，无法搜索主体名称，跳过此主体以避免选错")
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_search_box_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_no_search_box_{int(time.time())}.png')
                 continue
             
             # ========== 第4步：验证搜索结果并点击匹配的主体卡片 ==========
@@ -775,7 +791,7 @@ def select_character_from_library(page, character_names):
                         page.keyboard.press('Enter')
                         time.sleep(3)
                         _print("🔄 已重新搜索并确认")
-                        page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_research_{char_name}_{int(time.time())}.png'))
+                        _safe_debug_screenshot(page, f'debug_research_{_sanitize_filename(char_name)}_{int(time.time())}.png')
             
             # 用 JS 获取卡片位置信息（不点击），然后用 Playwright 真实鼠标点击
             # 策略：先找到精确匹配名字的标签，再从标签找到同一卡片的图片
@@ -900,7 +916,7 @@ def select_character_from_library(page, character_names):
                         # 仍然计数，因为可能是验证逻辑不准确
                         selected_count += 1
                 
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_char_selected_{char_name}_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_char_selected_{_sanitize_filename(char_name)}_{int(time.time())}.png')
                 
                 # 检查选择后面板是否仍然打开（影响下一个主体的选择流程）
                 time.sleep(0.5)
@@ -927,12 +943,12 @@ def select_character_from_library(page, character_names):
                 all_candidates = card_info.get('allCandidates', []) if card_info else []
                 for c in all_candidates:
                     _print(f"   候选: x={c.get('x')} y={c.get('y')} text='{c.get('text')}'")
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_char_not_found_{char_name}_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_char_not_found_{_sanitize_filename(char_name)}_{int(time.time())}.png')
         
         except Exception as e:
             _print(f"❌ 选择「{char_name}」异常: {str(e)[:120]}")
             library_panel_open = False  # 异常时假设面板已关闭
-            page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_char_error_{int(time.time())}.png'))
+            _safe_debug_screenshot(page, f'debug_char_error_{int(time.time())}.png')
     
     # 选择完所有主体后，关闭右侧主体库面板（如果还开着）
     # 点击面板外的区域或按 Esc 关闭
@@ -1498,7 +1514,7 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                     page.mouse.click(model_trigger['x'], model_trigger['y'])
                     time.sleep(1)
                     
-                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_model_dropdown_{int(time.time())}.png'))
+                    _safe_debug_screenshot(page, f'debug_model_dropdown_{int(time.time())}.png')
                     
                     # 第2步：在下拉选项中找到目标模型并点击
                     # 下拉选项中会有 "Vidu Q1", "Vidu Q1 Pro", "Vidu Q2", "Vidu Q2 Pro" 等
@@ -1608,10 +1624,10 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                             print(f"      '{opt.get('text')}' x={opt.get('x')} y={opt.get('y')} w={opt.get('w')} h={opt.get('h')}")
                         
                         page.keyboard.press('Escape')
-                        page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_model_options_{int(time.time())}.png'))
+                        _safe_debug_screenshot(page, f'debug_model_options_{int(time.time())}.png')
             else:
                 print(f"   ⚠️  未找到模型下拉框")
-                page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_model_trigger_{int(time.time())}.png'))
+                _safe_debug_screenshot(page, f'debug_no_model_trigger_{int(time.time())}.png')
         except Exception as e:
             print(f"   ⚠️  设置模型失败: {str(e)[:120]}")
         
@@ -1965,7 +1981,7 @@ def set_video_parameters(page, aspect_ratio=None, resolution=None, duration=None
                         if check6.get('opened'):
                             dropdown_opened = True
                     
-                    page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_ratio_dropdown_{int(time.time())}.png'))
+                    _safe_debug_screenshot(page, f'debug_ratio_dropdown_{int(time.time())}.png')
                     
                     if dropdown_opened:
                         # 下拉框已打开，选择目标选项

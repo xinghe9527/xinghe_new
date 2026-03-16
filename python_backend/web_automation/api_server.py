@@ -105,6 +105,7 @@ class TaskResponse(BaseModel):
     message: str
     created_at: str
     prompt: Optional[str] = None
+    task_ids: Optional[list] = None  # 批量模式时包含所有 task_id
 
 
 class TaskStatusResponse(BaseModel):
@@ -229,6 +230,188 @@ def _get_vidu_poll_lock():
     return _vidu_poll_lock
 
 
+async def execute_vidu_batch_automation(
+    task_ids: list,
+    prompt: str,
+    save_path: Optional[str],
+    aspect_ratio: Optional[str],
+    resolution: Optional[str],
+    duration: Optional[str],
+    tool_type: Optional[str],
+    model: Optional[str],
+    reference_file: Optional[str],
+    character_name: Optional[str],
+    max_wait: int,
+    batch_count: int,
+):
+    """
+    Vidu 批量生成：一次填写提示词 + 点 N 次创作，每个任务独立轮询。
+    避免在网页上设置数量（非会员会弹充值弹窗）。
+    """
+    try:
+        # 标记所有任务为 RUNNING
+        for tid in task_ids:
+            task_manager.update_task(tid, status=TaskStatus.RUNNING)
+        
+        print(f"\n{'='*60}", flush=True)
+        print(f"  🚀 批量执行 Vidu 任务 (×{batch_count}): {task_ids}", flush=True)
+        print(f"  📝 提示词: {prompt}", flush=True)
+        print(f"{'='*60}\n", flush=True)
+        
+        # ============================================================
+        # 阶段1：一次提交，点 N 次创作
+        # ============================================================
+        lock = _get_vidu_lock()
+        async with lock:
+            def _run_batch_submit():
+                from auto_vidu_v2 import ViduAutomation
+                global _vidu_auto_instance
+                
+                for attempt in range(2):
+                    try:
+                        if _vidu_auto_instance is None or not _vidu_auto_instance._started:
+                            _vidu_auto_instance = ViduAutomation()
+                            if not _vidu_auto_instance.start():
+                                raise Exception("无法启动 Vidu 浏览器")
+                        
+                        auto = _vidu_auto_instance
+                        if not auto.check_login():
+                            raise Exception("Vidu 未登录")
+                        
+                        return auto.submit_generate(
+                            prompt=prompt,
+                            tool_type=tool_type or 'text2video',
+                            model=model,
+                            aspect_ratio=aspect_ratio,
+                            resolution=resolution,
+                            duration=duration,
+                            reference_file=reference_file,
+                            character_name=character_name,
+                            count=batch_count,
+                        )
+                    except Exception as e:
+                        error_msg = str(e)
+                        if any(kw in error_msg for kw in [
+                            'browser has been closed', 'cannot switch to a different thread',
+                            'Connection refused', 'target closed', 'Session closed',
+                        ]):
+                            print(f"   ⚠️  浏览器断开 (尝试 {attempt+1}/2): {error_msg[:80]}")
+                            try:
+                                if _vidu_auto_instance:
+                                    _vidu_auto_instance.stop()
+                            except:
+                                pass
+                            _vidu_auto_instance = None
+                            if attempt == 0:
+                                continue
+                        raise
+            
+            loop = asyncio.get_event_loop()
+            submit_result = await loop.run_in_executor(_vidu_thread_pool, _run_batch_submit)
+        
+        if not submit_result.get('success'):
+            error_msg = submit_result.get('error', '提交失败')
+            for tid in task_ids:
+                task_manager.update_task(tid, status=TaskStatus.FAILED, error=error_msg)
+            return
+        
+        # 提取批量结果
+        batch_results = submit_result.get('batch_results', [])
+        if not batch_results:
+            # 兼容单任务返回格式
+            batch_results = [{
+                'task_key': submit_result.get('task_key', ''),
+                'creation_id': submit_result.get('creation_id', ''),
+                'initial_video_count': submit_result.get('initial_video_count', 0),
+            }]
+        
+        print(f"   ✅ 批量提交完成: {len(batch_results)} 个任务", flush=True)
+        
+        # ============================================================
+        # 阶段2：并行轮询每个任务
+        # ============================================================
+        async def _poll_single_task(tid, br, index):
+            """轮询单个任务"""
+            cid = br.get('creation_id', '')
+            task_key = br.get('task_key', '')
+            ivc = br.get('initial_video_count', 0)
+            
+            # 生成保存路径
+            sp = None
+            if save_path:
+                base, ext = os.path.splitext(save_path)
+                sp = f"{base}_{index}{ext}" if index > 0 else save_path
+                # ✅ 验证保存路径
+                try:
+                    sp_dir = os.path.dirname(sp)
+                    if sp_dir:
+                        os.makedirs(sp_dir, exist_ok=True)
+                except OSError:
+                    downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+                    os.makedirs(downloads_dir, exist_ok=True)
+                    sp = os.path.join(downloads_dir, f'{tid}.mp4')
+            else:
+                downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+                os.makedirs(downloads_dir, exist_ok=True)
+                sp = os.path.join(downloads_dir, f'{tid}.mp4')
+            
+            print(f"   🚀 [{tid}] 开始轮询 (creation_id={cid or '无'})", flush=True)
+            
+            def _do_poll():
+                global _vidu_auto_instance
+                auto = _vidu_auto_instance
+                if auto is None:
+                    raise Exception("Vidu 自动化实例丢失")
+                return auto.poll_result(
+                    task_key=task_key,
+                    initial_video_count=ivc,
+                    max_wait=max_wait,
+                    save_path=sp,
+                    creation_id=cid,
+                )
+            
+            result = await loop.run_in_executor(_vidu_thread_pool, _do_poll)
+            
+            if result.get('success'):
+                task_manager.update_task(
+                    tid,
+                    status=TaskStatus.SUCCESS,
+                    result={
+                        'success': True,
+                        'local_video_path': sp,
+                        'video_url': result.get('video_url', ''),
+                        'task_key': task_key,
+                        'message': 'Vidu 视频生成成功',
+                    },
+                    message="Vidu 视频生成成功",
+                )
+                print(f"✅ Vidu 批量任务成功: {tid}", flush=True)
+            else:
+                error_msg = result.get('error', '未知错误')
+                task_manager.update_task(tid, status=TaskStatus.FAILED, error=error_msg)
+                print(f"❌ Vidu 批量任务失败: {tid} | {error_msg}", flush=True)
+        
+        # 启动并行轮询
+        poll_tasks = []
+        for i, (tid, br) in enumerate(zip(task_ids, batch_results)):
+            poll_tasks.append(_poll_single_task(tid, br, i))
+        
+        # 如果任务数量 > 批量结果数量，标记多余的为失败
+        for tid in task_ids[len(batch_results):]:
+            task_manager.update_task(tid, status=TaskStatus.FAILED, error="批量提交时点击创作失败")
+        
+        await asyncio.gather(*poll_tasks)
+        
+    except Exception as e:
+        error_msg = f"批量执行异常: {str(e)}"
+        import traceback
+        traceback.print_exc()
+        for tid in task_ids:
+            t = task_manager.get_task(tid)
+            if t and t.get('status') in [TaskStatus.PENDING, TaskStatus.RUNNING]:
+                task_manager.update_task(tid, status=TaskStatus.FAILED, error=error_msg)
+
+
 async def execute_vidu_automation(
     task_id: str, 
     prompt: str, 
@@ -263,6 +446,19 @@ async def execute_vidu_automation(
             downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
             os.makedirs(downloads_dir, exist_ok=True)
             save_path = os.path.join(downloads_dir, f'{task_id}.mp4')
+        else:
+            # ✅ 验证 save_path 有效性（提前发现 Windows 路径问题）
+            try:
+                save_dir = os.path.dirname(save_path)
+                if save_dir:
+                    os.makedirs(save_dir, exist_ok=True)
+            except OSError as path_err:
+                print(f"  ⚠️  保存路径无效: {save_path}\n  错误: {path_err}", flush=True)
+                # 回退到默认路径
+                downloads_dir = os.path.join(SCRIPT_DIR, 'downloads')
+                os.makedirs(downloads_dir, exist_ok=True)
+                save_path = os.path.join(downloads_dir, f'{task_id}.mp4')
+                print(f"  📁 已回退到默认路径: {save_path}", flush=True)
         
         import concurrent.futures
         
@@ -363,39 +559,44 @@ async def execute_vidu_automation(
         
         task_key = submit_result.get('task_key', '')
         initial_video_count = submit_result.get('initial_video_count', 0)
-        print(f"   ✅ [{task_id}] 提交成功，task_key={task_key}", flush=True)
+        creation_id = submit_result.get('creation_id', '')
+        print(f"   ✅ [{task_id}] 提交成功，task_key={task_key}, creation_id={creation_id or '(无)'}", flush=True)
         
         # ============================================================
-        # 阶段2：轮询结果（Vidu 需要 poll 锁，因为无法按任务 ID 区分）
-        # 注意：即梦有 history_id 可以并行 poll，但 Vidu 只能靠 DOM 检测，
-        # 多个 poll 同时运行会互相干扰，所以 poll 也需要串行。
-        # 但 poll 锁和 submit 锁是分开的，submit 不会被 poll 阻塞。
+        # 阶段2：轮询结果
+        # 有 creation_id 时：按 ID 精准匹配视频 URL，可并行轮询（无需锁）
+        # 无 creation_id 时：回退到 DOM 计数模式，需要 poll 锁串行
         # ============================================================
-        poll_lock = _get_vidu_poll_lock()
-        print(f"   ⏳ [{task_id}] 等待 Vidu 轮询锁...", flush=True)
         
-        async with poll_lock:
-            print(f"   🔓 [{task_id}] 获取到轮询锁，开始轮询结果...", flush=True)
+        def _run_poll():
+            global _vidu_auto_instance
+            auto = _vidu_auto_instance
+            if auto is None:
+                raise Exception("Vidu 自动化实例丢失")
             
-            def _run_poll():
-                global _vidu_auto_instance
-                auto = _vidu_auto_instance
-                if auto is None:
-                    raise Exception("Vidu 自动化实例丢失")
-                
-                result = auto.poll_result(
-                    task_key=task_key,
-                    initial_video_count=initial_video_count,
-                    max_wait=max_wait,
-                    save_path=save_path,
-                )
-                return result
-            
-            loop = asyncio.get_event_loop()
-            # ✅ 使用全局持久线程池（与 submit 同一线程，避免 Playwright 线程错误）
+            result = auto.poll_result(
+                task_key=task_key,
+                initial_video_count=initial_video_count,
+                max_wait=max_wait,
+                save_path=save_path,
+                creation_id=creation_id,
+            )
+            return result
+        
+        loop = asyncio.get_event_loop()
+        
+        if creation_id:
+            # ✅ 有 creation_id：直接并行轮询，无需锁
+            print(f"   🚀 [{task_id}] 使用 ID 匹配模式，无需轮询锁（可并行）", flush=True)
             result = await loop.run_in_executor(_vidu_thread_pool, _run_poll)
-        
-        print(f"   🔒 [{task_id}] Vidu 轮询锁已释放")
+        else:
+            # ⚠️ 无 creation_id：回退到串行模式
+            poll_lock = _get_vidu_poll_lock()
+            print(f"   ⏳ [{task_id}] 无 creation_id，使用串行轮询锁...", flush=True)
+            async with poll_lock:
+                print(f"   🔓 [{task_id}] 获取到轮询锁", flush=True)
+                result = await loop.run_in_executor(_vidu_thread_pool, _run_poll)
+            print(f"   🔒 [{task_id}] 轮询锁已释放", flush=True)
         
         if result.get('success'):
             task_manager.update_task(
@@ -895,21 +1096,51 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         if max_wait < 60:
             max_wait = max_wait * 60  # 小于 60 视为分钟，转换为秒
         
-        # 添加后台任务
-        background_tasks.add_task(
-            execute_vidu_automation, 
-            task_id, 
-            request.payload.get('prompt'),
-            save_path,
-            aspect_ratio,
-            resolution,
-            duration,
-            tool_type,
-            model,
-            reference_file,
-            character_name,
-            max_wait,
-        )
+        # ✅ 批量生成：batchCount > 1 时，一次填写提示词 + 点 N 次创作
+        batch_count = int(request.payload.get('batchCount', 1))
+        batch_count = max(1, min(batch_count, 10))  # 限制 1-10
+        
+        if batch_count > 1:
+            # 批量模式：创建 N 个任务，一次 submit 点 N 次创作
+            extra_task_ids = []
+            for i in range(1, batch_count):
+                extra_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{i}"
+                task_manager.create_task(
+                    task_id=extra_id,
+                    prompt=request.payload.get('prompt'),
+                    platform=request.platform,
+                    tool_type=request.tool_type,
+                    payload=request.payload,
+                )
+                extra_task_ids.append(extra_id)
+            
+            all_task_ids = [task_id] + extra_task_ids
+            
+            background_tasks.add_task(
+                execute_vidu_batch_automation,
+                all_task_ids,
+                request.payload.get('prompt'),
+                save_path,
+                aspect_ratio, resolution, duration,
+                tool_type, model, reference_file, character_name,
+                max_wait, batch_count,
+            )
+        else:
+            # 单任务模式
+            background_tasks.add_task(
+                execute_vidu_automation, 
+                task_id, 
+                request.payload.get('prompt'),
+                save_path,
+                aspect_ratio,
+                resolution,
+                duration,
+                tool_type,
+                model,
+                reference_file,
+                character_name,
+                max_wait,
+            )
     elif request.platform == 'jimeng':
         # ✅ 即梦：UI 自动化方案
         save_path = request.payload.get('savePath')
@@ -948,6 +1179,20 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
     print(f"📝 提示词: {request.payload.get('prompt')}")
     if request.payload.get('savePath'):
         print(f"📁 保存路径: {request.payload.get('savePath')}")
+    
+    # 批量信息
+    batch_count_val = int(request.payload.get('batchCount', 1)) if request.platform == 'vidu' else 1
+    batch_count_val = max(1, min(batch_count_val, 10))
+    batch_task_ids = None
+    if batch_count_val > 1:
+        # 收集本次批量创建的所有 task_id
+        batch_task_ids = [task_id]
+        for tid_key, t in task_manager.tasks.items():
+            if tid_key != task_id and t.get('prompt') == request.payload.get('prompt') and t.get('status') == TaskStatus.PENDING:
+                batch_task_ids.append(tid_key)
+                if len(batch_task_ids) >= batch_count_val:
+                    break
+        print(f"📦 批量: {len(batch_task_ids)} 个任务 {batch_task_ids}")
     print()
     
     return TaskResponse(
@@ -956,6 +1201,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         message="任务已受理，正在后台执行",
         created_at=task["created_at"],
         prompt=request.payload.get('prompt'),
+        task_ids=batch_task_ids,
     )
 
 

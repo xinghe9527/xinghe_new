@@ -736,142 +736,151 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
 
         // ✅ Vidu 需要顺序生成（每次生成需要刷新页面），其他网页服务商可以并发
         final isViduProvider = provider == 'vidu';
+        print('🔧 DEBUG批量: provider=$provider, isVidu=$isViduProvider, batchCount=$batchCount, taskId=${task.id}');
 
         if (isViduProvider) {
-          // ========== Vidu 顺序生成模式 ==========
+          // ========== Vidu 批量生成模式：一次填写提示词，点 N 次创作 ==========
           _logger.info(
-            '【批量空间】Vidu 顺序生成模式：逐个生成 $batchCount 个视频',
+            '【批量空间】Vidu 批量模式：一次提交 $batchCount 个视频（点 $batchCount 次创作，间隔 2.5s）',
             module: '批量空间',
           );
 
-          for (var i = 0; i < batchCount; i++) {
-            final placeholder = placeholders[i];
+          try {
+            // 构建 payload（只需一个，共用同一提示词和参数）
+            final payload = await _buildWebPayload(
+              task: task,
+              webModel: webModel,
+              webTool: webTool,
+              index: 0,
+              prefs: prefs,
+            );
+            // 告诉 Python 点 N 次创作
+            payload['batchCount'] = batchCount;
 
-            try {
-              _logger.info(
-                '【批量空间】Vidu 顺序提交任务 ${i + 1}/$batchCount',
-                module: '批量空间',
-              );
+            // ONE submit call → Python 填写一次提示词，点 N 次创作
+            final result = await aigcClient.submitGenerationTask(
+              platform: provider,
+              toolType: webTool,
+              payload: payload,
+            );
 
-              // 构建 payload
-              final payload = await _buildWebPayload(
-                task: task,
-                webModel: webModel!,
-                webTool: webTool!,
-                index: i,
-                prefs: prefs,
-              );
+            // 获取所有 task_ids
+            final taskIds = result.taskIds ?? [result.taskId];
 
-              // 提交生成任务
-              final result = await aigcClient.submitGenerationTask(
-                platform: provider,
-                toolType: webTool,
-                payload: payload,
-              );
+            _logger.success(
+              '【批量空间】Vidu 批量提交成功：${taskIds.length} 个任务 $taskIds',
+              module: '批量空间',
+            );
 
-              _logger.success(
-                '【批量空间】Vidu 任务 ${i + 1} 提交成功: ${result.taskId}',
-                module: '批量空间',
-              );
+            // 并行轮询所有任务
+            final pollFutures = <Future<void>>[];
+            for (var i = 0; i < taskIds.length && i < batchCount; i++) {
+              final tid = taskIds[i];
+              final placeholder = placeholders[i];
 
-              // 立即轮询等待完成
-              _logger.info(
-                '【批量空间】Vidu 等待任务 ${i + 1} 完成: ${result.taskId}',
-                module: '批量空间',
-              );
-
-              final pollResult = await aigcClient.pollTaskStatus(
-                taskId: result.taskId,
-                interval: const Duration(seconds: 3),
-                maxAttempts: 300,
-                onProgress: (taskResult) {
-                  if (taskResult.isRunning) {
-                    _batchVideoProgress[placeholder] = 50;
-                  }
-                  if (mounted) setState(() {});
+              pollFutures.add(() async {
+                try {
                   _logger.info(
-                    '【批量空间】Vidu 任务 ${i + 1} 状态: ${taskResult.status}',
+                    '【批量空间】Vidu 轮询任务 ${i + 1}/${taskIds.length}: $tid',
                     module: '批量空间',
                   );
-                },
-              );
 
-              if (pollResult.isSuccess) {
-                final videoPath =
-                    pollResult.localVideoPath ?? pollResult.videoUrl;
-                if (videoPath == null || videoPath.isEmpty) {
-                  throw Exception('任务完成但未返回视频地址');
-                }
+                  final pollResult = await aigcClient.pollTaskStatus(
+                    taskId: tid,
+                    interval: const Duration(seconds: 3),
+                    maxAttempts: 300,
+                    onProgress: (taskResult) {
+                      if (taskResult.isRunning) {
+                        _batchVideoProgress[placeholder] = 50;
+                      }
+                      if (mounted) setState(() {});
+                    },
+                  );
 
-                _logger.success(
-                  '【批量空间】Vidu 任务 ${i + 1} 完成: $videoPath',
-                  module: '批量空间',
-                );
+                  if (pollResult.isSuccess) {
+                    final videoPath =
+                        pollResult.localVideoPath ?? pollResult.videoUrl;
+                    if (videoPath == null || videoPath.isEmpty) {
+                      throw Exception('任务完成但未返回视频地址');
+                    }
 
-                // 提取首帧
-                if (!videoPath.startsWith('http') &&
-                    videoPath.endsWith('.mp4')) {
-                  try {
-                    final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
-                    final ffmpeg = FFmpegService();
-                    await ffmpeg.extractFrame(
-                      videoPath: videoPath,
-                      outputPath: thumbnailPath,
+                    _logger.success(
+                      '【批量空间】Vidu 任务 ${i + 1} 完成: $videoPath',
+                      module: '批量空间',
                     );
-                  } catch (e) {
-                    _logger.warning('【批量空间】提取首帧失败: $e', module: '批量空间');
+
+                    // 提取首帧
+                    if (!videoPath.startsWith('http') &&
+                        videoPath.endsWith('.mp4')) {
+                      try {
+                        final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                        final ffmpeg = FFmpegService();
+                        await ffmpeg.extractFrame(
+                          videoPath: videoPath,
+                          outputPath: thumbnailPath,
+                        );
+                      } catch (e) {
+                        _logger.warning('【批量空间】提取首帧失败: $e', module: '批量空间');
+                      }
+                    }
+
+                    // 替换占位符
+                    final currentTask = _tasks.firstWhere((t) => t.id == task.id);
+                    final currentVideos = List<String>.from(
+                      currentTask.generatedVideos,
+                    );
+                    final placeholderIndex = currentVideos.indexOf(placeholder);
+                    if (placeholderIndex != -1) {
+                      currentVideos[placeholderIndex] = videoPath;
+                      _batchVideoProgress.remove(placeholder);
+                      _updateTask(
+                        currentTask.copyWith(generatedVideos: currentVideos),
+                      );
+                      if (mounted) setState(() {});
+                    }
+                  } else {
+                    throw Exception(pollResult.error ?? '生成失败');
+                  }
+                } catch (e) {
+                  _logger.error(
+                    '【批量空间】Vidu 任务 ${i + 1} 失败: $e',
+                    module: '批量空间',
+                  );
+                  // 标记为失败
+                  try {
+                    final currentTask = _tasks.firstWhere(
+                      (t) => t.id == task.id,
+                      orElse: () => task,
+                    );
+                    final currentVideos = List<String>.from(
+                      currentTask.generatedVideos,
+                    );
+                    final placeholderIndex = currentVideos.indexOf(placeholder);
+                    if (placeholderIndex != -1) {
+                      currentVideos[placeholderIndex] =
+                          'failed_${DateTime.now().millisecondsSinceEpoch}';
+                      _batchVideoProgress.remove(placeholder);
+                      _updateTask(
+                        currentTask.copyWith(generatedVideos: currentVideos),
+                      );
+                    }
+                  } catch (_) {}
+                  if (mounted) {
+                    _showMessage('Vidu 任务 ${i + 1} 失败: $e', isError: true);
                   }
                 }
+              }()); // 立即执行异步闭包
+            }
 
-                // 替换占位符
-                final currentTask = _tasks.firstWhere((t) => t.id == task.id);
-                final currentVideos = List<String>.from(
-                  currentTask.generatedVideos,
-                );
-                final placeholderIndex = currentVideos.indexOf(placeholder);
-                if (placeholderIndex != -1) {
-                  currentVideos[placeholderIndex] = videoPath;
-                  _batchVideoProgress.remove(placeholder);
-                  _updateTask(
-                    currentTask.copyWith(generatedVideos: currentVideos),
-                  );
-                  if (mounted) setState(() {});
-                }
-              } else {
-                throw Exception(pollResult.error ?? '生成失败');
-              }
-            } catch (e) {
-              _logger.error('【批量空间】Vidu 任务 ${i + 1} 失败: $e', module: '批量空间');
-
-              // 标记为失败
-              try {
-                final currentTask = _tasks.firstWhere(
-                  (t) => t.id == task.id,
-                  orElse: () => task,
-                );
-                final currentVideos = List<String>.from(
-                  currentTask.generatedVideos,
-                );
-                final placeholderIndex = currentVideos.indexOf(placeholder);
-                if (placeholderIndex != -1) {
-                  currentVideos[placeholderIndex] =
-                      'failed_${DateTime.now().millisecondsSinceEpoch}';
-                  _batchVideoProgress.remove(placeholder);
-                  _updateTask(
-                    currentTask.copyWith(generatedVideos: currentVideos),
-                  );
-                }
-              } catch (e2) {
-                _logger.error('【批量空间】清理占位符失败: $e2', module: '批量空间');
-              }
-
-              if (mounted) {
-                _showMessage('Vidu 任务 ${i + 1} 失败: $e', isError: true);
-              }
+            await Future.wait(pollFutures);
+          } catch (e) {
+            _logger.error('【批量空间】Vidu 批量提交失败: $e', module: '批量空间');
+            if (mounted) {
+              _showMessage('Vidu 批量提交失败: $e', isError: true);
             }
           }
 
-          _logger.success('【批量空间】Vidu 顺序生成全部完成', module: '批量空间');
+          _logger.success('【批量空间】Vidu 批量生成全部完成', module: '批量空间');
           aigcClient.dispose();
           return;
         }

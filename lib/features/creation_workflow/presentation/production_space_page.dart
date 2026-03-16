@@ -56,10 +56,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
   Set<int> _selectedStoryboards = {}; // ✅ 选中的分镜索引（用于合并）
   final ApiRepository _apiRepository = ApiRepository(); // ✅ API Repository
 
-  // 分镜参数（比例、分辨率、时长）
+  // 分镜参数（比例、分辨率、时长、批量次数）
   String _storyboardRatio = '16:9';
   String _storyboardResolution = '1K';
   int _storyboardDuration = 8;
+  int _storyboardBatchCount = 1;
 
   // 全局主题提示词
   String _globalImageTheme = ''; // 图片全局主题
@@ -132,12 +133,14 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       final ratio = prefs.getString('storyboard_ratio_${widget.workId}') ?? '16:9';
       final resolution = prefs.getString('storyboard_resolution_${widget.workId}') ?? '1K';
       final duration = prefs.getInt('storyboard_duration_${widget.workId}') ?? 8;
+      final batchCount = prefs.getInt('storyboard_batch_count_${widget.workId}') ?? 1;
       if (mounted) {
         setState(() {
           _showScriptColumn = showScript;
           _storyboardRatio = ratio;
           _storyboardResolution = resolution;
           _storyboardDuration = duration;
+          _storyboardBatchCount = batchCount;
         });
       }
     } catch (e) {
@@ -152,6 +155,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       await prefs.setString('storyboard_ratio_${widget.workId}', _storyboardRatio);
       await prefs.setString('storyboard_resolution_${widget.workId}', _storyboardResolution);
       await prefs.setInt('storyboard_duration_${widget.workId}', _storyboardDuration);
+      await prefs.setInt('storyboard_batch_count_${widget.workId}', _storyboardBatchCount);
     } catch (_) {}
   }
 
@@ -421,10 +425,21 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           // 时长下拉
           _buildToolbarDropdown(
             label: '时长',
-            value: '${_storyboardDuration}秒',
-            items: const ['5秒', '6秒', '8秒', '10秒', '15秒'],
+            value: '${_storyboardDuration}s',
+            items: const ['5s', '6s', '8s', '10s', '15s'],
             onChanged: (v) {
-              setState(() => _storyboardDuration = int.tryParse(v.replaceAll('秒', '')) ?? 8);
+              setState(() => _storyboardDuration = int.tryParse(v.replaceAll('s', '')) ?? 8);
+              _saveStoryboardParams();
+            },
+          ),
+          const SizedBox(width: 8),
+          // 批量次数下拉
+          _buildToolbarDropdown(
+            label: '批量',
+            value: '${_storyboardBatchCount}x',
+            items: const ['1x', '2x', '3x', '4x'],
+            onChanged: (v) {
+              setState(() => _storyboardBatchCount = int.tryParse(v.replaceAll('x', '')) ?? 1);
               _saveStoryboardParams();
             },
           ),
@@ -464,14 +479,22 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           _buildLightGradientButton(
             icon: Icons.collections,
             label: '批量图片',
-            onTap: _isGenerating ? null : _batchGenerateImages,
+            onTap: _isGenerating ? null : () async {
+              for (var i = 0; i < _storyboardBatchCount; i++) {
+                await _batchGenerateImages();
+              }
+            },
           ),
           const SizedBox(width: 8),
           // 批量视频生成按钮 - 浅色渐变
           _buildLightGradientButton(
             icon: Icons.video_library,
             label: '批量视频',
-            onTap: _isGenerating ? null : _batchGenerateVideos,
+            onTap: _isGenerating ? null : () async {
+              for (var i = 0; i < _storyboardBatchCount; i++) {
+                await _batchGenerateVideos();
+              }
+            },
           ),
           const SizedBox(width: 8),
           // 生成分镜按钮 - 主题渐变色
@@ -582,7 +605,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '$label:$value',
+              value,
               style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 12),
             ),
             const SizedBox(width: 4),
@@ -1477,7 +1500,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             top: 4,
             right: 4,
             child: IconButton(
-              onPressed: () => _generateImage(index),
+              onPressed: () async {
+                for (var i = 0; i < _storyboardBatchCount; i++) {
+                  await _generateImage(index);
+                }
+              },
               icon: const Icon(Icons.auto_awesome, size: 14),
               color: const Color(0xFF888888),
               tooltip: '生成图片',
@@ -1784,7 +1811,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                         (row.selectedImageIndex < row.imageUrls.length ||
                             row.videoPrompt.isNotEmpty ||
                             row.imagePrompt.isNotEmpty)
-                        ? () => _generateVideo(index)
+                        ? () async {
+                            for (var i = 0; i < _storyboardBatchCount; i++) {
+                              await _generateVideo(index);
+                            }
+                          }
                         : null,
                     icon: const Icon(Icons.auto_awesome, size: 14),
                     color: const Color(0xFF888888),
@@ -3796,7 +3827,7 @@ ${widget.scriptContent}
 
     for (int i = 0; i < _storyboards.length; i++) {
       final row = _storyboards[i];
-      final combinedPrompt = '${row.imagePrompt} ${row.videoPrompt}';
+      final combinedPrompt = '${row.scriptSegment} ${row.imagePrompt} ${row.videoPrompt}';
       final detectedAssets = <String>[];
 
       print('📋 分镜${i + 1} 资产检测:');

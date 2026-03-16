@@ -1160,94 +1160,127 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         final isViduProvider = provider == 'vidu';
         
         if (isViduProvider) {
-          // ========== Vidu 顺序生成模式 ==========
-          _logger.info('Vidu 顺序生成模式：逐个生成 $batchCount 个视频', module: '视频空间');
+          // ========== Vidu 批量生成模式：一次填写提示词，点 N 次创作 ==========
+          _logger.info('Vidu 批量模式：一次提交 $batchCount 个视频（点 $batchCount 次创作，间隔 2.5s）', module: '视频空间');
           
-          for (var i = 0; i < batchCount; i++) {
-            final placeholder = placeholders[i];
-            
-            try {
-              _logger.info('Vidu 顺序提交任务 ${i + 1}/$batchCount', module: '视频空间');
-              
-              // 构建 payload
-              final payload = await _buildViduPayload(
-                prefs: prefs, webModel: webModel!, webTool: webTool!, index: i,
-              );
-              
-              // 提交生成任务
-              final result = await aigcClient.submitGenerationTask(
-                platform: provider,
-                toolType: webTool,
-                payload: payload,
-              );
-              
-              _logger.success('Vidu 任务 ${i + 1} 提交成功: ${result.taskId}', module: '视频空间');
-              
-              // 立即轮询等待完成
-              _logger.info('Vidu 等待任务 ${i + 1} 完成: ${result.taskId}', module: '视频空间');
-              
-              final pollResult = await aigcClient.pollTaskStatus(
-                taskId: result.taskId,
-                interval: const Duration(seconds: 3),
-                maxAttempts: 300,
-                onProgress: (taskResult) {
-                  if (taskResult.isRunning) {
-                    _globalVideoProgress[placeholder] = 50;
+          try {
+            // 构建 payload（只需一个，共用同一提示词和参数）
+            final payload = await _buildViduPayload(
+              prefs: prefs, webModel: webModel, webTool: webTool, index: 0,
+            );
+            // 告诉 Python 点 N 次创作
+            payload['batchCount'] = batchCount;
+
+            // ONE submit call → Python 填写一次提示词，点 N 次创作
+            final result = await aigcClient.submitGenerationTask(
+              platform: provider,
+              toolType: webTool,
+              payload: payload,
+            );
+
+            // 获取所有 task_ids
+            final taskIds = result.taskIds ?? [result.taskId];
+
+            _logger.success(
+              'Vidu 批量提交成功：${taskIds.length} 个任务 $taskIds',
+              module: '视频空间',
+            );
+
+            // 并行轮询所有任务
+            final pollFutures = <Future<void>>[];
+            for (var i = 0; i < taskIds.length && i < batchCount; i++) {
+              final tid = taskIds[i];
+              final placeholder = placeholders[i];
+
+              pollFutures.add(() async {
+                try {
+                  _logger.info(
+                    'Vidu 轮询任务 ${i + 1}/${taskIds.length}: $tid',
+                    module: '视频空间',
+                  );
+
+                  final pollResult = await aigcClient.pollTaskStatus(
+                    taskId: tid,
+                    interval: const Duration(seconds: 3),
+                    maxAttempts: 300,
+                    onProgress: (taskResult) {
+                      if (taskResult.isRunning) {
+                        _globalVideoProgress[placeholder] = 50;
+                      }
+                      if (mounted && widget.task.generatedVideos.contains(placeholder)) {
+                        setState(() {});
+                      }
+                    },
+                  );
+
+                  if (pollResult.isSuccess) {
+                    final videoPath =
+                        pollResult.localVideoPath ?? pollResult.videoUrl;
+                    if (videoPath == null || videoPath.isEmpty) {
+                      throw Exception('任务完成但未返回视频地址');
+                    }
+
+                    _logger.success(
+                      'Vidu 任务 ${i + 1} 完成: $videoPath',
+                      module: '视频空间',
+                    );
+
+                    // 提取首帧
+                    if (!videoPath.startsWith('http') &&
+                        videoPath.endsWith('.mp4')) {
+                      try {
+                        final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                        final ffmpeg = FFmpegService();
+                        await ffmpeg.extractFrame(
+                          videoPath: videoPath,
+                          outputPath: thumbnailPath,
+                        );
+                      } catch (e) {
+                        _logger.warning('提取首帧失败: $e', module: '视频空间');
+                      }
+                    }
+
+                    // 替换占位符
+                    final currentVideos = List<String>.from(
+                      widget.task.generatedVideos,
+                    );
+                    final placeholderIndex = currentVideos.indexOf(placeholder);
+                    if (placeholderIndex != -1) {
+                      currentVideos[placeholderIndex] = videoPath;
+                      _globalVideoProgress.remove(placeholder);
+                      _update(widget.task.copyWith(generatedVideos: currentVideos));
+                      if (mounted) setState(() {});
+                    }
+                  } else {
+                    throw Exception(pollResult.error ?? '生成失败');
                   }
-                  if (mounted && widget.task.generatedVideos.contains(placeholder)) {
-                    setState(() {});
-                  }
-                  _logger.info('Vidu 任务 ${i + 1} 状态: ${taskResult.status}', module: '视频空间');
-                },
-              );
-              
-              if (pollResult.isSuccess) {
-                final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
-                if (videoPath == null || videoPath.isEmpty) {
-                  throw Exception('任务完成但未返回视频地址');
-                }
-                
-                _logger.success('Vidu 任务 ${i + 1} 完成: $videoPath', module: '视频空间');
-                
-                // 提取首帧
-                if (!videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
-                  try {
-                    final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
-                    final ffmpeg = FFmpegService();
-                    await ffmpeg.extractFrame(videoPath: videoPath, outputPath: thumbnailPath);
-                  } catch (e) {
-                    _logger.warning('提取首帧失败: $e', module: '视频空间');
+                } catch (e) {
+                  _logger.error(
+                    'Vidu 任务 ${i + 1} 失败: $e',
+                    module: '视频空间',
+                  );
+                  // 标记为失败
+                  final currentVideos = List<String>.from(
+                    widget.task.generatedVideos,
+                  );
+                  final placeholderIndex = currentVideos.indexOf(placeholder);
+                  if (placeholderIndex != -1) {
+                    currentVideos[placeholderIndex] =
+                        'failed_${DateTime.now().millisecondsSinceEpoch}';
+                    _globalVideoProgress.remove(placeholder);
+                    _update(widget.task.copyWith(generatedVideos: currentVideos));
+                    if (mounted) setState(() {});
                   }
                 }
-                
-                // 替换占位符
-                final currentVideos = List<String>.from(widget.task.generatedVideos);
-                final placeholderIndex = currentVideos.indexOf(placeholder);
-                if (placeholderIndex != -1) {
-                  currentVideos[placeholderIndex] = videoPath;
-                  _globalVideoProgress.remove(placeholder);
-                  _update(widget.task.copyWith(generatedVideos: currentVideos));
-                  if (mounted) setState(() {});
-                }
-              } else {
-                throw Exception(pollResult.error ?? '生成失败');
-              }
-            } catch (e) {
-              _logger.error('Vidu 任务 ${i + 1} 失败: $e', module: '视频空间');
-              
-              // 标记为失败
-              final currentVideos = List<String>.from(widget.task.generatedVideos);
-              final placeholderIndex = currentVideos.indexOf(placeholder);
-              if (placeholderIndex != -1) {
-                currentVideos[placeholderIndex] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
-                _globalVideoProgress.remove(placeholder);
-                _update(widget.task.copyWith(generatedVideos: currentVideos));
-                if (mounted) setState(() {});
-              }
+              }()); // 立即执行异步闭包
             }
+
+            await Future.wait(pollFutures);
+          } catch (e) {
+            _logger.error('Vidu 批量提交失败: $e', module: '视频空间');
           }
           
-          _logger.success('Vidu 顺序生成全部完成', module: '视频空间');
+          _logger.success('Vidu 批量生成全部完成', module: '视频空间');
           aigcClient.dispose();
           return;
         }

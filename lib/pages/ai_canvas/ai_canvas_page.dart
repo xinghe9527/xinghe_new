@@ -14,6 +14,8 @@ import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/api/providers/openai_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
+import 'package:xinghe_new/core/aigc_engine/automation_api_client.dart';
+import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:http/http.dart' as http;
@@ -691,6 +693,157 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       setState(() {
         node.data['isGenerating'] = true;
       });
+
+      // ✅ 检查是否为网页服务商（VIDU）
+      final isWebProvider = ['vidu'].contains(provider.toLowerCase());
+      if (isWebProvider && !isImage) {
+        // ========== VIDU 网页服务商路线（参考批量空间实现） ==========
+        _logger.info('使用网页服务商生成视频', module: 'AI画布', extra: {'provider': provider});
+
+        final prefs = await SharedPreferences.getInstance();
+        final webTool = prefs.getString('video_web_tool');
+        final webModel = prefs.getString('video_web_model');
+
+        if (webTool == null || webTool.isEmpty) {
+          throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
+        }
+        if (webModel == null || webModel.isEmpty) {
+          throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型（如：Vidu Q3）');
+        }
+
+        final aigcClient = AutomationApiClient();
+        try {
+          final isHealthy = await aigcClient.checkHealth();
+          if (!isHealthy) {
+            throw Exception(
+              'Python API 服务未启动\n\n'
+              '请先启动 Python 服务：\n'
+              '1. 打开命令行\n'
+              '2. 进入项目目录\n'
+              '3. 运行: python python_backend/web_automation/api_server.py',
+            );
+          }
+
+          _logger.success('Python API 服务连接成功', module: 'AI画布');
+
+          // 构建 payload
+          final payload = <String, dynamic>{
+            'prompt': prompt,
+            'model': webModel,
+          };
+
+          // 保存路径
+          final savePath = prefs.getString('video_save_path');
+          if (savePath != null && savePath.isNotEmpty) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final fileName = 'canvas_video_${timestamp}_${node.id}.mp4';
+            payload['savePath'] = path.join(savePath, fileName);
+          }
+
+          // 参考图片处理
+          final referenceImages = node.data['referenceImages'] as List<String>? ?? [];
+          final firstFrameImage = node.data['firstFrameImage'] as String?;
+          if (webTool == 'img2video') {
+            final imgSource = firstFrameImage ?? (referenceImages.isNotEmpty ? referenceImages.first : null);
+            if (imgSource == null) {
+              throw Exception('图生视频需要提供参考图片');
+            }
+            payload['imageUrl'] = imgSource;
+          }
+          if (webTool == 'ref2video' && referenceImages.isNotEmpty) {
+            payload['referenceFile'] = referenceImages.first;
+          }
+
+          // 视频参数
+          final videoRatio = node.data['videoRatio'] as String? ?? '16:9';
+          final videoQuality = node.data['resolution'] as String? ?? '1K';
+          payload['aspectRatio'] = videoRatio;
+          payload['resolution'] = videoQuality;
+          payload['duration'] = node.data['ratio'] ?? '5s';
+          payload['batchCount'] = 1;
+
+          _logger.info('提交 VIDU 生成任务', module: 'AI画布', extra: {
+            'tool': webTool,
+            'model': webModel,
+          });
+
+          // 提交任务
+          final submitResult = await aigcClient.submitGenerationTask(
+            platform: provider,
+            toolType: webTool,
+            payload: payload,
+          );
+
+          final taskIds = submitResult.taskIds ?? [submitResult.taskId];
+          final tid = taskIds.first;
+
+          _logger.success('VIDU 任务提交成功: $tid', module: 'AI画布');
+
+          // 轮询任务状态
+          final pollResult = await aigcClient.pollTaskStatus(
+            taskId: tid,
+            interval: const Duration(seconds: 3),
+            maxAttempts: 300,
+          );
+
+          if (pollResult.isSuccess) {
+            final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
+            if (videoPath == null || videoPath.isEmpty) {
+              throw Exception('任务完成但未返回视频地址');
+            }
+
+            _logger.success('VIDU 视频生成完成: $videoPath', module: 'AI画布');
+
+            // 提取首帧缩略图
+            if (!videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+              try {
+                final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                final ffmpeg = FFmpegService();
+                await ffmpeg.extractFrame(
+                  videoPath: videoPath,
+                  outputPath: thumbnailPath,
+                );
+              } catch (e) {
+                _logger.warning('提取首帧失败: $e', module: 'AI画布');
+              }
+            }
+
+            // 如果是网络URL，下载到本地
+            String finalPath = videoPath;
+            if (videoPath.startsWith('http')) {
+              final downloaded = await _downloadAndSaveFile(videoPath, false);
+              if (downloaded != null) {
+                finalPath = downloaded;
+              } else {
+                throw Exception('下载视频文件失败');
+              }
+            }
+
+            // 清理旧播放器
+            final oldPlayer = _videoPlayers[node.id];
+            if (oldPlayer != null) {
+              try { oldPlayer.dispose(); } catch (_) {}
+            }
+            _videoPlayers.remove(node.id);
+            _videoControllers.remove(node.id);
+
+            setState(() {
+              node.data['generatedVideoPath'] = finalPath;
+              node.data['_sizeAdjusted'] = false;
+              node.data['isGenerating'] = false;
+            });
+
+            _saveCanvasData();
+            _logger.success('生成成功', module: 'AI画布', extra: {'文件': finalPath});
+            _showMessage('视频生成成功！');
+          } else {
+            throw Exception(pollResult.error ?? 'VIDU 生成失败');
+          }
+        } finally {
+          aigcClient.dispose();
+        }
+        return;
+      }
 
       // 读取 API 配置
       final modelType = isImage ? 'image' : 'video';

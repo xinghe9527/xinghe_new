@@ -5,6 +5,7 @@ import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/api/providers/yunwu_service.dart';
 import '../../../services/api/base/api_config.dart';
 import '../../../core/logger/log_manager.dart';
+import '../../../core/aigc_engine/automation_api_client.dart';
 import '../domain/models/script_line.dart';
 import '../domain/models/entity.dart';
 
@@ -444,6 +445,14 @@ $scriptContent
       if (startFrameUrl != null) referenceImages.add(startFrameUrl);
       if (endFrameUrl != null) referenceImages.add(endFrameUrl);
 
+      // ✅ VIDU 网页服务商路线（参考批量空间实现）
+      if (provider.toLowerCase() == 'vidu') {
+        return await _generateVideoViaVidu(
+          prompt: prompt,
+          referenceImages: referenceImages,
+        );
+      }
+
       final response = await _apiRepository.generateVideos(
         provider: provider,
         prompt: prompt,
@@ -518,5 +527,91 @@ $scriptContent
   String _generateId() {
     return DateTime.now().millisecondsSinceEpoch.toString() +
         _random.nextInt(1000).toString();
+  }
+
+  /// VIDU 网页服务商视频生成（参考批量空间实现）
+  Future<String> _generateVideoViaVidu({
+    required String prompt,
+    required List<String> referenceImages,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final webTool = prefs.getString('video_web_tool');
+    final webModel = prefs.getString('video_web_model');
+
+    if (webTool == null || webTool.isEmpty) {
+      throw Exception('未配置网页服务商工具，请前往设置页面选择工具类型（如：文生视频）');
+    }
+    if (webModel == null || webModel.isEmpty) {
+      throw Exception('未配置网页服务商模型，请前往设置页面选择模型（如：Vidu Q3）');
+    }
+
+    final aigcClient = AutomationApiClient();
+    try {
+      final isHealthy = await aigcClient.checkHealth();
+      if (!isHealthy) {
+        throw Exception('Python API 服务未启动，请先启动 Python 服务');
+      }
+
+      _logger.success('Python API 服务连接成功', module: '创作空间');
+
+      // 构建 payload
+      final payload = <String, dynamic>{
+        'prompt': prompt,
+        'model': webModel,
+        'duration': '5s',
+        'batchCount': 1,
+      };
+
+      // 保存路径
+      final savePath = prefs.getString('video_save_path');
+      if (savePath != null && savePath.isNotEmpty) {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final fileName = 'creation_video_$timestamp.mp4';
+        payload['savePath'] = '$savePath/$fileName';
+      }
+
+      // 参考图片处理
+      if (webTool == 'img2video' && referenceImages.isNotEmpty) {
+        payload['imageUrl'] = referenceImages.first;
+      }
+      if (webTool == 'ref2video' && referenceImages.isNotEmpty) {
+        payload['referenceFile'] = referenceImages.first;
+      }
+
+      _logger.info('提交 VIDU 生成任务', module: '创作空间', extra: {
+        'tool': webTool,
+        'model': webModel,
+      });
+
+      final submitResult = await aigcClient.submitGenerationTask(
+        platform: 'vidu',
+        toolType: webTool,
+        payload: payload,
+      );
+
+      final taskIds = submitResult.taskIds ?? [submitResult.taskId];
+      final tid = taskIds.first;
+
+      _logger.success('VIDU 任务提交成功: $tid', module: '创作空间');
+
+      final pollResult = await aigcClient.pollTaskStatus(
+        taskId: tid,
+        interval: const Duration(seconds: 3),
+        maxAttempts: 300,
+      );
+
+      if (pollResult.isSuccess) {
+        final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
+        if (videoPath == null || videoPath.isEmpty) {
+          throw Exception('任务完成但未返回视频地址');
+        }
+        _logger.success('VIDU 视频生成完成: $videoPath', module: '创作空间');
+        return videoPath;
+      } else {
+        throw Exception(pollResult.error ?? 'VIDU 生成失败');
+      }
+    } finally {
+      aigcClient.dispose();
+    }
   }
 }

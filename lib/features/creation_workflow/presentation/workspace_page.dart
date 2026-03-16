@@ -110,9 +110,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
               children: [
                 _buildTabBar(),
                 Expanded(
-                  child: _currentTabIndex == 0
-                      ? _buildScriptSpace()
-                      : _buildProductionSpace(),
+                  child: IndexedStack(
+                    index: _currentTabIndex,
+                    children: [
+                      _buildScriptSpace(),
+                      _buildProductionSpace(),
+                    ],
+                  ),
                 ),
               ],
             ),

@@ -52,6 +52,9 @@ class AigcTaskResult {
   /// 详细结果数据
   final Map<String, dynamic>? result;
 
+  /// 批量模式时的所有任务 ID（Vidu 批量生成用）
+  final List<String>? taskIds;
+
   AigcTaskResult({
     required this.taskId,
     required this.status,
@@ -67,6 +70,7 @@ class AigcTaskResult {
     this.localImagePath,
     this.error,
     this.result,
+    this.taskIds,
   });
 
   /// 从 JSON 创建实例
@@ -89,6 +93,7 @@ class AigcTaskResult {
       localImagePath: resultData?['local_image_path'] as String?,
       error: json['error'] as String?,
       result: resultData,
+      taskIds: (json['task_ids'] as List<dynamic>?)?.map((e) => e.toString()).toList(),
     );
   }
 

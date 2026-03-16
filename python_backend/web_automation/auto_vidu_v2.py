@@ -123,6 +123,12 @@ class ViduAutomation:
         # submit_generate 和 poll_result 都可能从不同线程访问 page
         import threading
         self._page_lock = threading.Lock()
+        # 提交间隔保护：防止过快提交被反爬检测
+        self._last_submit_time = 0
+        self._min_submit_interval = 2.5  # 秒
+        # 网络拦截：捕获创建任务的 API 响应
+        self._captured_responses = []
+        self._network_listener_active = False
     
     def start(self) -> bool:
         """
@@ -201,6 +207,163 @@ class ViduAutomation:
             print(f"   ❌ 启动失败: {e}")
             self.stop()
             return False
+    
+    def _setup_network_listener(self):
+        """设置网络响应监听器，捕获 Vidu 创建任务的 API 响应以获取 creation_id"""
+        if self._network_listener_active:
+            return
+        
+        def on_response(response):
+            try:
+                url = response.url
+                # 只关注 Vidu API 的 POST 响应（创建任务时触发）
+                if 'vidu' not in url:
+                    return
+                # 过滤可能的创建 API 端点
+                if response.request.method != 'POST':
+                    return
+                # 排除静态资源
+                if any(ext in url for ext in ['.js', '.css', '.png', '.jpg', '.svg', '.woff']):
+                    return
+                content_type = response.headers.get('content-type', '')
+                if 'json' not in content_type:
+                    return
+                try:
+                    body = response.json()
+                except:
+                    return
+                # 保存 API 响应（用于提取 creation_id）
+                self._captured_responses.append({
+                    'url': url,
+                    'status': response.status,
+                    'body': body,
+                    'time': time.time(),
+                })
+                print(f"   📡 [网络] POST {url[-80:]} → {response.status}", flush=True)
+            except:
+                pass
+        
+        self.page.on('response', on_response)
+        self._network_listener_active = True
+        print("   📡 Vidu 网络监听器已启动", flush=True)
+    
+    def _extract_id_from_body(self, body) -> str:
+        """
+        从 API 响应体中提取可用于匹配视频 URL 的 ID。
+        
+        支持多种 ID 格式：长数字、UUID、字符串等。
+        优先查找 creation 相关字段，其次 task 相关字段。
+        """
+        if not isinstance(body, dict):
+            return ''
+        
+        # 优先级 1：直接字段名精确匹配
+        priority_keys = [
+            'creation_id', 'creationId', 'creation',
+            'task_id', 'taskId', 'id',
+        ]
+        # 优先级 2：嵌套在 data/result/task 等常见包装字段里
+        wrapper_keys = ['data', 'result', 'task', 'creation', 'payload', 'response']
+        
+        def _try_extract(obj):
+            if not isinstance(obj, dict):
+                return ''
+            for key in priority_keys:
+                val = obj.get(key)
+                if val is not None:
+                    s = str(val).strip()
+                    # 接受: 纯数字(>5位)、UUID格式、任何非空字符串(>3字符)
+                    if len(s) > 3 and s not in ('0', 'null', 'None', 'undefined', 'true', 'false'):
+                        return s
+            return ''
+        
+        # 直接从顶层提取
+        found = _try_extract(body)
+        if found:
+            return found
+        
+        # 从嵌套对象提取
+        for wk in wrapper_keys:
+            nested = body.get(wk)
+            if isinstance(nested, dict):
+                found = _try_extract(nested)
+                if found:
+                    return found
+            elif isinstance(nested, list) and nested:
+                # 取第一个元素（通常创建 API 只返回一个任务）
+                if isinstance(nested[0], dict):
+                    found = _try_extract(nested[0])
+                    if found:
+                        return found
+        
+        # 最后：遍历所有值，找任何看起来像 ID 的字符串
+        return self._deep_find_id(body)
+    
+    def _extract_creation_id(self) -> str:
+        """从最近捕获的 API 响应中提取 creation_id"""
+        if not self._captured_responses:
+            return ''
+        
+        # 从最新的响应开始查找
+        for resp in reversed(self._captured_responses):
+            body = resp.get('body', {})
+            url = resp.get('url', '')
+            if not isinstance(body, dict):
+                continue
+            
+            # 只关注 tasks 相关的 API
+            if '/task' not in url and '/create' not in url and '/generat' not in url:
+                continue
+            
+            # 打印响应体用于调试（首次运行时帮助理解 API 结构）
+            import json as _json
+            try:
+                body_str = _json.dumps(body, ensure_ascii=False, default=str)
+                if len(body_str) > 500:
+                    body_str = body_str[:500] + '...'
+                print(f"   📋 [API响应] {url[-60:]}: {body_str}", flush=True)
+            except:
+                pass
+            
+            # 递归搜索响应体中所有长数字 ID
+            creation_id = self._deep_find_id(body)
+            if creation_id:
+                print(f"   🎯 提取到 creation_id: {creation_id} (来自 {url[-60:]})", flush=True)
+                return creation_id
+        
+        return ''
+    
+    def _deep_find_id(self, obj, depth=0) -> str:
+        """递归搜索 JSON 对象中可能的 creation_id/task_id（支持数字和 UUID 格式）"""
+        if depth > 5:
+            return ''
+        if isinstance(obj, dict):
+            # 优先检查明确的 ID 字段
+            for key in ['creation_id', 'creationId', 'task_id', 'taskId', 'id']:
+                val = obj.get(key)
+                if val and isinstance(val, (int, str)):
+                    s = str(val).strip()
+                    # 纯数字(>5位) 或 UUID 格式 或 长字符串
+                    if (s.isdigit() and len(s) > 5) or (len(s) > 8 and '-' in s) or len(s) > 10:
+                        return s
+            # 递归搜索子对象
+            for key in ['data', 'result', 'task', 'creation', 'creations', 'tasks']:
+                if key in obj:
+                    found = self._deep_find_id(obj[key], depth + 1)
+                    if found:
+                        return found
+            # 通用递归
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    found = self._deep_find_id(v, depth + 1)
+                    if found:
+                        return found
+        elif isinstance(obj, list):
+            for item in obj[:5]:  # 只检查前5个
+                found = self._deep_find_id(item, depth + 1)
+                if found:
+                    return found
+        return ''
     
     def stop(self):
         """断开连接（不关闭浏览器）"""
@@ -533,10 +696,13 @@ class ViduAutomation:
             from auto_vidu_complete import select_character_from_library
             names = [n.strip() for n in character_name.split(',') if n.strip()]
             print(f"   🎭 select_character: 解析后的名称列表 = {names}", flush=True)
-            # 截图记录选择前的页面状态
-            import os, time as _t
-            SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-            self.page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_before_char_select_{int(_t.time())}.png'))
+            # 截图记录选择前的页面状态（安全方式）
+            try:
+                import os as _os, time as _t
+                _sd = _os.path.dirname(_os.path.abspath(__file__))
+                self.page.screenshot(path=_os.path.join(_sd, f'debug_before_char_select_{int(_t.time())}.png'))
+            except Exception:
+                pass
             result = select_character_from_library(self.page, names)
             print(f"   🎭 select_character: 返回结果 = {result}", flush=True)
             return result
@@ -650,13 +816,17 @@ class ViduAutomation:
         duration: str = None,
         reference_file: str = None,
         character_name: str = None,
+        count: int = 1,
     ) -> dict:
         """
         仅执行 UI 操作提交生成任务，不等待结果。
         
+        Args:
+            count: 点击"创作"次数（批量），每次间隔 2.5 秒防反爬。
+        
         Returns:
-            {'success': True, 'initial_video_count': N}
-            或 {'success': False, 'error': '...'}
+            count=1: {'success': True, 'creation_id': '...', ...}
+            count>1: {'success': True, 'batch_results': [...], ...}
         """
         print(f"\n{'='*60}", flush=True)
         print(f"  🎬 Vidu 提交生成（并发模式）", flush=True)
@@ -664,6 +834,8 @@ class ViduAutomation:
         print(f"   工具: {tool_type}", flush=True)
         if model:
             print(f"   模型: {model}", flush=True)
+        if count > 1:
+            print(f"   批量: {count} 次", flush=True)
         print(f"   提示词: {prompt[:80]}...", flush=True)
         
         try:
@@ -671,12 +843,21 @@ class ViduAutomation:
             print(f"   🔒 等待 _page_lock...", flush=True)
             with self._page_lock:
                 print(f"   🔓 获取到 _page_lock", flush=True)
-                return self._submit_generate_impl(
+                # 防反爬：确保两次提交间隔 ≥ 2.5 秒
+                elapsed = time.time() - self._last_submit_time
+                if elapsed < self._min_submit_interval:
+                    wait = self._min_submit_interval - elapsed
+                    print(f"   ⏳ 防反爬等待 {wait:.1f}s...", flush=True)
+                    time.sleep(wait)
+                result = self._submit_generate_impl(
                     prompt=prompt, tool_type=tool_type, model=model,
                     aspect_ratio=aspect_ratio, resolution=resolution,
                     duration=duration, reference_file=reference_file,
                     character_name=character_name,
+                    count=count,
                 )
+                self._last_submit_time = time.time()
+                return result
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
@@ -690,6 +871,7 @@ class ViduAutomation:
         duration: str = None,
         reference_file: str = None,
         character_name: str = None,
+        count: int = 1,
     ) -> dict:
         """submit_generate 的内部实现（调用时已持有 _page_lock）"""
         try:
@@ -772,12 +954,79 @@ class ViduAutomation:
                 initial_video_count = 0
             print(f"   [STEP 7] 当前视频数: {initial_video_count}", flush=True)
             
-            # 7. 点击创作
-            print(f"   [STEP 8] 🖱️ 点击创作按钮...", flush=True)
-            if not self.click_create():
-                return {'success': False, 'error': '点击创作按钮失败'}
+            # 7. 点击创作 × count 次（批量时间隔 2.5 秒防反爬）
+            def _click_and_capture():
+                """点击创作并用 expect_response 捕获 API 响应，返回 creation_id"""
+                cid = ''
+                ok = False
+                try:
+                    with self.page.expect_response(
+                        lambda resp: resp.request.method == 'POST' and '/task' in resp.url and 'vidu' in resp.url,
+                        timeout=30000,
+                    ) as resp_info:
+                        ok = self.click_create()
+                    if ok:
+                        response = resp_info.value
+                        print(f"   📡 捕获 API: POST {response.url[-80:]} → {response.status}", flush=True)
+                        try:
+                            body = response.json()
+                            body_str = json.dumps(body, ensure_ascii=False, default=str)
+                            if len(body_str) > 1000:
+                                body_str = body_str[:1000] + '...'
+                            print(f"   📋 API 响应体: {body_str}", flush=True)
+                            cid = self._extract_id_from_body(body)
+                            if cid:
+                                print(f"   🎯 提取到 creation_id: {cid}", flush=True)
+                            else:
+                                print(f"   ⚠️ 响应体中未找到可用 ID", flush=True)
+                        except Exception as parse_err:
+                            print(f"   ⚠️ 解析 API 响应失败: {parse_err}", flush=True)
+                except Exception as net_err:
+                    print(f"   ⚠️ API 响应拦截失败: {net_err}，使用计数模式", flush=True)
+                    if not ok:
+                        ok = self.click_create()
+                return ok, cid
             
-            # 8. 验证是否触发了生成
+            # ---- 执行点击（单次或批量）----
+            batch_results = []
+            
+            for click_i in range(count):
+                if click_i > 0:
+                    # 批量模式：等待间隔
+                    print(f"   ⏳ 批量 {click_i+1}/{count}：等待 {self._min_submit_interval}s...", flush=True)
+                    time.sleep(self._min_submit_interval)
+                
+                label = f"[{click_i+1}/{count}] " if count > 1 else ""
+                print(f"   [STEP 8] 🖱️ {label}点击创作按钮（同时拦截 API 响应）...", flush=True)
+                
+                click_ok, creation_id = _click_and_capture()
+                
+                if not click_ok:
+                    if click_i == 0:
+                        return {'success': False, 'error': '点击创作按钮失败'}
+                    else:
+                        print(f"   ⚠️ 第 {click_i+1} 次点击失败，已完成 {click_i} 次", flush=True)
+                        break
+                
+                task_key = f"vidu_{int(time.time())}_{random.randint(1000, 9999)}"
+                self._pending_tasks[task_key] = {
+                    'status': 'generating',
+                    'initial_video_count': initial_video_count,
+                    'video_url': None,
+                    'creation_id': creation_id,
+                }
+                batch_results.append({
+                    'task_key': task_key,
+                    'creation_id': creation_id,
+                    'initial_video_count': initial_video_count,
+                })
+                
+                if creation_id:
+                    print(f"   ✅ {label}提交成功，task_key={task_key}, creation_id={creation_id}", flush=True)
+                else:
+                    print(f"   ✅ {label}提交成功，task_key={task_key}（未捕获ID，回退计数模式）", flush=True)
+            
+            # 8. 验证是否触发了生成（只检查最后一次）
             generation_triggered = False
             for i in range(10):
                 for indicator in [':has-text("排队中")', ':has-text("生成中")', ':has-text("预计等待")']:
@@ -797,43 +1046,47 @@ class ViduAutomation:
             else:
                 print("   [STEP 9] ✅ 检测到生成已触发", flush=True)
             
-            # 生成任务 ID（用时间戳，因为 Vidu 没有返回 history_id）
-            task_key = f"vidu_{int(time.time())}_{random.randint(1000, 9999)}"
-            self._pending_tasks[task_key] = {
-                'status': 'generating',
-                'initial_video_count': initial_video_count,
-                'video_url': None,
-            }
-            
-            print(f"   ✅ 提交成功，task_key={task_key}, 初始视频数={initial_video_count}", flush=True)
-            return {'success': True, 'task_key': task_key, 'initial_video_count': initial_video_count}
+            # 返回结果
+            if count == 1:
+                r = batch_results[0]
+                return {
+                    'success': True,
+                    'task_key': r['task_key'],
+                    'initial_video_count': r['initial_video_count'],
+                    'creation_id': r['creation_id'],
+                }
+            else:
+                print(f"   📦 批量提交完成：{len(batch_results)} 个任务", flush=True)
+                return {
+                    'success': True,
+                    'batch_results': batch_results,
+                    'initial_video_count': initial_video_count,
+                }
         
         except Exception as e:
             import traceback
-            print(f"   ❌ _submit_generate_impl 异常: {e}", flush=True)
+            print(f"   ❌ _submit_generate_impl 异常（最后完成的步骤见上方日志）: {e}", flush=True)
             traceback.print_exc()
             import sys; sys.stdout.flush(); sys.stderr.flush()
-            return {'success': False, 'error': str(e)}
+            return {'success': False, 'error': f'提交异常({type(e).__name__}): {str(e)}'}
 
     
     # ============================================================
     # 轮询结果（不需要浏览器锁，可并发）
     # ============================================================
     
-    def poll_result(self, task_key: str = '', initial_video_count: int = 0, max_wait: int = 900, save_path: str = None) -> dict:
+    def poll_result(self, task_key: str = '', initial_video_count: int = 0, max_wait: int = 900, save_path: str = None, creation_id: str = '') -> dict:
         """
         轮询生成结果。
         
-        通过检测页面上"排队中/生成中"状态消失 + 新增视频元素来判断完成。
-        每次 DOM 查询都获取 _page_lock 短锁，查询完立即释放，
-        这样不会阻塞下一个任务的 submit_generate。
-        
-        Returns:
-            {'success': True, 'video_url': '...', 'video_path': '...'}
-            或 {'success': False, 'error': '...'}
+        如果有 creation_id，优先用它精准匹配视频 URL（支持并行轮询）。
+        否则回退到 DOM 计数模式（需要串行）。
         """
-        print(f"\n⏳ Vidu 轮询结果（最长 {max_wait}s）...", flush=True)
-        if task_key:
+        mode = 'ID匹配' if creation_id else '计数模式'
+        print(f"\n⏳ Vidu 轮询结果（{mode}，最长 {max_wait}s）...", flush=True)
+        if creation_id:
+            print(f"   🎯 creation_id: {creation_id}", flush=True)
+        elif task_key:
             print(f"   📍 追踪 task_key: {task_key}", flush=True)
         
         start_time = time.time()
@@ -842,66 +1095,172 @@ class ViduAutomation:
         # 先等几秒让页面更新
         time.sleep(5)
         
-        generating_indicators = [
-            ':has-text("排队中")',
-            ':has-text("生成中")',
-            ':has-text("预计等待")',
-            ':has-text("队列中")',
-            ':has-text("处理中")',
-        ]
-        
         while time.time() - start_time < max_wait:
             elapsed = int(time.time() - start_time)
             
-            # 短锁内检查页面状态
-            check_result = self._poll_check_page_status(generating_indicators, initial_video_count)
-            
-            if check_result['status'] == 'generating':
-                # 还在生成中，继续等待
-                if elapsed > 0 and elapsed % 60 == 0:
-                    indicator = check_result.get('indicator', '')
-                    print(f"   ⏳ 已等待 {elapsed}s，仍在生成中... (匹配指标: {indicator})")
-            elif check_result['status'] == 'failed':
-                return {'success': False, 'error': check_result.get('error', '生成失败')}
-            elif check_result['status'] == 'done':
-                # 生成完成，获取视频 URL
-                print(f"   ✅ 生成完成 ({elapsed}s)，获取视频 URL...")
-                time.sleep(3)
-                
-                # 短锁内获取视频 URL
-                with self._page_lock:
-                    video_url = self._get_video_url(initial_video_count)
-                
-                if video_url:
-                    # 下载不需要锁
+            # 如果有 creation_id，按 ID 精准匹配
+            if creation_id:
+                match_result = self._poll_by_creation_id(creation_id)
+                if match_result['status'] == 'found':
+                    video_url = match_result['video_url']
+                    print(f"   ✅ 找到匹配视频 ({elapsed}s): {video_url[:80]}", flush=True)
                     if save_path:
                         if download_video(video_url, save_path):
                             return {'success': True, 'video_path': save_path, 'video_url': video_url, 'task_key': task_key}
                         else:
                             return {'success': False, 'error': '下载视频失败', 'video_url': video_url}
                     return {'success': True, 'video_url': video_url, 'task_key': task_key}
-                else:
-                    # 可能还没渲染完，再等一会
-                    time.sleep(5)
+                elif match_result['status'] == 'failed':
+                    return {'success': False, 'error': match_result.get('error', '生成失败')}
+                # 'waiting' → 继续轮询
+                if elapsed > 0 and elapsed % 60 == 0:
+                    print(f"   ⏳ 已等待 {elapsed}s，等待 creation {creation_id[:16]}... 完成", flush=True)
+            else:
+                # 回退到旧的 DOM 计数模式
+                generating_indicators = [
+                    ':has-text("排队中")', ':has-text("生成中")',
+                    ':has-text("预计等待")', ':has-text("队列中")', ':has-text("处理中")',
+                ]
+                check_result = self._poll_check_page_status(generating_indicators, initial_video_count)
+                
+                if check_result['status'] == 'generating':
+                    if elapsed > 0 and elapsed % 60 == 0:
+                        print(f"   ⏳ 已等待 {elapsed}s，仍在生成中...")
+                elif check_result['status'] == 'failed':
+                    return {'success': False, 'error': check_result.get('error', '生成失败')}
+                elif check_result['status'] == 'done':
+                    print(f"   ✅ 生成完成 ({elapsed}s)，获取视频 URL...")
+                    time.sleep(3)
                     with self._page_lock:
                         video_url = self._get_video_url(initial_video_count)
                     if video_url:
                         if save_path:
                             if download_video(video_url, save_path):
                                 return {'success': True, 'video_path': save_path, 'video_url': video_url, 'task_key': task_key}
+                            else:
+                                return {'success': False, 'error': '下载视频失败', 'video_url': video_url}
                         return {'success': True, 'video_url': video_url, 'task_key': task_key}
-                    
-                    print(f"   ⚠️  二次尝试仍未找到视频 URL")
-                    # 截图辅助调试
-                    try:
-                        self.page.screenshot(path=os.path.join(SCRIPT_DIR, f'debug_no_video_url_{int(time.time())}.png'))
-                    except:
-                        pass
-                    return {'success': False, 'error': '未找到视频 URL'}
+                    else:
+                        time.sleep(5)
+                        with self._page_lock:
+                            video_url = self._get_video_url(initial_video_count)
+                        if video_url:
+                            if save_path:
+                                if download_video(video_url, save_path):
+                                    return {'success': True, 'video_path': save_path, 'video_url': video_url, 'task_key': task_key}
+                            return {'success': True, 'video_url': video_url, 'task_key': task_key}
+                        return {'success': False, 'error': '未找到视频 URL'}
             
             time.sleep(poll_interval)
         
         return {'success': False, 'error': f'等待超时 ({max_wait}s)'}
+    
+    def _poll_by_creation_id(self, creation_id: str) -> dict:
+        """
+        按 task/creation ID 精准查找匹配的视频 URL。
+        
+        搜索策略：在视频 URL 和页面资源 URL 中查找包含该 ID 的条目。
+        视频 URL 格式可能是：
+        - .../creation-{id}/...
+        - .../tasks/{id}/...
+        - 或其他包含该数字 ID 的格式
+        
+        Returns:
+            {'status': 'found', 'video_url': '...'} - 找到匹配视频
+            {'status': 'failed', 'error': '...'} - 生成失败
+            {'status': 'waiting'} - 还在等待
+        """
+        if not hasattr(self, '_poll_debug_counter'):
+            self._poll_debug_counter = 0
+        self._poll_debug_counter += 1
+        show_debug = (self._poll_debug_counter <= 2) or (self._poll_debug_counter % 30 == 0)
+        
+        with self._page_lock:
+            try:
+                # 在页面中搜索包含该 ID 的视频 URL
+                result = self.page.evaluate(f"""
+                    () => {{
+                        const tid = '{creation_id}';
+                        const allVideoUrls = [];
+                        
+                        // 方法1: 检查 video 元素的 src
+                        const videos = document.querySelectorAll('video');
+                        for (const v of videos) {{
+                            const src = v.src || v.currentSrc || '';
+                            const sourceSrc = v.querySelector('source')?.src || '';
+                            if (src && !src.startsWith('blob:')) allVideoUrls.push(src);
+                            if (sourceSrc && !sourceSrc.startsWith('blob:')) allVideoUrls.push(sourceSrc);
+                            // 宽泛匹配：ID 出现在 URL 任意位置
+                            if (src.includes(tid)) return {{ found: true, url: src, method: 'video-src' }};
+                            if (sourceSrc.includes(tid)) return {{ found: true, url: sourceSrc, method: 'video-source' }};
+                        }}
+                        
+                        // 方法2: 从 Performance API 搜索
+                        const perfMatches = [];
+                        try {{
+                            const entries = performance.getEntriesByType('resource');
+                            for (const e of entries) {{
+                                if (e.name.includes(tid) && (e.name.includes('.mp4') || e.name.includes('video') || e.name.includes('media'))) {{
+                                    return {{ found: true, url: e.name, method: 'perf-api' }};
+                                }}
+                                // 记录所有 vidu CDN 视频资源（用于调试）
+                                if (e.name.includes('files.vidu') && (e.name.includes('.mp4') || e.name.includes('video'))) {{
+                                    perfMatches.push(e.name);
+                                }}
+                            }}
+                        }} catch(e) {{}}
+                        
+                        // 方法3: 从页面 HTML 搜索含 ID 的 mp4 URL
+                        const html = document.documentElement.innerHTML;
+                        const mp4Pattern = new RegExp('https?://[^\\\\s<>"\\' ]*' + tid + '[^\\\\s<>"\\' ]*\\\\.mp4[^\\\\s<>"\\' ]*');
+                        const mp4Match = html.match(mp4Pattern);
+                        if (mp4Match) {{
+                            return {{ found: true, url: mp4Match[0], method: 'html-regex' }};
+                        }}
+                        
+                        // 未找到，返回调试信息
+                        return {{ 
+                            found: false, 
+                            videoCount: videos.length,
+                            videoUrls: allVideoUrls.slice(-5),
+                            perfVideos: perfMatches.slice(-5),
+                        }};
+                    }}
+                """)
+                
+                if result and result.get('found'):
+                    print(f"   🎯 ID匹配成功 (方法: {result.get('method')})", flush=True)
+                    return {'status': 'found', 'video_url': result['url']}
+                
+                # 调试输出：前几次和每10次显示一次
+                if show_debug and result:
+                    video_urls = result.get('videoUrls', [])
+                    perf_videos = result.get('perfVideos', [])
+                    print(f"   🔍 [轮询#{self._poll_debug_counter}] 视频数={result.get('videoCount', 0)}, 搜索ID={creation_id[:12]}...", flush=True)
+                    if video_urls:
+                        for u in video_urls[-2:]:
+                            print(f"      video src: {u[:100]}", flush=True)
+                    if perf_videos:
+                        for u in perf_videos[-2:]:
+                            print(f"      perf: {u[:100]}", flush=True)
+                
+                # 检查页面上是否显示失败
+                for fail_text in ['生成失败', '任务失败']:
+                    try:
+                        el = self.page.locator(f':has-text("{fail_text}")').first
+                        if el.is_visible(timeout=500):
+                            return {'status': 'failed', 'error': f'页面显示: {fail_text}'}
+                    except:
+                        continue
+                
+                return {'status': 'waiting'}
+                
+            except Exception as e:
+                error_msg = str(e)
+                if 'thread' in error_msg.lower() or 'browser' in error_msg.lower():
+                    return {'status': 'waiting'}  # 临时线程问题，继续等
+                print(f"   ⚠️  ID匹配查询异常: {e}", flush=True)
+                return {'status': 'waiting'}
     
     def _poll_check_page_status(self, generating_indicators: list, initial_video_count: int) -> dict:
         """
