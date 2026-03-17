@@ -873,17 +873,27 @@ class GoogleFlowAutomation:
             for fp in valid_paths:
                 print(f"      - {fp}")
             
-            # STEP 1: 点击 "add_2创建" 按钮
-            coords = self.page.evaluate("""() => {
-                const btn = Array.from(document.querySelectorAll('button'))
-                    .find(b => b.textContent.trim().includes('add_2') && b.textContent.includes('创建'));
-                if (!btn) return null;
-                const r = btn.getBoundingClientRect();
-                return {x: r.x + r.width/2, y: r.y + r.height/2};
-            }""")
+            # STEP 1: 点击 "add_2创建" 按钮（带重试，等页面加载完毕）
+            coords = None
+            for attempt in range(6):  # 最多重试 6 次（共 ~3s）
+                coords = self.page.evaluate("""() => {
+                    const btn = Array.from(document.querySelectorAll('button'))
+                        .find(b => {
+                            const t = (b.textContent || '').trim();
+                            return (t.includes('add_2') && t.includes('创建'))
+                                || t.includes('add_2创建')
+                                || (t.includes('创建') && t.includes('add'));
+                        });
+                    if (!btn) return null;
+                    const r = btn.getBoundingClientRect();
+                    return {x: r.x + r.width/2, y: r.y + r.height/2};
+                }""")
+                if coords:
+                    break
+                self.page.wait_for_timeout(500)
             
             if not coords:
-                print("   ❌ 未找到 'add_2创建' 按钮")
+                print("   ❌ 未找到 'add_2创建' 按钮（已重试 3s）")
                 return None
             
             cdp = self._cdp_session
@@ -1441,22 +1451,39 @@ class GoogleFlowAutomation:
         return ''
     
     def _check_for_errors(self) -> str:
-        """检查页面上是否有错误提示"""
+        """检查页面上是否有错误提示（过滤误报）"""
         try:
+            # 只使用高置信度的选择器，避免 [class*="error"] 这类泛匹配误报
             error_selectors = [
                 '[role="alert"]',
                 '.error-message',
-                '.error',
-                '[class*="error"]',
-                '[class*="Error"]',
+            ]
+            
+            # 错误文本必须包含这些关键词之一才算真正的错误
+            error_keywords = [
+                'error', 'Error', 'failed', 'fail', '失败', '错误',
+                'reCAPTCHA', 'denied', 'rejected', '拒绝', 'blocked',
+                'quota', 'limit', '超限', '频率', 'too many', 'unavailable',
+            ]
+            
+            # 这些文本即使匹配到也要忽略（页面 UI 元素的误报）
+            ignore_texts = [
+                'Flow', 'Google Flow', 'flow', 'google', 'Google',
+                'Labs', 'labs.google', 'Banana', 'Nano',
             ]
             
             for selector in error_selectors:
                 try:
                     el = self.page.locator(selector).first
                     if el.is_visible():
-                        text = el.inner_text()
-                        if text and len(text) > 3:
+                        text = (el.inner_text() or '').strip()
+                        # 跳过太短或在忽略列表中的文本
+                        if not text or len(text) < 5:
+                            continue
+                        if text in ignore_texts:
+                            continue
+                        # 必须包含错误关键词
+                        if any(kw in text for kw in error_keywords):
                             return text
                 except:
                     continue

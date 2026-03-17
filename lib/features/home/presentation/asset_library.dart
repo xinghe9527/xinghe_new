@@ -21,13 +21,14 @@ class AssetLibrary extends StatefulWidget {
 }
 
 class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver, RouteAware {
-  int _selectedCategoryIndex = 0; // 0:角色 1:场景 2:物品 3:语音
-  final List<String> _categories = ['角色素材', '场景素材', '物品素材', '语音库'];
+  int _selectedCategoryIndex = 0; // 0:角色 1:场景 2:物品 3:语音 4:图片库
+  final List<String> _categories = ['角色素材', '场景素材', '物品素材', '语音库', '图片库'];
   final List<IconData> _categoryIcons = [
     Icons.person_outline,
     Icons.landscape_outlined,
     Icons.inventory_2_outlined,
     Icons.mic_outlined,
+    Icons.photo_library_outlined,
   ];
   
   // 服务实例
@@ -51,6 +52,9 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
 
   // ✅ 语音库列表（第4个分类）
   List<VoiceAsset> _voiceAssets = [];
+
+  // ✅ 图片库列表（第5个分类，仅用于 VIDU ref2video 图片库模式）
+  List<ImageLibraryItem> _imageLibraryAssets = [];
 
   int _selectedStyleIndex = 0;
   bool _isAddingStyle = false;
@@ -360,26 +364,38 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
         });
         
         _logger.success('成功加载 ${voicesList.length} 个语音素材', module: '素材库');
-        
-        debugPrint('✅ [素材库] 加载数据成功');
-        // 打印所有"下载.jpg"素材的信息
-        _stylesByCategory.forEach((categoryIndex, styles) {
-          for (var style in styles) {
-            for (var asset in style.assets) {
-              if (asset.name.contains('下载')) {
-                debugPrint('   🔎 [${_categories[categoryIndex]}] ${asset.name}:');
-                debugPrint('      - path: ${asset.path}');
-                debugPrint('      - characterInfo: ${asset.characterInfo}');
-                debugPrint('      - isUploaded: ${asset.isUploaded}');
-              }
-              
-              if (asset.characterInfo != null && asset.characterInfo!.isNotEmpty) {
-                debugPrint('   - [${_categories[categoryIndex]}] ${asset.name}: ${asset.characterInfo}');
-              }
+      }
+      
+      // ✅ 加载图片库数据
+      final imageLibJson = prefs.getString('image_library_data');
+      if (imageLibJson != null && imageLibJson.isNotEmpty && mounted) {
+        final list = (jsonDecode(imageLibJson) as List)
+            .map((item) => ImageLibraryItem.fromJson(item as Map<String, dynamic>))
+            .toList();
+        setState(() {
+          _imageLibraryAssets = list;
+        });
+        _logger.success('成功加载 ${list.length} 个图片库素材', module: '素材库');
+      }
+      
+      debugPrint('✅ [素材库] 加载数据成功');
+      // 打印所有"下载.jpg"素材的信息
+      _stylesByCategory.forEach((categoryIndex, styles) {
+        for (var style in styles) {
+          for (var asset in style.assets) {
+            if (asset.name.contains('下载')) {
+              debugPrint('   🔎 [${_categories[categoryIndex]}] ${asset.name}:');
+              debugPrint('      - path: ${asset.path}');
+              debugPrint('      - characterInfo: ${asset.characterInfo}');
+              debugPrint('      - isUploaded: ${asset.isUploaded}');
+            }
+            
+            if (asset.characterInfo != null && asset.characterInfo!.isNotEmpty) {
+              debugPrint('   - [${_categories[categoryIndex]}] ${asset.name}: ${asset.characterInfo}');
             }
           }
-        });
-      }
+        }
+      });
     } catch (e) {
       _logger.error('加载素材库失败: $e', module: '素材库');
       debugPrint('加载素材失败: $e');
@@ -403,7 +419,11 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
       final voicesData = _voiceAssets.map((v) => v.toJson()).toList();
       await prefs.setString('voice_library_data', jsonEncode(voicesData));
       
-      debugPrint('✅ [素材库] 保存数据成功（含 ${_voiceAssets.length} 个语音）');
+      // ✅ 保存图片库数据
+      final imageLibData = _imageLibraryAssets.map((i) => i.toJson()).toList();
+      await prefs.setString('image_library_data', jsonEncode(imageLibData));
+      
+      debugPrint('✅ [素材库] 保存数据成功（含 ${_voiceAssets.length} 个语音, ${_imageLibraryAssets.length} 个图片库）');
       
       // 打印每个分类已上传的素材
       _stylesByCategory.forEach((categoryIndex, styles) {
@@ -932,8 +952,8 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
 
   // 左侧风格列表
   Widget _buildStyleList() {
-    // ✅ 语音库不需要显示风格列表
-    if (_selectedCategoryIndex == 3) {
+    // ✅ 语音库和图片库不需要显示风格列表
+    if (_selectedCategoryIndex == 3 || _selectedCategoryIndex == 4) {
       return const SizedBox.shrink();
     }
     
@@ -1136,6 +1156,11 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
       return _buildVoiceLibraryGrid();
     }
     
+    // ✅ 图片库特殊处理（不需要风格分类）
+    if (_selectedCategoryIndex == 4) {
+      return _buildImageLibraryGrid();
+    }
+    
     final styles = _stylesByCategory[_selectedCategoryIndex] ?? [];
     if (styles.isEmpty) {
       return Center(
@@ -1257,6 +1282,267 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
         ],
       ),
     );
+  }
+
+  // ============================================================
+  // 图片库（第5个分类，仅用于 VIDU ref2video）
+  // ============================================================
+
+  /// 图片库网格显示
+  Widget _buildImageLibraryGrid() {
+    return Container(
+      color: AppTheme.scaffoldBackground,
+      child: Column(
+        children: [
+          // 顶部操作栏
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Row(
+              children: [
+                Icon(Icons.photo_library, color: AppTheme.accentColor, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  '图片库 (${_imageLibraryAssets.length})',
+                  style: TextStyle(
+                    color: AppTheme.textColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '用于 VIDU 参考生视频的图片占位符',
+                  style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                ),
+                const Spacer(),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _addImageLibraryItem,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFF667EEA), Color(0xFF764BA2)]),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.add, color: Colors.white, size: 18),
+                          SizedBox(width: 6),
+                          Text('添加图片', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          Divider(height: 1, color: AppTheme.dividerColor),
+          
+          Expanded(
+            child: _imageLibraryAssets.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.photo_library_outlined, color: AppTheme.subTextColor.withOpacity(0.3), size: 64),
+                        const SizedBox(height: 16),
+                        Text('暂无图片', style: TextStyle(color: AppTheme.subTextColor)),
+                        const SizedBox(height: 8),
+                        Text(
+                          '添加图片并命名，用于 VIDU 参考生视频时自动匹配插入',
+                          style: TextStyle(color: AppTheme.subTextColor.withOpacity(0.7), fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  )
+                : GridView.builder(
+                    padding: const EdgeInsets.all(24),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 6,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: 0.85,
+                    ),
+                    itemCount: _imageLibraryAssets.length,
+                    itemBuilder: (context, index) => _buildImageLibraryCard(_imageLibraryAssets[index], index),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 图片库卡片
+  Widget _buildImageLibraryCard(ImageLibraryItem item, int index) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => _editImageLibraryName(item, index),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceBackground,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF667EEA).withOpacity(0.3), width: 2),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // 图片
+                File(item.path).existsSync()
+                    ? Image.file(File(item.path), fit: BoxFit.cover)
+                    : Container(
+                        color: AppTheme.scaffoldBackground,
+                        child: Icon(Icons.broken_image, color: AppTheme.subTextColor, size: 48),
+                      ),
+                // 底部名称标签
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                      ),
+                    ),
+                    child: Text(
+                      item.name,
+                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+                // 删除按钮
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () => _deleteImageLibraryItem(index),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.close, color: Colors.white, size: 14),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 添加图片库项目
+  Future<void> _addImageLibraryItem() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        for (var file in result.files) {
+          if (file.path == null) continue;
+          final defaultName = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+          final customName = await _showAssetNameDialog(defaultName, file.path!);
+          if (customName == null) continue;
+          setState(() {
+            _imageLibraryAssets.add(ImageLibraryItem(
+              name: customName.isEmpty ? defaultName : customName,
+              path: file.path!,
+            ));
+          });
+        }
+        _saveAssets();
+        _showMessage('成功添加 ${result.files.length} 张图片到图片库', isError: false);
+      }
+    } catch (e) {
+      _showMessage('添加图片失败: $e', isError: true);
+    }
+  }
+
+  /// 删除图片库项目
+  void _deleteImageLibraryItem(int index) {
+    final item = _imageLibraryAssets[index];
+    setState(() {
+      _imageLibraryAssets.removeAt(index);
+    });
+    _saveAssets();
+    _showMessage('已删除: ${item.name}', isError: false);
+  }
+
+  /// 编辑图片库项目名称
+  Future<void> _editImageLibraryName(ImageLibraryItem item, int index) async {
+    final controller = TextEditingController(text: item.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceBackground,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text('编辑图片名称', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(File(item.path), width: 120, height: 120, fit: BoxFit.cover),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              style: TextStyle(color: AppTheme.textColor),
+              decoration: InputDecoration(
+                hintText: '输入名称（用于 prompt 匹配）',
+                hintStyle: TextStyle(color: AppTheme.subTextColor),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppTheme.dividerColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Color(0xFF667EEA)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF667EEA)),
+            child: const Text('确认', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (newName != null && newName.isNotEmpty && newName != item.name) {
+      setState(() {
+        _imageLibraryAssets[index] = ImageLibraryItem(name: newName, path: item.path);
+      });
+      _saveAssets();
+      _showMessage('名称已更新: $newName', isError: false);
+    }
   }
 
   /// 语音库网格显示（美化版）
@@ -1630,6 +1916,24 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
       ),
     );
   }
+
+}
+
+// 图片库项数据模型（仅用于 VIDU ref2video）
+class ImageLibraryItem {
+  final String name;  // 图片名称（用于 prompt 匹配，如"小明"）
+  final String path;  // 本地文件路径
+
+  ImageLibraryItem({required this.name, required this.path});
+
+  factory ImageLibraryItem.fromJson(Map<String, dynamic> json) {
+    return ImageLibraryItem(
+      name: json['name'] as String,
+      path: json['path'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'name': name, 'path': path};
 }
 
 // 风格数据模型

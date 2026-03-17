@@ -828,6 +828,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   final LogManager _logger = LogManager();
   final SecureStorageManager _storage = SecureStorageManager();
   String _currentProvider = '';  // 记录当前使用的服务商
+  String _currentWebTool = '';  // 记录当前网页工具类型
+  final _addImageBtnKey = GlobalKey();  // 添加图片按钮的key，用于菜单定位
 
   @override
   bool get wantKeepAlive => true;  // 保持状态
@@ -905,9 +907,12 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         );
       }
 
+      final webTool = prefs.getString('video_web_tool') ?? '';
+
       if (mounted) {
         setState(() {
           _currentProvider = provider;
+          _currentWebTool = webTool;
           _models = models;
           if (resolvedModel != null) {
             widget.onUpdate(widget.task.copyWith(model: resolvedModel));
@@ -1168,6 +1173,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             final payload = await _buildViduPayload(
               prefs: prefs, webModel: webModel, webTool: webTool, index: 0,
             );
+            debugPrint('🔍 [VIDU生成] webTool=$webTool, payload keys=${payload.keys}, hasSegments=${payload.containsKey("segments")}');
+            if (payload.containsKey('segments')) {
+              debugPrint('🔍 [VIDU生成] segments=${payload["segments"]}');
+            }
             // 告诉 Python 点 N 次创作
             payload['batchCount'] = batchCount;
 
@@ -2125,6 +2134,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           
           // 使用 VideoGridItem 支持原位播放
           final videoGridItem = VideoGridItem(
+            key: ValueKey(videoPath),
             videoUrl: videoPath,
             thumbnailWidget: thumbnailWidget,
           );
@@ -2585,6 +2595,188 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     );
   }
 
+  /// 图片库插入按钮（仅 VIDU ref2video 模式，样式同添加图片按钮）
+  Widget _buildImageLibraryInsertBar() {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Tooltip(
+        message: '从图片库插入占位符到光标处',
+        child: GestureDetector(
+          onTap: _showImageLibraryPicker,
+          child: Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: AppTheme.inputBackground,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: AppTheme.dividerColor),
+            ),
+            child: Icon(
+              Icons.collections_outlined,
+              color: AppTheme.subTextColor,
+              size: 12,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 显示图片库选择器对话框
+  Future<void> _showImageLibraryPicker() async {
+    final prefs = await SharedPreferences.getInstance();
+    final imageLibJson = prefs.getString('image_library_data');
+    if (imageLibJson == null || imageLibJson.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图片库为空，请先在素材库中添加图片')),
+        );
+      }
+      return;
+    }
+
+    final List<dynamic> imageList = jsonDecode(imageLibJson);
+    if (imageList.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图片库为空，请先在素材库中添加图片')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    final selected = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) {
+        String searchQuery = '';
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final filtered = searchQuery.isEmpty
+                ? imageList
+                : imageList.where((item) {
+                    final name = ((item as Map<String, dynamic>)['name'] as String? ?? '').toLowerCase();
+                    return name.contains(searchQuery.toLowerCase());
+                  }).toList();
+            return AlertDialog(
+              backgroundColor: AppTheme.surfaceBackground,
+              title: Text('选择图片插入', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
+              content: SizedBox(
+                width: 400,
+                height: 350,
+                child: Column(
+                  children: [
+                    TextField(
+                      style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: '搜索图片名称...',
+                        hintStyle: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                        prefixIcon: Icon(Icons.search, color: AppTheme.subTextColor, size: 18),
+                        filled: true,
+                        fillColor: AppTheme.inputBackground,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        isDense: true,
+                      ),
+                      onChanged: (v) => setDialogState(() => searchQuery = v),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? Center(child: Text('无匹配结果', style: TextStyle(color: AppTheme.subTextColor)))
+                          : GridView.builder(
+                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                crossAxisSpacing: 8,
+                                mainAxisSpacing: 8,
+                                childAspectRatio: 1,
+                              ),
+                              itemCount: filtered.length,
+                              itemBuilder: (ctx, i) {
+                                final item = filtered[i] as Map<String, dynamic>;
+                                final name = item['name'] as String? ?? '';
+                                final filePath = item['path'] as String? ?? '';
+                                return MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: GestureDetector(
+                                    onTap: () => Navigator.of(ctx).pop(item),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.inputBackground,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: AppTheme.dividerColor),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Expanded(
+                                            child: ClipRRect(
+                                              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                              child: filePath.isNotEmpty && File(filePath).existsSync()
+                                                  ? Image.file(File(filePath), fit: BoxFit.cover, width: double.infinity)
+                                                  : Icon(Icons.image, color: AppTheme.subTextColor, size: 32),
+                                            ),
+                                          ),
+                                          Container(
+                                            width: double.infinity,
+                                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+                                            decoration: BoxDecoration(
+                                              color: AppTheme.surfaceBackground,
+                                              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(7)),
+                                            ),
+                                            child: Text(
+                                              name,
+                                              style: TextStyle(fontSize: 10, color: AppTheme.textColor),
+                                              textAlign: TextAlign.center,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (selected != null) {
+      final name = selected['name'] as String? ?? '';
+      if (name.isNotEmpty) {
+        _insertPlaceholderAtCursor('[📷$name]');
+      }
+    }
+  }
+
+  /// 在光标位置插入占位符文本
+  void _insertPlaceholderAtCursor(String placeholder) {
+    final text = _controller.text;
+    final selection = _controller.selection;
+    final cursorPos = selection.isValid ? selection.baseOffset : text.length;
+
+    final newText = text.substring(0, cursorPos) + placeholder + text.substring(cursorPos);
+    _controller.text = newText;
+    _controller.selection = TextSelection.collapsed(offset: cursorPos + placeholder.length);
+    _update(widget.task.copyWith(prompt: newText));
+    _focusNode.requestFocus();
+  }
+
   Widget _buildReferenceImages() {
     return SizedBox(
       height: 40,
@@ -2675,11 +2867,22 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     
     // 参考生视频
     if (webTool == 'ref2video') {
-      if (widget.task.referenceImages != null && widget.task.referenceImages!.isNotEmpty) {
+      // 检查提示词中是否包含 [📷name] 占位符（图片库内联模式）
+      final hasInlinePlaceholders = RegExp(r'\[📷[^\]]+\]').hasMatch(widget.task.prompt);
+      debugPrint('🔍 [ref2video] prompt="${widget.task.prompt}", hasPlaceholders=$hasInlinePlaceholders');
+
+      if (hasInlinePlaceholders) {
+        // 图片库内联模式：解析占位符为 segments
+        final segments = await _parsePromptToSegments(widget.task.prompt, prefs);
+        debugPrint('🔍 [ref2video] 解析得到 ${segments.length} 个 segments: $segments');
+        if (segments.isNotEmpty) {
+          payload['segments'] = segments;
+        }
+      } else if (widget.task.referenceImages.isNotEmpty) {
         final List<String> assetNames = [];
         final List<String> normalFiles = [];
         
-        for (final refPath in widget.task.referenceImages!) {
+        for (final refPath in widget.task.referenceImages) {
           final assetName = await _findAssetNameByPath(refPath);
           if (assetName != null && assetName.isNotEmpty) {
             assetNames.add(assetName);
@@ -2707,6 +2910,62 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     payload['duration'] = _parseSeconds(widget.task.seconds);
     
     return payload;
+  }
+
+  /// 解析提示词中的 [📷name] 占位符，生成 segments 列表
+  /// 返回格式: [{type: "text", content: "..."}, {type: "image", name: "...", path: "..."}]
+  Future<List<Map<String, String>>> _parsePromptToSegments(
+    String prompt,
+    SharedPreferences prefs,
+  ) async {
+    // 加载图片库
+    final imageLibJson = prefs.getString('image_library_data');
+    final Map<String, String> nameToPath = {};
+    if (imageLibJson != null && imageLibJson.isNotEmpty) {
+      final List<dynamic> imageList = jsonDecode(imageLibJson);
+      for (final item in imageList) {
+        final name = (item as Map<String, dynamic>)['name'] as String? ?? '';
+        final filePath = item['path'] as String? ?? '';
+        if (name.isNotEmpty && filePath.isNotEmpty) {
+          nameToPath[name] = filePath;
+        }
+      }
+    }
+
+    final segments = <Map<String, String>>[];
+    final pattern = RegExp(r'\[📷([^\]]+)\]');
+    int lastEnd = 0;
+
+    for (final match in pattern.allMatches(prompt)) {
+      // 添加占位符前面的文本
+      if (match.start > lastEnd) {
+        final textBefore = prompt.substring(lastEnd, match.start).trim();
+        if (textBefore.isNotEmpty) {
+          segments.add({'type': 'text', 'content': textBefore});
+        }
+      }
+      // 添加图片段
+      final name = match.group(1)!;
+      final filePath = nameToPath[name] ?? '';
+      if (filePath.isNotEmpty) {
+        segments.add({'type': 'image', 'name': name, 'path': filePath});
+      } else {
+        _logger.warning('图片库中未找到: $name', module: '视频空间');
+        // 名称找不到对应图片时作为文本保留
+        segments.add({'type': 'text', 'content': '[📷$name]'});
+      }
+      lastEnd = match.end;
+    }
+
+    // 添加最后一段文本
+    if (lastEnd < prompt.length) {
+      final textAfter = prompt.substring(lastEnd).trim();
+      if (textAfter.isNotEmpty) {
+        segments.add({'type': 'text', 'content': textAfter});
+      }
+    }
+
+    return segments;
   }
 
   /// 根据图片路径在素材库中查找素材名称
@@ -2805,9 +3064,14 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   }
 
   Widget _bottomControls() {
+    final showImageLibBtn = _currentProvider == 'vidu' && _currentWebTool == 'ref2video';
     return Row(
       children: [
         _addImageButton(),
+        if (showImageLibBtn) ...[
+          const SizedBox(width: 8),
+          _buildImageLibraryInsertBar(),
+        ],
         const SizedBox(width: 12),
         Expanded(child: _params()),
         const SizedBox(width: 12),
@@ -2953,6 +3217,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       child: GestureDetector(
         onTap: canAddMore ? () => _showAddImageMenu() : null,
         child: Container(
+          key: _addImageBtnKey,
           width: 44,
           height: 44,
           decoration: BoxDecoration(
@@ -2972,12 +3237,16 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   /// 显示添加图片菜单（本地文件 / 素材库）
   void _showAddImageMenu() {
-    final RenderBox button = context.findRenderObject() as RenderBox;
+    final RenderBox button = _addImageBtnKey.currentContext!.findRenderObject() as RenderBox;
     final offset = button.localToGlobal(Offset.zero);
+    final size = button.size;
     
     showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(offset.dx, offset.dy + 44, offset.dx + 44, 0),
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(offset.dx, offset.dy, size.width, size.height),
+        Offset.zero & MediaQuery.of(context).size,
+      ),
       color: AppTheme.surfaceBackground,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       items: [

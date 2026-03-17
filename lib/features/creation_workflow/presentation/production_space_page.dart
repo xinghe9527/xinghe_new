@@ -98,10 +98,11 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         .forEach((k) { _videoPromptControllers.remove(k)?.dispose(); });
   }
 
-  // 角色、场景、物品数据（用于显示标签）
+  // 角色、场景、物品、图片库数据（用于显示标签）
   List<AssetReference> _characters = [];
   List<AssetReference> _scenes = [];
   List<AssetReference> _items = [];
+  List<AssetReference> _imageLibItems = [];
 
   AudioPlayer? _voiceAudioPlayer;
   bool _voiceUseSystemPlayer = false;
@@ -305,6 +306,20 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
             );
           }).toList();
         }
+      }
+      // 加载图片库（用于VIDU ref2video图片内联模式）
+      final imageLibJson = prefs.getString('image_library_data');
+      if (imageLibJson != null && imageLibJson.isNotEmpty) {
+        final imageList = jsonDecode(imageLibJson) as List<dynamic>;
+        _imageLibItems = imageList.map((e) {
+          final name = e['name'] as String;
+          return AssetReference(
+            id: 'imglib_$name',
+            name: name,
+            imageUrl: e['path'] as String?,
+            type: AssetType.imageLib,
+          );
+        }).toList();
       }
     } catch (e) {
       debugPrint('加载资产引用失败: $e');
@@ -1246,12 +1261,67 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                             }
                           }
 
+                          // 生成图片库标签
+                          for (final imgLib in _imageLibItems) {
+                            final isSelected = currentSelected.contains(
+                              imgLib.id,
+                            );
+                            // 图片库不做提示词检测，只显示已选中的
+                            if (isSelected) {
+                              tags.add(
+                                _buildAssetTag(
+                                  imgLib.name,
+                                  imgLib.type,
+                                  isSelected,
+                                  () {
+                                    final newSelected = List<String>.from(
+                                      currentSelected,
+                                    );
+                                    if (newSelected.contains(imgLib.id)) {
+                                      newSelected.remove(imgLib.id);
+                                    } else {
+                                      newSelected.add(imgLib.id);
+                                    }
+                                    setState(() {
+                                      _storyboards[index] = row.copyWith(
+                                        selectedImageAssets: newSelected,
+                                        selectedVideoAssets: newSelected,
+                                      );
+                                    });
+                                    _saveProductionData();
+                                  },
+                                ),
+                              );
+                            }
+                          }
+
                           // ✅ 移除自动选中逻辑，允许用户自由控制
                           // 自动选中只在生成分镜时执行一次（_autoSelectAssets 方法）
                           // 不在 build 方法中重复执行，避免用户无法取消选择
 
                           return tags;
                         })(),
+                        // 📷+ 按钮：添加图片库资产
+                        if (_imageLibItems.isNotEmpty)
+                          GestureDetector(
+                            onTap: () => _showImageLibPicker(index, row),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1A1A1C),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: const Color(0xFF2A2A2C), width: 1.5),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.photo_library_outlined, size: 12, color: Color(0xFF666666)),
+                                  SizedBox(width: 2),
+                                  Icon(Icons.add, size: 10, color: Color(0xFF666666)),
+                                ],
+                              ),
+                            ),
+                          ),
                         const Spacer(),
                         // 插入按钮（向上插入）
                         IconButton(
@@ -2490,6 +2560,8 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
                   ? Icons.person
                   : type == AssetType.scene
                   ? Icons.landscape
+                  : type == AssetType.imageLib
+                  ? Icons.photo_library_outlined
                   : Icons.category,
               size: 12,
               color: isSelected
@@ -2510,6 +2582,215 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
         ),
       ),
     );
+  }
+
+  /// 图片库资产选择器
+  void _showImageLibPicker(int storyboardIndex, StoryboardRow row) {
+    final currentSelected = [
+      ...row.selectedImageAssets,
+      ...row.selectedVideoAssets,
+    ].toSet().toList();
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          backgroundColor: const Color(0xFF1E1E20),
+          child: Container(
+            width: 500,
+            constraints: const BoxConstraints(maxHeight: 400),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.photo_library_outlined, color: Color(0xFF888888), size: 20),
+                    const SizedBox(width: 8),
+                    const Text('选择图片库资产', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 18), onPressed: () => Navigator.pop(ctx)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (_imageLibItems.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Center(child: Text('图片库为空，请先在素材库中添加图片', style: TextStyle(color: Color(0xFF666666)))),
+                  )
+                else
+                  Flexible(
+                    child: GridView.builder(
+                      shrinkWrap: true,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        childAspectRatio: 0.85,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                      ),
+                      itemCount: _imageLibItems.length,
+                      itemBuilder: (_, i) {
+                        final item = _imageLibItems[i];
+                        final isSelected = currentSelected.contains(item.id);
+                        return GestureDetector(
+                          onTap: () {
+                            final newSelected = List<String>.from(currentSelected);
+                            if (isSelected) {
+                              newSelected.remove(item.id);
+                            } else {
+                              newSelected.add(item.id);
+                            }
+                            setState(() {
+                              _storyboards[storyboardIndex] = row.copyWith(
+                                selectedImageAssets: newSelected,
+                                selectedVideoAssets: newSelected,
+                              );
+                            });
+                            _saveProductionData();
+                            Navigator.pop(ctx);
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF3A3A3C),
+                                width: isSelected ? 2 : 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: ClipRRect(
+                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                    child: item.imageUrl != null && File(item.imageUrl!).existsSync()
+                                        ? Image.file(File(item.imageUrl!), fit: BoxFit.cover, width: double.infinity)
+                                        : const Center(child: Icon(Icons.image_not_supported, color: Color(0xFF666666))),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: Text(
+                                    item.name,
+                                    style: TextStyle(
+                                      color: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF888888),
+                                      fontSize: 11,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 构建内联图片 segments（智能匹配名称位置）
+  /// nameToPath: {资产名称: 本地图片路径}
+  List<Map<String, String>>? _buildInlineSegments(String prompt, Map<String, String> nameToPath) {
+    if (nameToPath.isEmpty) return null;
+
+    // 智能匹配：在提示词中找到每个名称，在后面插入占位符
+    String result = prompt;
+    final unmatched = <String>[];
+
+    for (final name in nameToPath.keys) {
+      final placeholder = '[📷$name]';
+      final idx = result.indexOf(name);
+      if (idx >= 0) {
+        final after = idx + name.length;
+        if (after >= result.length || !result.substring(after).startsWith(placeholder)) {
+          result = result.substring(0, after) + placeholder + result.substring(after);
+          print('   🎯 智能匹配: "$name" → 插入到位置 $after');
+        }
+      } else {
+        unmatched.add(placeholder);
+        print('   ⚠️ 未匹配: "$name" 不在提示词中，放到开头');
+      }
+    }
+
+    if (unmatched.isNotEmpty) {
+      result = '${unmatched.join('')} $result';
+    }
+
+    // 解析占位符为 segments
+    final regex = RegExp(r'\[📷([^\]]+)\]');
+    if (!regex.hasMatch(result)) return null;
+
+    final segments = <Map<String, String>>[];
+    int lastEnd = 0;
+
+    for (final match in regex.allMatches(result)) {
+      if (match.start > lastEnd) {
+        final text = result.substring(lastEnd, match.start).trim();
+        if (text.isNotEmpty) {
+          segments.add({'type': 'text', 'content': text});
+        }
+      }
+      final name = match.group(1)!;
+      final path = nameToPath[name];
+      if (path != null) {
+        segments.add({'type': 'image', 'name': name, 'path': path});
+      }
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < result.length) {
+      final text = result.substring(lastEnd).trim();
+      if (text.isNotEmpty) {
+        segments.add({'type': 'text', 'content': text});
+      }
+    }
+
+    return segments.isNotEmpty ? segments : null;
+  }
+
+  /// 解析提示词中的图片占位符为 segments
+  List<Map<String, String>>? _parsePromptToSegments(String prompt) {
+    final regex = RegExp(r'\[📷([^\]]+)\]');
+    if (!regex.hasMatch(prompt)) return null;
+
+    // 构建图片库名称→路径映射
+    final nameToPath = <String, String>{};
+    for (final item in _imageLibItems) {
+      if (item.imageUrl != null) {
+        nameToPath[item.name] = item.imageUrl!;
+      }
+    }
+
+    final segments = <Map<String, String>>[];
+    int lastEnd = 0;
+    for (final match in regex.allMatches(prompt)) {
+      if (match.start > lastEnd) {
+        final text = prompt.substring(lastEnd, match.start).trim();
+        if (text.isNotEmpty) {
+          segments.add({'type': 'text', 'content': text});
+        }
+      }
+      final name = match.group(1)!;
+      final path = nameToPath[name];
+      if (path != null) {
+        segments.add({'type': 'image', 'name': name, 'path': path});
+      }
+      lastEnd = match.end;
+    }
+    if (lastEnd < prompt.length) {
+      final text = prompt.substring(lastEnd).trim();
+      if (text.isNotEmpty) {
+        segments.add({'type': 'text', 'content': text});
+      }
+    }
+    return segments.isNotEmpty ? segments : null;
   }
 
   /// 生成分镜（使用上下文记忆）
@@ -3015,6 +3296,46 @@ ${widget.scriptContent}
               'aspectRatio': _storyboardRatio,
             };
 
+            // ✅ 收集选中资产的图片作为参考图片
+            final referenceImages = <String>[];
+            final selectedAssetIds = [
+              ...sb.selectedImageAssets,
+              ...sb.selectedVideoAssets,
+            ].toSet().toList();
+
+            for (final assetId in selectedAssetIds) {
+              final char = _characters.firstWhere(
+                (c) => c.id == assetId,
+                orElse: () => AssetReference(id: '', name: '', type: AssetType.character),
+              );
+              if (char.id.isNotEmpty && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+                referenceImages.add(char.imageUrl!);
+              }
+
+              final scene2 = _scenes.firstWhere(
+                (s) => s.id == assetId,
+                orElse: () => AssetReference(id: '', name: '', type: AssetType.scene),
+              );
+              if (scene2.id.isNotEmpty && scene2.imageUrl != null && scene2.imageUrl!.isNotEmpty) {
+                referenceImages.add(scene2.imageUrl!);
+              }
+
+              final item = _items.firstWhere(
+                (it) => it.id == assetId,
+                orElse: () => AssetReference(id: '', name: '', type: AssetType.item),
+              );
+              if (item.id.isNotEmpty && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                referenceImages.add(item.imageUrl!);
+              }
+            }
+
+            if (referenceImages.isNotEmpty) {
+              payload['referenceFile'] = referenceImages.length == 1
+                  ? referenceImages.first
+                  : referenceImages;
+              print('   🖼️ [${storyboardIndex + 1}] 参考图片: ${referenceImages.length} 张');
+            }
+
             if (saveDirPath != null) {
               final timestamp = DateTime.now().millisecondsSinceEpoch;
               final fileName = 'storyboard_${storyboardIndex + 1}_$timestamp.png';
@@ -3039,7 +3360,7 @@ ${widget.scriptContent}
             );
 
             if (pollResult.isSuccess) {
-              final imagePath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+              final imagePath2 = pollResult.localImagePath ?? pollResult.imageUrl ?? pollResult.localVideoPath ?? pollResult.videoUrl;
               if (imagePath2 == null || imagePath2.isEmpty) {
                 throw Exception('任务完成但未返回图片地址');
               }
@@ -3383,59 +3704,87 @@ ${widget.scriptContent}
                   ...sb.selectedImageAssets,
                   ...sb.selectedVideoAssets,
                 ].toSet().toList();
-                final List<String> assetNames = [];
-                final List<String> assetImagePaths = [];
+
+                // 构建图片库路径集合
+                final imageLibPaths = <String>{};
+                for (final libItem in _imageLibItems) {
+                  if (libItem.imageUrl != null) {
+                    imageLibPaths.add(libItem.imageUrl!.replaceAll('\\', '/').toLowerCase());
+                  }
+                }
+
+                // 三类资产分别收集
+                final segmentAssets = <String, String>{};
+                final mappedAssetNames = <String>[];
+                final localImagePaths = <String>[];
 
                 for (final assetId in selectedAssetIds) {
-                  String? imageUrl;
-                  for (final char in _characters) {
-                    if (char.id == assetId &&
-                        char.imageUrl != null &&
-                        char.imageUrl!.isNotEmpty) {
-                      imageUrl = char.imageUrl;
-                      break;
+                  if (assetId.startsWith('imglib_')) {
+                    final item = _imageLibItems.firstWhere(
+                      (e) => e.id == assetId,
+                      orElse: () => AssetReference(id: '', name: '', type: AssetType.imageLib),
+                    );
+                    if (item.name.isNotEmpty && item.imageUrl != null) {
+                      segmentAssets[item.name] = item.imageUrl!;
                     }
-                  }
-                  if (imageUrl == null) {
-                    for (final scene in _scenes) {
-                      if (scene.id == assetId &&
-                          scene.imageUrl != null &&
-                          scene.imageUrl!.isNotEmpty) {
-                        imageUrl = scene.imageUrl;
+                  } else {
+                    String? imageUrl;
+                    String? displayName;
+                    for (final char in _characters) {
+                      if (char.id == assetId && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+                        imageUrl = char.imageUrl;
+                        displayName = char.name;
                         break;
                       }
                     }
-                  }
-                  if (imageUrl == null) {
-                    for (final item in _items) {
-                      if (item.id == assetId &&
-                          item.imageUrl != null &&
-                          item.imageUrl!.isNotEmpty) {
-                        imageUrl = item.imageUrl;
-                        break;
+                    if (imageUrl == null) {
+                      for (final scene in _scenes) {
+                        if (scene.id == assetId && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+                          imageUrl = scene.imageUrl;
+                          displayName = scene.name;
+                          break;
+                        }
                       }
                     }
-                  }
+                    if (imageUrl == null) {
+                      for (final item in _items) {
+                        if (item.id == assetId && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                          imageUrl = item.imageUrl;
+                          displayName = item.name;
+                          break;
+                        }
+                      }
+                    }
 
-                  if (imageUrl != null) {
-                    final assetName = await _findAssetNameByPath(imageUrl);
-                    if (assetName != null && assetName.isNotEmpty) {
-                      assetNames.add(assetName);
-                    } else {
-                      assetImagePaths.add(imageUrl);
+                    if (imageUrl != null) {
+                      final assetName = await _findAssetNameByPath(imageUrl);
+                      if (assetName != null && assetName.isNotEmpty) {
+                        mappedAssetNames.add(assetName);
+                      } else if (imageLibPaths.contains(imageUrl.replaceAll('\\', '/').toLowerCase()) &&
+                          displayName != null && displayName.isNotEmpty) {
+                        segmentAssets[displayName] = imageUrl;
+                      } else {
+                        localImagePaths.add(imageUrl);
+                      }
                     }
                   }
                 }
 
-                if (assetNames.isNotEmpty) {
-                  payload['characterName'] = assetNames.join(',');
-                  print(
-                    '   📦 [${storyboardIndex + 1}] 素材库主体: ${assetNames.join(", ")}',
-                  );
+                if (segmentAssets.isNotEmpty) {
+                  final segments = _buildInlineSegments(fullPrompt, segmentAssets);
+                  if (segments != null && segments.isNotEmpty) {
+                    payload['segments'] = segments;
+                    payload['prompt'] = fullPrompt;
+                    print('   📷 [${storyboardIndex + 1}] segments 模式: ${segments.length}个段, 资产: ${segmentAssets.keys.join(", ")}');
+                  }
                 }
-                if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
-                  payload['referenceFile'] = assetImagePaths.first;
-                } else if (referenceImage != null && assetNames.isEmpty) {
+                if (mappedAssetNames.isNotEmpty) {
+                  payload['characterName'] = mappedAssetNames.join(',');
+                  print('   📦 [${storyboardIndex + 1}] 素材库主体: ${mappedAssetNames.join(", ")}');
+                }
+                if (localImagePaths.isNotEmpty && segmentAssets.isEmpty && mappedAssetNames.isEmpty) {
+                  payload['referenceFile'] = localImagePaths.first;
+                } else if (segmentAssets.isEmpty && mappedAssetNames.isEmpty && referenceImage != null) {
                   payload['referenceFile'] = referenceImage;
                 }
               }
@@ -3567,60 +3916,85 @@ ${widget.scriptContent}
                   ...sb.selectedImageAssets,
                   ...sb.selectedVideoAssets,
                 ].toSet().toList();
-                final List<String> assetNames = [];
-                final List<String> assetImagePaths = [];
 
-                for (final assetId in selectedAssetIds) {
-                  String? imageUrl;
-                  for (final char in _characters) {
-                    if (char.id == assetId &&
-                        char.imageUrl != null &&
-                        char.imageUrl!.isNotEmpty) {
-                      imageUrl = char.imageUrl;
-                      break;
-                    }
+                // 分离图片库资产和普通资产
+                final imageLibAssetIds = selectedAssetIds.where((id) => id.startsWith('imglib_')).toList();
+                final regularAssetIds = selectedAssetIds.where((id) => !id.startsWith('imglib_')).toList();
+
+                if (imageLibAssetIds.isNotEmpty) {
+                  // ======== 图片库模式：构建 segments ========
+                  final placeholders = imageLibAssetIds.map((id) {
+                    final item = _imageLibItems.firstWhere((e) => e.id == id, orElse: () => AssetReference(id: '', name: '', type: AssetType.imageLib));
+                    return item.name.isNotEmpty ? '[📷${item.name}]' : '';
+                  }).where((p) => p.isNotEmpty).join('');
+
+                  final promptWithPlaceholders = placeholders.isNotEmpty
+                      ? '$placeholders $fullPrompt'
+                      : fullPrompt;
+
+                  final segments = _parsePromptToSegments(promptWithPlaceholders);
+                  if (segments != null && segments.isNotEmpty) {
+                    payload['segments'] = segments;
+                    payload['prompt'] = promptWithPlaceholders;
+                    print('   📷 [${storyboardIndex + 1}] 图片库模式: ${segments.length}个段');
                   }
-                  if (imageUrl == null) {
-                    for (final scene in _scenes) {
-                      if (scene.id == assetId &&
-                          scene.imageUrl != null &&
-                          scene.imageUrl!.isNotEmpty) {
-                        imageUrl = scene.imageUrl;
+                } else {
+                  // ======== 传统素材库模式 ========
+                  final List<String> assetNames = [];
+                  final List<String> assetImagePaths = [];
+
+                  for (final assetId in regularAssetIds) {
+                    String? imageUrl;
+                    for (final char in _characters) {
+                      if (char.id == assetId &&
+                          char.imageUrl != null &&
+                          char.imageUrl!.isNotEmpty) {
+                        imageUrl = char.imageUrl;
                         break;
                       }
                     }
-                  }
-                  if (imageUrl == null) {
-                    for (final item in _items) {
-                      if (item.id == assetId &&
-                          item.imageUrl != null &&
-                          item.imageUrl!.isNotEmpty) {
-                        imageUrl = item.imageUrl;
-                        break;
+                    if (imageUrl == null) {
+                      for (final scene in _scenes) {
+                        if (scene.id == assetId &&
+                            scene.imageUrl != null &&
+                            scene.imageUrl!.isNotEmpty) {
+                          imageUrl = scene.imageUrl;
+                          break;
+                        }
+                      }
+                    }
+                    if (imageUrl == null) {
+                      for (final item in _items) {
+                        if (item.id == assetId &&
+                            item.imageUrl != null &&
+                            item.imageUrl!.isNotEmpty) {
+                          imageUrl = item.imageUrl;
+                          break;
+                        }
+                      }
+                    }
+
+                    if (imageUrl != null) {
+                      final assetName = await _findAssetNameByPath(imageUrl);
+                      if (assetName != null && assetName.isNotEmpty) {
+                        assetNames.add(assetName);
+                      } else {
+                        assetImagePaths.add(imageUrl);
                       }
                     }
                   }
 
-                  if (imageUrl != null) {
-                    final assetName = await _findAssetNameByPath(imageUrl);
-                    if (assetName != null && assetName.isNotEmpty) {
-                      assetNames.add(assetName);
-                    } else {
-                      assetImagePaths.add(imageUrl);
-                    }
+                  if (assetNames.isNotEmpty) {
+                    payload['characterName'] = assetNames.join(',');
+                    print(
+                      '   📦 [${storyboardIndex + 1}] 素材库主体: ${assetNames.join(", ")}',
+                    );
                   }
-                }
-
-                if (assetNames.isNotEmpty) {
-                  payload['characterName'] = assetNames.join(',');
-                  print(
-                    '   📦 [${storyboardIndex + 1}] 素材库主体: ${assetNames.join(", ")}',
-                  );
-                }
-                if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
-                  payload['referenceFile'] = assetImagePaths.first;
-                } else if (referenceImage != null && assetNames.isEmpty) {
-                  payload['referenceFile'] = referenceImage;
+                  if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
+                    payload['referenceFile'] = assetImagePaths.first;
+                  } else if (referenceImage != null && assetNames.isEmpty) {
+                    payload['referenceFile'] = referenceImage;
+                  }
                 }
               }
 
@@ -5438,6 +5812,49 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
           'aspectRatio': _storyboardRatio,
         };
 
+        // ✅ 收集选中资产的图片作为参考图片
+        final referenceImages = <String>[];
+        final selectedAssetIds = [
+          ...row.selectedImageAssets,
+          ...row.selectedVideoAssets,
+        ].toSet().toList();
+
+        for (final assetId in selectedAssetIds) {
+          final char = _characters.firstWhere(
+            (c) => c.id == assetId,
+            orElse: () => AssetReference(id: '', name: '', type: AssetType.character),
+          );
+          if (char.id.isNotEmpty && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+            referenceImages.add(char.imageUrl!);
+            print('   ✅ 角色图片: ${char.name}');
+          }
+
+          final scene = _scenes.firstWhere(
+            (s) => s.id == assetId,
+            orElse: () => AssetReference(id: '', name: '', type: AssetType.scene),
+          );
+          if (scene.id.isNotEmpty && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+            referenceImages.add(scene.imageUrl!);
+            print('   ✅ 场景图片: ${scene.name}');
+          }
+
+          final item = _items.firstWhere(
+            (i) => i.id == assetId,
+            orElse: () => AssetReference(id: '', name: '', type: AssetType.item),
+          );
+          if (item.id.isNotEmpty && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+            referenceImages.add(item.imageUrl!);
+            print('   ✅ 物品图片: ${item.name}');
+          }
+        }
+
+        if (referenceImages.isNotEmpty) {
+          payload['referenceFile'] = referenceImages.length == 1
+              ? referenceImages.first
+              : referenceImages;
+          print('🖼️ 参考图片: ${referenceImages.length} 张');
+        }
+
         // 添加保存路径
         final workPath = workSavePathNotifier.value;
         final imagePath = imageSavePathNotifier.value;
@@ -5474,7 +5891,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         );
 
         if (pollResult.isSuccess) {
-          final imagePath2 = pollResult.localVideoPath ?? pollResult.videoUrl;
+          final imagePath2 = pollResult.localImagePath ?? pollResult.imageUrl ?? pollResult.localVideoPath ?? pollResult.videoUrl;
           if (imagePath2 == null || imagePath2.isEmpty) {
             throw Exception('任务完成但未返回图片地址');
           }
@@ -5761,68 +6178,104 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         }
 
         if (webTool == 'ref2video') {
-          // ✅ 检查分镜关联的资产是否来自素材库
+          // ✅ 检查分镜关联的资产
           final selectedAssetIds = [
             ...row.selectedImageAssets,
             ...row.selectedVideoAssets,
           ].toSet().toList();
-          final List<String> assetNames = [];
-          final List<String> assetImagePaths = [];
+
+          // 构建图片库路径集合，用于判断图片是否来自图片库
+          final imageLibPaths = <String>{};
+          for (final item in _imageLibItems) {
+            if (item.imageUrl != null) {
+              imageLibPaths.add(item.imageUrl!.replaceAll('\\', '/').toLowerCase());
+            }
+          }
+
+          // 三类资产分别收集
+          final segmentAssets = <String, String>{}; // 图片库 → segments
+          final mappedAssetNames = <String>[];       // 素材库 → characterName
+          final localImagePaths = <String>[];        // 本地图片 → referenceFile
 
           for (final assetId in selectedAssetIds) {
-            // 查找角色、场景、物品
-            String? imageUrl;
-            for (final char in _characters) {
-              if (char.id == assetId &&
-                  char.imageUrl != null &&
-                  char.imageUrl!.isNotEmpty) {
-                imageUrl = char.imageUrl;
-                break;
+            if (assetId.startsWith('imglib_')) {
+              // 图片库资产（直接从 imglib_ ID 取）
+              final item = _imageLibItems.firstWhere(
+                (e) => e.id == assetId,
+                orElse: () => AssetReference(id: '', name: '', type: AssetType.imageLib),
+              );
+              if (item.name.isNotEmpty && item.imageUrl != null) {
+                segmentAssets[item.name] = item.imageUrl!;
               }
-            }
-            if (imageUrl == null) {
-              for (final scene in _scenes) {
-                if (scene.id == assetId &&
-                    scene.imageUrl != null &&
-                    scene.imageUrl!.isNotEmpty) {
-                  imageUrl = scene.imageUrl;
+            } else {
+              // 普通资产：查找角色/场景/物品
+              String? imageUrl;
+              String? displayName;
+              for (final char in _characters) {
+                if (char.id == assetId && char.imageUrl != null && char.imageUrl!.isNotEmpty) {
+                  imageUrl = char.imageUrl;
+                  displayName = char.name;
                   break;
                 }
               }
-            }
-            if (imageUrl == null) {
-              for (final item in _items) {
-                if (item.id == assetId &&
-                    item.imageUrl != null &&
-                    item.imageUrl!.isNotEmpty) {
-                  imageUrl = item.imageUrl;
-                  break;
+              if (imageUrl == null) {
+                for (final scene in _scenes) {
+                  if (scene.id == assetId && scene.imageUrl != null && scene.imageUrl!.isNotEmpty) {
+                    imageUrl = scene.imageUrl;
+                    displayName = scene.name;
+                    break;
+                  }
                 }
               }
-            }
+              if (imageUrl == null) {
+                for (final item in _items) {
+                  if (item.id == assetId && item.imageUrl != null && item.imageUrl!.isNotEmpty) {
+                    imageUrl = item.imageUrl;
+                    displayName = item.name;
+                    break;
+                  }
+                }
+              }
 
-            if (imageUrl != null) {
-              final assetName = await _findAssetNameByPath(imageUrl);
-              if (assetName != null && assetName.isNotEmpty) {
-                assetNames.add(assetName);
-                print('   ✅ 素材库主体: $assetName');
-              } else {
-                assetImagePaths.add(imageUrl);
+              if (imageUrl != null) {
+                final assetName = await _findAssetNameByPath(imageUrl);
+                if (assetName != null && assetName.isNotEmpty) {
+                  // 素材库已注册 → characterName
+                  mappedAssetNames.add(assetName);
+                  print('   ✅ 素材库主体: $assetName');
+                } else if (imageLibPaths.contains(imageUrl.replaceAll('\\', '/').toLowerCase()) &&
+                    displayName != null && displayName.isNotEmpty) {
+                  // 图片来自图片库 → segments 内联
+                  segmentAssets[displayName] = imageUrl;
+                  print('   📷 图片库资产: $displayName → segments');
+                } else {
+                  // 本地图片 → referenceFile
+                  localImagePaths.add(imageUrl);
+                  print('   📁 本地图片: $imageUrl');
+                }
               }
             }
           }
 
-          // 素材库主体名称（逗号分隔，支持多个）
-          if (assetNames.isNotEmpty) {
-            payload['characterName'] = assetNames.join(',');
-            print('📦 ref2video: 素材库主体「${assetNames.join(", ")}」');
+          // 优先使用 segments 模式（有图片库资产）
+          if (segmentAssets.isNotEmpty) {
+            final segments = _buildInlineSegments(fullPrompt, segmentAssets);
+            if (segments != null && segments.isNotEmpty) {
+              payload['segments'] = segments;
+              payload['prompt'] = fullPrompt;
+              print('📷 segments 模式: ${segments.length}个段, 资产: ${segmentAssets.keys.join(", ")}');
+            }
           }
-
-          // 非素材库图片或分镜选中图片作为参考文件
-          if (assetImagePaths.isNotEmpty && assetNames.isEmpty) {
-            payload['referenceFile'] = assetImagePaths.first;
-            print('📁 ref2video: 上传参考文件 ${assetImagePaths.first}');
-          } else if (selectedImageUrl != null && assetNames.isEmpty) {
+          // 素材库主体
+          if (mappedAssetNames.isNotEmpty) {
+            payload['characterName'] = mappedAssetNames.join(',');
+            print('📦 ref2video: 素材库主体「${mappedAssetNames.join(", ")}」');
+          }
+          // 本地图片作为参考文件
+          if (localImagePaths.isNotEmpty && segmentAssets.isEmpty && mappedAssetNames.isEmpty) {
+            payload['referenceFile'] = localImagePaths.first;
+            print('📁 ref2video: 本地图片参考 ${localImagePaths.first}');
+          } else if (segmentAssets.isEmpty && mappedAssetNames.isEmpty && selectedImageUrl != null) {
             payload['referenceFile'] = selectedImageUrl;
             print('📁 ref2video: 使用分镜图片作为参考');
           }
@@ -6317,7 +6770,7 @@ class AssetReference {
   });
 }
 
-enum AssetType { character, scene, item }
+enum AssetType { character, scene, item, imageLib }
 
 /// 语音对话数据模型
 class VoiceDialogue {

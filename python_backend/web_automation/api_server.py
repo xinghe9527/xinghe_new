@@ -243,6 +243,7 @@ async def execute_vidu_batch_automation(
     character_name: Optional[str],
     max_wait: int,
     batch_count: int,
+    segments: list = None,
 ):
     """
     Vidu 批量生成：一次填写提示词 + 点 N 次创作，每个任务独立轮询。
@@ -288,6 +289,7 @@ async def execute_vidu_batch_automation(
                             reference_file=reference_file,
                             character_name=character_name,
                             count=batch_count,
+                            segments=segments,
                         )
                     except Exception as e:
                         error_msg = str(e)
@@ -424,6 +426,7 @@ async def execute_vidu_automation(
     reference_file: Optional[str] = None,
     character_name: Optional[str] = None,
     max_wait: int = 900,
+    segments: list = None,
 ):
     """
     后台异步执行 Vidu 自动化（并发模式）
@@ -499,6 +502,7 @@ async def execute_vidu_automation(
                             duration=duration,
                             reference_file=reference_file,
                             character_name=character_name,
+                            segments=segments,
                         )
                         
                         # ✅ submit_generate 内部吞掉异常返回 dict，需要手动检查浏览器断连
@@ -1007,7 +1011,9 @@ async def execute_google_flow_automation(
         # ============================================================
         # 阶段2：轮询结果（无需锁）
         # ============================================================
-        def _run_poll():
+        effective_batch = int(batch_count) if batch_count and int(batch_count) > 1 else 1
+        
+        def _run_poll(poll_save_path, poll_initial_images):
             global _google_flow_auto_instance
             auto = _google_flow_auto_instance
             if auto is None:
@@ -1015,40 +1021,78 @@ async def execute_google_flow_automation(
             
             result = auto.poll_result(
                 task_key=task_key,
-                initial_images=initial_images,
-                initial_image_count=len(initial_images),
+                initial_images=poll_initial_images,
+                initial_image_count=len(poll_initial_images),
                 max_wait=max_wait,
-                save_path=save_path,
+                save_path=poll_save_path,
                 generation_id=generation_id,
                 has_reference=has_reference,
             )
             return result
         
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(_google_flow_thread_pool, _run_poll)
         
-        if result.get('success'):
+        # 批量模式：多次 poll，每次收集一张新图并将其加入排除列表
+        all_image_paths = []
+        all_image_urls = []
+        current_initial = list(initial_images)
+        
+        for batch_idx in range(effective_batch):
+            # 为每张图生成不同的保存路径
+            if effective_batch > 1 and save_path:
+                base, ext = os.path.splitext(save_path)
+                this_save_path = f"{base}_{batch_idx}{ext}"
+            else:
+                this_save_path = save_path
+            
+            result = await loop.run_in_executor(
+                _google_flow_thread_pool,
+                lambda sp=this_save_path, ci=list(current_initial): _run_poll(sp, ci),
+            )
+            
+            if result.get('success'):
+                img_url = result.get('image_url', '')
+                img_path = result.get('image_path', this_save_path)
+                all_image_urls.append(img_url)
+                all_image_paths.append(img_path)
+                # 把已找到的图片加入排除列表，下次 poll 不会重复检测
+                if img_url:
+                    current_initial.append(img_url)
+                if batch_idx < effective_batch - 1:
+                    print(f"   ✅ [{task_id}] 第 {batch_idx + 1}/{effective_batch} 张已获取")
+            else:
+                error_message = result.get('error', '未知错误')
+                print(f"   ⚠️  [{task_id}] 第 {batch_idx + 1}/{effective_batch} 张失败: {error_message}")
+                if batch_idx == 0:
+                    # 第一张就失败，整个任务失败
+                    task_manager.update_task(task_id, status=TaskStatus.FAILED, error=error_message)
+                    print(f"❌ Google Flow 任务失败: {task_id}\n错误: {error_message}")
+                    return
+                break  # 后续的失败不影响已成功的
+        
+        if all_image_paths:
             task_manager.update_task(
                 task_id,
                 status=TaskStatus.SUCCESS,
                 result={
                     'success': True,
-                    'local_image_path': result.get('image_path', save_path),
-                    'image_url': result.get('image_url', ''),
+                    'local_image_path': all_image_paths[0],
+                    'image_url': all_image_urls[0] if all_image_urls else '',
+                    'local_image_paths': all_image_paths,
+                    'image_urls': all_image_urls,
                     'task_key': task_key,
-                    'message': 'Google Flow 图片生成成功',
+                    'message': f'Google Flow 图片生成成功（{len(all_image_paths)}张）',
                 },
-                message="Google Flow 图片生成成功",
+                message=f"Google Flow 图片生成成功（{len(all_image_paths)}张）",
             )
-            print(f"✅ Google Flow 任务成功: {task_id}")
+            print(f"✅ Google Flow 任务成功: {task_id}（{len(all_image_paths)}张图片）")
         else:
-            error_message = result.get('error', '未知错误')
             task_manager.update_task(
                 task_id,
                 status=TaskStatus.FAILED,
-                error=error_message,
+                error='未获取到任何图片',
             )
-            print(f"❌ Google Flow 任务失败: {task_id}\n错误: {error_message}")
+            print(f"❌ Google Flow 任务失败: {task_id}\n错误: 未获取到任何图片")
     
     except asyncio.CancelledError:
         task_manager.update_task(task_id, status=TaskStatus.CANCELLED, error="任务被取消")
@@ -1298,6 +1342,8 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         model = request.payload.get('model')
         reference_file = request.payload.get('referenceFile')  # ✅ 获取参考文件路径
         character_name = request.payload.get('characterName')  # ✅ 获取主体库角色名称
+        segments = request.payload.get('segments')  # ✅ 图片库模式：交替输入段落列表
+        print(f"  🔍 [VIDU DEBUG] segments={segments}, tool_type={tool_type}", flush=True)
         
         # ✅ 从 payload 中提取超时配置（默认 900 秒 = 15 分钟）
         max_wait = int(request.payload.get('maxWait', 900))
@@ -1332,6 +1378,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
                 aspect_ratio, resolution, duration,
                 tool_type, model, reference_file, character_name,
                 max_wait, batch_count,
+                segments,
             )
         else:
             # 单任务模式
@@ -1348,6 +1395,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
                 reference_file,
                 character_name,
                 max_wait,
+                segments,
             )
     elif request.platform == 'jimeng':
         # ✅ 即梦：UI 自动化方案

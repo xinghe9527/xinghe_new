@@ -404,13 +404,25 @@ class ViduAutomation:
             print(f"      目标URL: {target_url}", flush=True)
             self.page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
             print(f"   🌐 页面已加载 (domcontentloaded)", flush=True)
-            time.sleep(3)
+            # 等待编辑器或输入框出现，而不是固定等待3秒
+            try:
+                self.page.wait_for_selector('div.ProseMirror[contenteditable="true"]:visible, textarea:visible', timeout=8000)
+                print(f"   🌐 ✅ 输入框已就绪", flush=True)
+            except Exception:
+                print(f"   🌐 ⚠️  输入框未检测到，等待1秒后继续", flush=True)
+                time.sleep(1)
         elif force_reload:
             # 已在目标页面但需要刷新（多次生成时清空旧的提示词和主体选择）
             print(f"   🌐 已在目标页面，刷新以清空旧内容...", flush=True)
             self.page.reload(wait_until='domcontentloaded', timeout=30000)
             print(f"   🌐 页面已刷新", flush=True)
-            time.sleep(3)
+            # 等待编辑器或输入框出现
+            try:
+                self.page.wait_for_selector('div.ProseMirror[contenteditable="true"]:visible, textarea:visible', timeout=8000)
+                print(f"   🌐 ✅ 输入框已就绪", flush=True)
+            except Exception:
+                print(f"   🌐 ⚠️  输入框未检测到，等待1秒后继续", flush=True)
+                time.sleep(1)
         else:
             print(f"   🌐 已在目标页面: {current_url[:80]}", flush=True)
 
@@ -687,6 +699,185 @@ class ViduAutomation:
             return False
     
     # ============================================================
+    # 图片库：在编辑器中交替输入文字和插入图片（ref2video 专用）
+    # ============================================================
+    
+    def _insert_inline_image(self, file_path: str, is_first: bool = False) -> bool:
+        """
+        在编辑器光标位置插入一张图片。
+        点击「+ 图片」按钮 → 上传文件 → VIDU 前端自动在光标处插入 chip。
+        
+        Args:
+            file_path: 本地图片路径
+            is_first: 是否是第一张图片（需要先展开图片面板）
+        """
+        print(f"   📷 插入内联图片: {os.path.basename(file_path)} (is_first={is_first})")
+        
+        if not os.path.exists(file_path):
+            print(f"   ❌ 图片文件不存在: {file_path}")
+            return False
+        
+        try:
+            # 第一张图片时，需要先点击"上传图片/主体"展开面板
+            if is_first:
+                area_selectors = [
+                    'text="上传图片 / 主体"',
+                    'div:has-text("上传图片 / 主体"):visible',
+                    'div:has-text("上传图片"):visible',
+                ]
+                area_clicked = False
+                for selector in area_selectors:
+                    try:
+                        elements = self.page.locator(selector).all()
+                        for element in elements:
+                            try:
+                                if not element.is_visible(timeout=1000):
+                                    continue
+                                box = element.bounding_box()
+                                if not box or box['x'] > 500:
+                                    continue
+                                element.click(timeout=3000)
+                                area_clicked = True
+                                break
+                            except:
+                                continue
+                        if area_clicked:
+                            break
+                    except:
+                        continue
+                if area_clicked:
+                    time.sleep(1)
+                else:
+                    print("   ⚠️ 未找到「上传图片/主体」区域，尝试直接找「+ 图片」按钮")
+            
+            # 查找并点击「+ 图片」按钮
+            pic_selectors = [
+                'text="图片"',
+                'text="+ 图片"',
+                'button:has-text("图片")',
+                'div:has-text("图片"):not(:has-text("上传图片")):not(:has-text("主体"))',
+            ]
+            
+            for selector in pic_selectors:
+                try:
+                    elements = self.page.locator(selector).all()
+                    for element in elements:
+                        try:
+                            if not element.is_visible(timeout=1000):
+                                continue
+                            box = element.bounding_box()
+                            if not box or box['x'] > 500:
+                                continue
+                            if box['width'] > 300 or box['height'] > 100:
+                                continue
+                            text = element.inner_text().strip()
+                            if '上传' in text or '主体库' in text:
+                                continue
+                            
+                            with self.page.expect_file_chooser(timeout=5000) as fc_info:
+                                element.click(timeout=3000)
+                            file_chooser = fc_info.value
+                            file_chooser.set_files(file_path)
+                            print(f"   ✅ 图片已上传: {os.path.basename(file_path)}")
+                            time.sleep(2)  # 等待 chip 插入
+                            return True
+                        except:
+                            continue
+                except:
+                    continue
+            
+            print(f"   ❌ 未找到「+ 图片」按钮")
+            return False
+            
+        except Exception as e:
+            print(f"   ❌ 插入内联图片异常: {e}")
+            return False
+    
+    def _input_prompt_with_inline_images(self, segments: list) -> bool:
+        """
+        交替输入文字和插入图片（图片库模式专用）。
+        
+        在 ProseMirror 编辑器中逐段输入：文字 → 上传图片(chip自动插入) → 文字 → ...
+        
+        Args:
+            segments: [
+                {"type": "text", "content": "小明"},
+                {"type": "image", "path": "D:/images/小明.jpg"},
+                {"type": "text", "content": "牵着小红"},
+                {"type": "image", "path": "D:/images/小红.jpg"},
+                ...
+            ]
+        """
+        print(f"   📝 图片库模式：交替输入 {len(segments)} 个段落")
+        
+        try:
+            # 聚焦编辑器
+            editor_selectors = [
+                'div.ProseMirror[contenteditable="true"]:visible',
+                'div.tiptap[contenteditable="true"]:visible',
+                'div[contenteditable="true"]:visible',
+            ]
+            editor = None
+            for selector in editor_selectors:
+                try:
+                    el = self.page.locator(selector).first
+                    if el.is_visible(timeout=3000):
+                        editor = el
+                        break
+                except:
+                    continue
+            
+            if not editor:
+                print("   ❌ 未找到 ProseMirror 编辑器")
+                return False
+            
+            editor.click(force=True)
+            time.sleep(0.5)
+            
+            image_count = 0
+            
+            for i, seg in enumerate(segments):
+                seg_type = seg.get('type', '')
+                
+                if seg_type == 'text':
+                    content = seg.get('content', '')
+                    if content:
+                        print(f"   📝 [{i+1}/{len(segments)}] 输入文字: {content[:40]}...")
+                        self.page.keyboard.type(content, delay=5)
+                        time.sleep(0.3)
+                
+                elif seg_type == 'image':
+                    img_path = seg.get('path', '')
+                    if img_path:
+                        print(f"   📷 [{i+1}/{len(segments)}] 插入图片: {os.path.basename(img_path)}")
+                        is_first = (image_count == 0)
+                        if self._insert_inline_image(img_path, is_first=is_first):
+                            image_count += 1
+                            # 用 JS 精确将光标移到编辑器内容末尾
+                            self.page.evaluate('''() => {
+                                const editor = document.querySelector('div.ProseMirror[contenteditable="true"]');
+                                if (editor) {
+                                    editor.focus();
+                                    const sel = window.getSelection();
+                                    const range = document.createRange();
+                                    range.selectNodeContents(editor);
+                                    range.collapse(false);
+                                    sel.removeAllRanges();
+                                    sel.addRange(range);
+                                }
+                            }''')
+                            time.sleep(0.3)
+                        else:
+                            print(f"   ⚠️ 图片插入失败，跳过: {img_path}")
+            
+            print(f"   ✅ 交替输入完成：{image_count} 张图片已插入")
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ 交替输入异常: {e}")
+            return False
+    
+    # ============================================================
     # 选择主体库角色（复用 auto_vidu_complete 的逻辑）
     # ============================================================
     
@@ -817,12 +1008,16 @@ class ViduAutomation:
         reference_file: str = None,
         character_name: str = None,
         count: int = 1,
+        segments: list = None,
     ) -> dict:
         """
         仅执行 UI 操作提交生成任务，不等待结果。
         
         Args:
             count: 点击"创作"次数（批量），每次间隔 2.5 秒防反爬。
+            segments: 图片库模式的交替输入段落列表（ref2video 专用）。
+                      格式: [{"type": "text", "content": "..."}, {"type": "image", "path": "..."}]
+                      提供 segments 时 prompt/reference_file/character_name 被忽略。
         
         Returns:
             count=1: {'success': True, 'creation_id': '...', ...}
@@ -855,6 +1050,7 @@ class ViduAutomation:
                     duration=duration, reference_file=reference_file,
                     character_name=character_name,
                     count=count,
+                    segments=segments,
                 )
                 self._last_submit_time = time.time()
                 return result
@@ -872,6 +1068,7 @@ class ViduAutomation:
         reference_file: str = None,
         character_name: str = None,
         count: int = 1,
+        segments: list = None,
     ) -> dict:
         """submit_generate 的内部实现（调用时已持有 _page_lock）"""
         try:
@@ -879,7 +1076,6 @@ class ViduAutomation:
             print(f"   [STEP 1] 开始导航到 {tool_type} 页面...", flush=True)
             self._ensure_tool_page(tool_type, force_reload=True)
             print(f"   [STEP 1] ✅ 页面导航完成，当前URL: {self.page.url[:80]}", flush=True)
-            time.sleep(2)
             
             # 等待输入框加载
             print(f"   [STEP 2] 等待输入框加载 (tool_type={tool_type})...", flush=True)
@@ -894,7 +1090,7 @@ class ViduAutomation:
                 print(f"   [STEP 2] ⚠️  输入框加载超时: {e}", flush=True)
                 print("   继续尝试...", flush=True)
             
-            time.sleep(1)
+            time.sleep(0.3)
             
             # 2. 关闭弹窗
             if tool_type != 'ref2video':
@@ -906,9 +1102,14 @@ class ViduAutomation:
                 except Exception as e:
                     print(f"   [STEP 3] ⚠️  弹窗处理异常: {e}", flush=True)
             
-            # 3. 上传参考文件（ref2video）
-            print(f"   [STEP 4] 📋 参数: tool_type={tool_type}, reference_file={reference_file}, character_name={character_name}", flush=True)
-            if tool_type == 'ref2video' and reference_file:
+            # 3. 上传参考文件 / 图片库交替输入（ref2video）
+            use_segments = bool(segments and tool_type == 'ref2video')
+            print(f"   [STEP 4] 📋 参数: tool_type={tool_type}, reference_file={reference_file}, character_name={character_name}, segments={len(segments) if segments else 0}段", flush=True)
+            
+            if use_segments:
+                # ======== 图片库模式：跳过传统上传，STEP 5 中用交替输入 ========
+                print(f"   [STEP 4] 📷 图片库模式：将在 STEP 5 中交替输入文字和图片", flush=True)
+            elif tool_type == 'ref2video' and reference_file:
                 if not self.upload_reference_file(reference_file):
                     print("   ⚠️  参考文件上传失败，继续...")
                 time.sleep(1)
@@ -922,19 +1123,26 @@ class ViduAutomation:
             
             # 4.5 清空之前的提示词（作为额外保险，页面刷新后通常已是干净状态）
             # 注意：STEP 1 已通过 force_reload=True 刷新了页面，通常不需要再清空
-            # ⚠️ ref2video 模式下，主体以 chip 形式嵌入编辑器中，绝不能清空编辑器！
+            # ⚠️ ref2video 模式下（包括图片库模式），编辑器中有 chip，绝不能清空！
             if tool_type != 'ref2video':
                 print(f"   [STEP 4.5] 🧹 检查并清空残留提示词...", flush=True)
                 self.clear_previous_prompt(tool_type)
                 print(f"   [STEP 4.5] ✅ 清空检查完成", flush=True)
             else:
-                print(f"   [STEP 4.5] ℹ️ ref2video 模式，跳过清空（主体 chip 在编辑器中）", flush=True)
+                print(f"   [STEP 4.5] ℹ️ ref2video 模式，跳过清空", flush=True)
             
             # 5. 输入提示词
-            print(f"   [STEP 5] 📝 输入提示词...", flush=True)
-            if not self.input_prompt(prompt, tool_type):
-                return {'success': False, 'error': '输入提示词失败'}
-            print(f"   [STEP 5] ✅ 提示词输入完成", flush=True)
+            if use_segments:
+                # 图片库模式：交替输入文字和图片
+                print(f"   [STEP 5] 📷 图片库模式：交替输入 {len(segments)} 个段落...", flush=True)
+                if not self._input_prompt_with_inline_images(segments):
+                    return {'success': False, 'error': '图片库交替输入失败'}
+                print(f"   [STEP 5] ✅ 图片库交替输入完成", flush=True)
+            else:
+                print(f"   [STEP 5] 📝 输入提示词...", flush=True)
+                if not self.input_prompt(prompt, tool_type):
+                    return {'success': False, 'error': '输入提示词失败'}
+                print(f"   [STEP 5] ✅ 提示词输入完成", flush=True)
             
             # 5. 设置视频参数
             print(f"   [STEP 6] ⚙️ 设置视频参数...", flush=True)

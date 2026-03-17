@@ -46,6 +46,12 @@ class AigcTaskResult {
   /// 本地图片路径
   final String? localImagePath;
   
+  /// 批量图片地址列表（Google Flow 批量生成用）
+  final List<String>? localImagePaths;
+  
+  /// 批量图片 URL 列表
+  final List<String>? imageUrls;
+  
   /// 错误信息
   final String? error;
   
@@ -68,6 +74,8 @@ class AigcTaskResult {
     this.localVideoPath,
     this.imageUrl,
     this.localImagePath,
+    this.localImagePaths,
+    this.imageUrls,
     this.error,
     this.result,
     this.taskIds,
@@ -91,6 +99,8 @@ class AigcTaskResult {
       localVideoPath: resultData?['local_video_path'] as String?,
       imageUrl: resultData?['image_url'] as String?,
       localImagePath: resultData?['local_image_path'] as String?,
+      localImagePaths: (resultData?['local_image_paths'] as List<dynamic>?)?.map((e) => e.toString()).toList(),
+      imageUrls: (resultData?['image_urls'] as List<dynamic>?)?.map((e) => e.toString()).toList(),
       error: json['error'] as String?,
       result: resultData,
       taskIds: (json['task_ids'] as List<dynamic>?)?.map((e) => e.toString()).toList(),

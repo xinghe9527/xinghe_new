@@ -40,6 +40,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   final ApiRepository _apiRepository = ApiRepository(); // ✅ API Repository
   bool _showSettings = false; // ✅ 控制设置页面显示
   bool _isSmartMatching = false; // ✅ 智能匹配中
+  final Map<String, TextEditingController> _promptControllers = {};
 
   @override
   void initState() {
@@ -59,12 +60,18 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             .map((json) => VideoTask.fromJson(json))
             .toList();
 
-        // 清理遗留占位符
+        // 读取 pending 任务信息
+        final pendingJson = prefs.getString('batch_pending_tasks') ?? '{}';
+        final pendingTasks = Map<String, dynamic>.from(jsonDecode(pendingJson));
+        final pendingPlaceholders = pendingTasks.keys.toSet();
+
+        // 清理遗留占位符（保留有 pending 记录的 loading_ 占位符）
         var cleanedCount = 0;
         for (var task in tasks) {
           final originalCount = task.generatedVideos.length;
           task.generatedVideos.removeWhere(
-            (v) => v.startsWith('loading_') || v.startsWith('failed_'),
+            (v) => (v.startsWith('loading_') && !pendingPlaceholders.contains(v))
+                || v.startsWith('failed_'),
           );
           cleanedCount += originalCount - task.generatedVideos.length;
         }
@@ -79,6 +86,11 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         }
 
         _logger.success('成功加载 ${_tasks.length} 个批量任务', module: '批量空间');
+
+        // 恢复未完成的生成任务轮询
+        if (pendingPlaceholders.isNotEmpty) {
+          _resumePendingTasks();
+        }
       }
     } catch (e) {
       _logger.error('加载批量任务失败: $e', module: '批量空间');
@@ -94,6 +106,206 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       );
     } catch (e) {
       _logger.error('保存批量任务失败: $e', module: '批量空间');
+    }
+  }
+
+  // ========== 生成中任务持久化（防止切换页面丢失） ==========
+
+  /// 保存正在生成中的任务信息到 SharedPreferences
+  Future<void> _savePendingTask({
+    required String placeholder,
+    required String taskId,
+    required String provider,
+    required String videoTaskId,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingJson = prefs.getString('batch_pending_tasks') ?? '{}';
+      final pending = Map<String, dynamic>.from(jsonDecode(pendingJson));
+      pending[placeholder] = {
+        'taskId': taskId,
+        'provider': provider,
+        'videoTaskId': videoTaskId,
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+      };
+      await prefs.setString('batch_pending_tasks', jsonEncode(pending));
+    } catch (e) {
+      _logger.error('保存生成中任务失败: $e', module: '批量空间');
+    }
+  }
+
+  /// 移除已完成/失败的 pending 记录
+  Future<void> _removePendingTask(String placeholder) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingJson = prefs.getString('batch_pending_tasks') ?? '{}';
+      final pending = Map<String, dynamic>.from(jsonDecode(pendingJson));
+      pending.remove(placeholder);
+      await prefs.setString('batch_pending_tasks', jsonEncode(pending));
+    } catch (e) {
+      _logger.error('移除生成中任务记录失败: $e', module: '批量空间');
+    }
+  }
+
+  /// 获取所有 pending 任务
+  Future<Map<String, dynamic>> _getPendingTasks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingJson = prefs.getString('batch_pending_tasks') ?? '{}';
+      return Map<String, dynamic>.from(jsonDecode(pendingJson));
+    } catch (e) {
+      _logger.error('读取生成中任务失败: $e', module: '批量空间');
+      return {};
+    }
+  }
+
+  /// 恢复所有未完成的生成任务轮询
+  Future<void> _resumePendingTasks() async {
+    final pending = await _getPendingTasks();
+    if (pending.isEmpty) return;
+
+    _logger.info('【批量空间】发现 ${pending.length} 个待恢复的生成任务', module: '批量空间');
+
+    final aigcClient = AutomationApiClient();
+
+    // 检查 API 服务是否可用
+    final isHealthy = await aigcClient.checkHealth();
+    if (!isHealthy) {
+      _logger.warning('【批量空间】Python API 服务不可用，无法恢复轮询', module: '批量空间');
+      // 服务不可用时清理所有 pending 和 loading_ 占位符
+      for (final placeholder in pending.keys) {
+        await _removePendingTask(placeholder);
+      }
+      for (var task in _tasks) {
+        task.generatedVideos.removeWhere((v) => v.startsWith('loading_'));
+      }
+      _saveTasks();
+      if (mounted) setState(() {});
+      aigcClient.dispose();
+      return;
+    }
+
+    final pollFutures = <Future<void>>[];
+
+    for (final entry in pending.entries) {
+      final placeholder = entry.key;
+      final info = Map<String, dynamic>.from(entry.value);
+      final taskId = info['taskId'] as String;
+      final videoTaskId = info['videoTaskId'] as String;
+
+      // 确认该占位符仍存在于任务列表中
+      final taskIndex = _tasks.indexWhere((t) => t.id == videoTaskId);
+      if (taskIndex == -1) {
+        _logger.warning('【批量空间】任务 $videoTaskId 已不存在，跳过恢复', module: '批量空间');
+        _removePendingTask(placeholder);
+        continue;
+      }
+
+      final task = _tasks[taskIndex];
+      if (!task.generatedVideos.contains(placeholder)) {
+        _logger.warning('【批量空间】占位符 $placeholder 已不存在，跳过恢复', module: '批量空间');
+        _removePendingTask(placeholder);
+        continue;
+      }
+
+      // 恢复进度显示
+      _batchVideoProgress[placeholder] = 50;
+      if (mounted) setState(() {});
+
+      _logger.info('【批量空间】恢复轮询任务: $taskId (占位符: $placeholder)', module: '批量空间');
+
+      pollFutures.add(() async {
+        try {
+          // 先检查任务是否还存在（Python 重启后旧任务会消失）
+          try {
+            await aigcClient.getTaskStatus(taskId);
+          } catch (e) {
+            _logger.warning('【批量空间】任务 $taskId 已不存在（可能后端已重启），放弃恢复', module: '批量空间');
+            throw Exception('任务不存在');
+          }
+
+          final pollResult = await aigcClient.pollTaskStatus(
+            taskId: taskId,
+            interval: const Duration(seconds: 3),
+            maxAttempts: 300,
+            onProgress: (taskResult) {
+              if (taskResult.isRunning) {
+                _batchVideoProgress[placeholder] = 50;
+              }
+              if (mounted) setState(() {});
+            },
+          );
+
+          if (pollResult.isSuccess) {
+            final videoPath = pollResult.localVideoPath ?? pollResult.videoUrl;
+            if (videoPath == null || videoPath.isEmpty) {
+              throw Exception('任务完成但未返回视频地址');
+            }
+
+            _logger.success('【批量空间】恢复任务完成: $videoPath', module: '批量空间');
+
+            // 提取首帧
+            if (!videoPath.startsWith('http') && videoPath.endsWith('.mp4')) {
+              try {
+                final thumbnailPath = videoPath.replaceAll('.mp4', '.jpg');
+                final ffmpeg = FFmpegService();
+                await ffmpeg.extractFrame(
+                  videoPath: videoPath,
+                  outputPath: thumbnailPath,
+                );
+              } catch (e) {
+                _logger.warning('【批量空间】提取首帧失败: $e', module: '批量空间');
+              }
+            }
+
+            // 替换占位符
+            final currentTask = _tasks.firstWhere(
+              (t) => t.id == videoTaskId,
+              orElse: () => task,
+            );
+            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] = videoPath;
+              _batchVideoProgress.remove(placeholder);
+              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+              if (mounted) setState(() {});
+            }
+          } else {
+            throw Exception(pollResult.error ?? '生成失败');
+          }
+
+          await _removePendingTask(placeholder);
+        } catch (e) {
+          _logger.error('【批量空间】恢复轮询失败: $e', module: '批量空间');
+          // 标记为失败
+          try {
+            final currentTask = _tasks.firstWhere(
+              (t) => t.id == videoTaskId,
+              orElse: () => task,
+            );
+            final currentVideos = List<String>.from(currentTask.generatedVideos);
+            final placeholderIndex = currentVideos.indexOf(placeholder);
+            if (placeholderIndex != -1) {
+              currentVideos[placeholderIndex] =
+                  'failed_${DateTime.now().millisecondsSinceEpoch}';
+              _batchVideoProgress.remove(placeholder);
+              _updateTask(currentTask.copyWith(generatedVideos: currentVideos));
+            }
+          } catch (_) {}
+          await _removePendingTask(placeholder);
+        }
+      }());
+    }
+
+    if (pollFutures.isNotEmpty) {
+      // 不 await，让轮询在后台运行
+      Future.wait(pollFutures).then((_) {
+        _logger.success('【批量空间】所有恢复任务已完成', module: '批量空间');
+        aigcClient.dispose();
+      });
+    } else {
+      aigcClient.dispose();
     }
   }
 
@@ -136,6 +348,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   }
 
   void _deleteTask(String taskId) {
+    _promptControllers.remove(taskId)?.dispose();
     setState(() => _tasks.removeWhere((t) => t.id == taskId));
     _saveTasks();
     _logger.info('删除批量任务', module: '批量空间');
@@ -586,7 +799,18 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
 
     // 参考生视频
     if (webTool == 'ref2video') {
-      if (task.referenceImages.isNotEmpty) {
+      // 检查提示词中是否包含 [📷name] 占位符（图片库内联模式）
+      final hasInlinePlaceholders = RegExp(r'\[📷[^\]]+\]').hasMatch(task.prompt);
+
+      if (hasInlinePlaceholders) {
+        // 图片库内联模式：解析占位符为 segments
+        final segments = await _parsePromptToSegments(task.prompt, prefs);
+        if (segments.isNotEmpty) {
+          payload['segments'] = segments;
+          // 清理 prompt 中的占位符文本，仅保留纯文本部分
+          payload['prompt'] = task.prompt.replaceAll(RegExp(r'\[📷[^\]]+\]'), '').trim();
+        }
+      } else if (task.referenceImages.isNotEmpty) {
         final List<String> assetNames = [];
         final List<String> normalFiles = [];
 
@@ -772,6 +996,16 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               module: '批量空间',
             );
 
+            // 保存 pending 任务信息（防止切换页面丢失）
+            for (var i = 0; i < taskIds.length && i < batchCount; i++) {
+              await _savePendingTask(
+                placeholder: placeholders[i],
+                taskId: taskIds[i],
+                provider: provider,
+                videoTaskId: task.id,
+              );
+            }
+
             // 并行轮询所有任务
             final pollFutures = <Future<void>>[];
             for (var i = 0; i < taskIds.length && i < batchCount; i++) {
@@ -838,6 +1072,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                       );
                       if (mounted) setState(() {});
                     }
+                    await _removePendingTask(placeholder);
                   } else {
                     throw Exception(pollResult.error ?? '生成失败');
                   }
@@ -865,6 +1100,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                       );
                     }
                   } catch (_) {}
+                  await _removePendingTask(placeholder);
                   if (mounted) {
                     _showMessage('Vidu 任务 ${i + 1} 失败: $e', isError: true);
                   }
@@ -932,6 +1168,16 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         // 等待所有任务提交完成
         final submittedTasks = await Future.wait(submitFutures);
         _logger.success('【批量空间】所有网页任务已提交，开始轮询', module: '批量空间');
+
+        // 保存 pending 任务信息（防止切换页面丢失）
+        for (final taskInfo in submittedTasks) {
+          await _savePendingTask(
+            placeholder: taskInfo['placeholder'] as String,
+            taskId: taskInfo['taskId'] as String,
+            provider: provider,
+            videoTaskId: task.id,
+          );
+        }
 
         // ✅ 并发轮询所有任务
         final pollFutures = submittedTasks.map((taskInfo) async {
@@ -1029,6 +1275,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                 }
               }
 
+              await _removePendingTask(placeholder);
               return true;
             } else {
               // 任务失败
@@ -1060,6 +1307,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             } catch (e2) {
               _logger.error('【批量空间】清理占位符失败: $e2', module: '批量空间');
             }
+
+            await _removePendingTask(placeholder);
 
             // 显示错误给用户
             if (mounted) {
@@ -1539,6 +1788,57 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     return videoUrl;
   }
 
+  /// 解析提示词中的 [📷name] 占位符，生成 segments 列表
+  Future<List<Map<String, String>>> _parsePromptToSegments(
+    String prompt,
+    SharedPreferences prefs,
+  ) async {
+    // 加载图片库
+    final imageLibJson = prefs.getString('image_library_data');
+    final Map<String, String> nameToPath = {};
+    if (imageLibJson != null && imageLibJson.isNotEmpty) {
+      final List<dynamic> imageList = jsonDecode(imageLibJson);
+      for (final item in imageList) {
+        final name = (item as Map<String, dynamic>)['name'] as String? ?? '';
+        final filePath = item['path'] as String? ?? '';
+        if (name.isNotEmpty && filePath.isNotEmpty) {
+          nameToPath[name] = filePath;
+        }
+      }
+    }
+
+    final segments = <Map<String, String>>[];
+    final pattern = RegExp(r'\[📷([^\]]+)\]');
+    int lastEnd = 0;
+
+    for (final match in pattern.allMatches(prompt)) {
+      if (match.start > lastEnd) {
+        final textBefore = prompt.substring(lastEnd, match.start).trim();
+        if (textBefore.isNotEmpty) {
+          segments.add({'type': 'text', 'content': textBefore});
+        }
+      }
+      final name = match.group(1)!;
+      final filePath = nameToPath[name] ?? '';
+      if (filePath.isNotEmpty) {
+        segments.add({'type': 'image', 'name': name, 'path': filePath});
+      } else {
+        _logger.warning('图片库中未找到: $name', module: '批量空间');
+        segments.add({'type': 'text', 'content': '[📷$name]'});
+      }
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < prompt.length) {
+      final textAfter = prompt.substring(lastEnd).trim();
+      if (textAfter.isNotEmpty) {
+        segments.add({'type': 'text', 'content': textAfter});
+      }
+    }
+
+    return segments;
+  }
+
   /// 根据图片路径在素材库中查找素材名称
   /// 如果找到，说明这张图来自素材库，返回用户自定义的名称
   Future<String?> _findAssetNameByPath(String imagePath) async {
@@ -1670,6 +1970,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             onPressed: () {
               Navigator.pop(context);
               final count = _tasks.length;
+              for (final c in _promptControllers.values) { c.dispose(); }
+              _promptControllers.clear();
               setState(() => _tasks.clear());
               _saveTasks();
               _logger.warning(
@@ -1686,8 +1988,101 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     );
   }
 
-  /// ✅ 智能匹配 - 通过 LLM 分析提示词，自动添加素材库资产
-  Future<void> _smartMatchAssets() async {
+  /// 智能匹配类型选择对话框
+  void _showSmartMatchTypeDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceBackground,
+        title: Text('选择匹配类型', style: TextStyle(color: AppTheme.textColor)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 主体库匹配
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.pop(context);
+                  _smartMatchAssets(matchSource: 'asset');
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.inputBackground,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.dividerColor),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.person, color: AppTheme.accentColor, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('主体库匹配', style: TextStyle(color: AppTheme.textColor, fontSize: 15, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 4),
+                            Text('从素材库匹配角色/场景/道具，添加为参考图片', style: TextStyle(color: AppTheme.subTextColor, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: AppTheme.subTextColor),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // 图片库匹配
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.pop(context);
+                  _smartMatchAssets(matchSource: 'imageLib');
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.inputBackground,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.dividerColor),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.image, color: Colors.orangeAccent, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('图片库匹配', style: TextStyle(color: AppTheme.textColor, fontSize: 15, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 4),
+                            Text('从图片库匹配，插入 [📷名称] 占位符到提示词', style: TextStyle(color: AppTheme.subTextColor, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: AppTheme.subTextColor),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ✅ 智能匹配 - 通过 LLM 分析提示词，自动匹配素材
+  Future<void> _smartMatchAssets({required String matchSource}) async {
     if (_tasks.isEmpty) {
       _showMessage('没有任务可匹配', isError: true);
       return;
@@ -1705,43 +2100,59 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     setState(() => _isSmartMatching = true);
 
     try {
-      // 1. 加载素材库数据
+      // 1. 根据 matchSource 加载对应的库数据
       final prefs = await SharedPreferences.getInstance();
-      final assetsJson = prefs.getString('asset_library_data');
-
-      if (assetsJson == null || assetsJson.isEmpty) {
-        _showMessage('素材库为空\n请先在素材库中添加图片', isError: true);
-        return;
-      }
-
-      // 解析素材数据
-      final data = jsonDecode(assetsJson) as Map<String, dynamic>;
       final allAssets = <Map<String, String>>[];
 
-      data.forEach((key, value) {
-        final stylesList = (value as List);
-        for (var styleData in stylesList) {
-          final assets = (styleData['assets'] as List?) ?? [];
-          for (var assetData in assets) {
-            final assetMap = assetData as Map<String, dynamic>;
-            final name = assetMap['name'] as String? ?? '';
-            final assetPath = assetMap['path'] as String? ?? '';
-            if (name.isNotEmpty && assetPath.isNotEmpty) {
-              allAssets.add({'path': assetPath, 'name': name});
+      if (matchSource == 'asset') {
+        // 主体库匹配
+        final assetsJson = prefs.getString('asset_library_data');
+        if (assetsJson == null || assetsJson.isEmpty) {
+          _showMessage('素材库为空\n请先在素材库中添加图片', isError: true);
+          return;
+        }
+        final data = jsonDecode(assetsJson) as Map<String, dynamic>;
+        data.forEach((key, value) {
+          final stylesList = (value as List);
+          for (var styleData in stylesList) {
+            final assets = (styleData['assets'] as List?) ?? [];
+            for (var assetData in assets) {
+              final assetMap = assetData as Map<String, dynamic>;
+              final name = assetMap['name'] as String? ?? '';
+              final assetPath = assetMap['path'] as String? ?? '';
+              if (name.isNotEmpty && assetPath.isNotEmpty) {
+                allAssets.add({'path': assetPath, 'name': name, 'source': 'asset'});
+              }
             }
           }
+        });
+      } else {
+        // 图片库匹配
+        final imageLibJson = prefs.getString('image_library_data');
+        if (imageLibJson == null || imageLibJson.isEmpty) {
+          _showMessage('图片库为空\n请先在图片库中添加图片', isError: true);
+          return;
         }
-      });
+        final List<dynamic> imageList = jsonDecode(imageLibJson);
+        for (final item in imageList) {
+          final imgItem = item as Map<String, dynamic>;
+          final name = imgItem['name'] as String? ?? '';
+          final imgPath = imgItem['path'] as String? ?? '';
+          if (name.isNotEmpty && imgPath.isNotEmpty) {
+            allAssets.add({'path': imgPath, 'name': name, 'source': 'imageLib'});
+          }
+        }
+      }
 
       if (allAssets.isEmpty) {
-        _showMessage('素材库中没有可用的资产', isError: true);
+        _showMessage('${matchSource == 'asset' ? '素材库' : '图片库'}中没有可用的资产', isError: true);
         return;
       }
 
       // 提取所有素材名称（去重）
       final assetNames = allAssets.map((a) => a['name']!).toSet().toList();
       _logger.info(
-        '【智能匹配】素材库共 ${allAssets.length} 个资产，${assetNames.length} 个不同名称',
+        '【智能匹配-${matchSource == 'asset' ? '主体库' : '图片库'}】共 ${allAssets.length} 个资产，${assetNames.length} 个不同名称',
         module: '批量空间',
       );
 
@@ -1836,34 +2247,63 @@ taskIndex 从 0 开始，对应任务序号。''';
 
         final task = tasksWithPrompt[taskIndex];
 
-        // 找到对应的素材路径
+        // 分离：普通素材库资产 vs 图片库资产
         final matchedPaths = <String>[];
+        final imageLibPlaceholders = <String>[];
+
         for (final assetName in matchedAssetNames) {
-          // 在素材库中查找所有匹配的路径（取第一张）
           final matchedAsset = allAssets.firstWhere(
             (a) => a['name'] == assetName,
             orElse: () => <String, String>{},
           );
           if (matchedAsset.isNotEmpty && matchedAsset['path']!.isNotEmpty) {
-            matchedPaths.add(matchedAsset['path']!);
+            if (matchedAsset['source'] == 'imageLib') {
+              // 图片库资产 → 插入占位符到提示词
+              imageLibPlaceholders.add('[📷$assetName]');
+            } else {
+              // 普通素材库资产 → 设置到 referenceImages
+              matchedPaths.add(matchedAsset['path']!);
+            }
           }
         }
 
-        if (matchedPaths.isEmpty) continue;
+        if (matchedPaths.isEmpty && imageLibPlaceholders.isEmpty) continue;
 
-        // 更新任务：替换原有图片
         _logger.info(
           '【智能匹配】任务 ${taskIndex + 1}: 匹配到 ${matchedAssetNames.join(", ")}',
           module: '批量空间',
         );
 
+        // 构建更新后的提示词（在每个匹配名称后紧跟插入占位符）
+        String updatedPrompt = task.prompt;
+        if (imageLibPlaceholders.isNotEmpty) {
+          // 按名称长度降序排列，避免短名称先匹配导致长名称被截断
+          final sortedNames = matchedAssetNames
+              .where((name) => imageLibPlaceholders.contains('[📷$name]'))
+              .toList()
+            ..sort((a, b) => b.length.compareTo(a.length));
+
+          for (final name in sortedNames) {
+            final placeholder = '[📷$name]';
+            // 找到名称在文本中的位置，在其后面插入占位符
+            final nameIndex = updatedPrompt.indexOf(name);
+            if (nameIndex >= 0) {
+              final insertPos = nameIndex + name.length;
+              updatedPrompt = updatedPrompt.substring(0, insertPos) +
+                  placeholder +
+                  updatedPrompt.substring(insertPos);
+            }
+          }
+        }
+
         final updatedTask = task.copyWith(
-          referenceImages: matchedPaths, // 替换为匹配到的素材库图片
+          referenceImages: matchedPaths.isNotEmpty ? matchedPaths : task.referenceImages,
+          prompt: updatedPrompt,
         );
         _updateTask(updatedTask);
 
         matchedCount++;
-        totalImagesAdded += matchedPaths.length;
+        totalImagesAdded += matchedPaths.length + imageLibPlaceholders.length;
       }
 
       _logger.success(
@@ -2040,7 +2480,7 @@ taskIndex 从 0 开始，对应任务序号。''';
           _toolButton(
             Icons.auto_fix_high,
             _isSmartMatching ? '匹配中...' : '智能匹配',
-            _isSmartMatching ? () {} : _smartMatchAssets,
+            _isSmartMatching ? () {} : _showSmartMatchTypeDialog,
           ),
           const SizedBox(width: 12),
           // ✅ 清空面板（改为正常颜色，位置提前）
@@ -2434,11 +2874,28 @@ taskIndex 从 0 开始，对应任务序号。''';
   }
 
   /// 构建提示词单元格
+  TextEditingController _getPromptController(VideoTask task) {
+    if (!_promptControllers.containsKey(task.id)) {
+      _promptControllers[task.id] = TextEditingController(text: task.prompt);
+    }
+    final controller = _promptControllers[task.id]!;
+    // 同步外部更新（智能匹配等）
+    if (controller.text != task.prompt) {
+      final cursorPos = controller.selection.baseOffset;
+      controller.text = task.prompt;
+      if (cursorPos >= 0 && cursorPos <= task.prompt.length) {
+        controller.selection = TextSelection.collapsed(offset: cursorPos);
+      }
+    }
+    return controller;
+  }
+
   Widget _buildPromptCell(VideoTask task) {
+    final controller = _getPromptController(task);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: TextFormField(
-        initialValue: task.prompt,
+        controller: controller,
         maxLines: null, // ✅ 允许多行
         minLines: 1,
         style: TextStyle(color: AppTheme.textColor, fontSize: 13),
@@ -3123,6 +3580,59 @@ taskIndex 从 0 开始，对应任务序号。''';
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            // 图片库（插入占位符到提示词）
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.pop(context);
+                  _addImageLibraryPlaceholders(taskId);
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: AppTheme.inputBackground,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.dividerColor),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.image,
+                        color: Colors.orangeAccent,
+                        size: 32,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '图片库',
+                              style: TextStyle(
+                                color: AppTheme.textColor,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '插入 [📷名称] 占位符到提示词',
+                              style: TextStyle(
+                                color: AppTheme.subTextColor,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: AppTheme.subTextColor),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
         actions: [
@@ -3307,6 +3817,218 @@ taskIndex 从 0 开始，对应任务序号。''';
       );
       _showMessage('添加失败: $e', isError: true);
     }
+  }
+
+  /// 添加图片库占位符到提示词
+  Future<void> _addImageLibraryPlaceholders(String taskId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final imageLibJson = prefs.getString('image_library_data');
+
+      if (imageLibJson == null || imageLibJson.isEmpty) {
+        _showMessage('图片库为空\n请先在图片库中添加图片', isError: true);
+        return;
+      }
+
+      final List<dynamic> imageList = jsonDecode(imageLibJson);
+      final allImages = <Map<String, String>>[];
+      for (final item in imageList) {
+        final imgItem = item as Map<String, dynamic>;
+        final name = imgItem['name'] as String? ?? '';
+        final imgPath = imgItem['path'] as String? ?? '';
+        if (name.isNotEmpty && imgPath.isNotEmpty) {
+          allImages.add({'name': name, 'path': imgPath});
+        }
+      }
+
+      if (allImages.isEmpty) {
+        _showMessage('图片库中没有可用图片', isError: true);
+        return;
+      }
+
+      // 显示图片库选择对话框
+      final selectedImages = await _showImageLibraryDialog(allImages);
+      if (selectedImages == null || selectedImages.isEmpty) return;
+
+      // 找到对应的任务
+      final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
+      if (taskIndex == -1) {
+        _showMessage('任务不存在', isError: true);
+        return;
+      }
+
+      final task = _tasks[taskIndex];
+      // 生成占位符并在光标位置插入
+      final placeholders = selectedImages.map((img) => '[📷${img['name']}]').join(' ');
+      final controller = _promptControllers[taskId];
+      String updatedPrompt;
+      if (controller != null) {
+        final cursorPos = controller.selection.baseOffset;
+        final text = controller.text;
+        if (cursorPos >= 0 && cursorPos <= text.length) {
+          updatedPrompt = text.substring(0, cursorPos) + placeholders + text.substring(cursorPos);
+          // 更新 controller 并设置光标到插入内容之后
+          controller.text = updatedPrompt;
+          controller.selection = TextSelection.collapsed(offset: cursorPos + placeholders.length);
+        } else {
+          updatedPrompt = text.isEmpty ? placeholders : '$placeholders $text';
+          controller.text = updatedPrompt;
+          controller.selection = TextSelection.collapsed(offset: updatedPrompt.length);
+        }
+      } else {
+        updatedPrompt = task.prompt.isEmpty ? placeholders : '$placeholders ${task.prompt}';
+      }
+
+      final updatedTask = task.copyWith(prompt: updatedPrompt);
+      _updateTask(updatedTask);
+
+      _showMessage('已插入 ${selectedImages.length} 个图片库占位符');
+      _logger.success(
+        '插入图片库占位符成功',
+        module: '批量空间',
+        extra: {'数量': selectedImages.length, '占位符': placeholders},
+      );
+    } catch (e) {
+      _logger.error('添加图片库占位符失败: $e', module: '批量空间');
+      _showMessage('添加失败: $e', isError: true);
+    }
+  }
+
+  /// 显示图片库选择对话框
+  Future<List<Map<String, String>>?> _showImageLibraryDialog(
+    List<Map<String, String>> allImages,
+  ) async {
+    final selectedImages = <Map<String, String>>[];
+
+    return showDialog<List<Map<String, String>>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            backgroundColor: AppTheme.surfaceBackground,
+            title: Row(
+              children: [
+                Icon(Icons.image, color: Colors.orangeAccent, size: 24),
+                const SizedBox(width: 12),
+                Text('选择图片库图片', style: TextStyle(color: AppTheme.textColor)),
+                const Spacer(),
+                if (selectedImages.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '已选 ${selectedImages.length}',
+                      style: TextStyle(
+                        color: Colors.orangeAccent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            content: SizedBox(
+              width: 700,
+              height: 500,
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 0.8,
+                ),
+                itemCount: allImages.length,
+                itemBuilder: (context, index) {
+                  final image = allImages[index];
+                  final isSelected = selectedImages.any((a) => a['name'] == image['name']);
+
+                  return MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (isSelected) {
+                            selectedImages.removeWhere((a) => a['name'] == image['name']);
+                          } else {
+                            selectedImages.add(image);
+                          }
+                        });
+                      },
+                      child: Stack(
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isSelected ? Colors.orangeAccent : AppTheme.dividerColor,
+                                width: isSelected ? 3 : 1,
+                              ),
+                              image: DecorationImage(
+                                image: FileImage(File(image['path']!)),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          // 名称标签
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.6),
+                                borderRadius: const BorderRadius.only(
+                                  bottomLeft: Radius.circular(7),
+                                  bottomRight: Radius.circular(7),
+                                ),
+                              ),
+                              child: Text(
+                                image['name']!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.white, fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          if (isSelected)
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.orangeAccent,
+                                  shape: BoxShape.circle,
+                                ),
+                                padding: const EdgeInsets.all(2),
+                                child: const Icon(Icons.check, color: Colors.white, size: 16),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+              ),
+              ElevatedButton(
+                onPressed: selectedImages.isEmpty ? null : () => Navigator.pop(context, selectedImages),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
+                child: Text('插入占位符 (${selectedImages.length})', style: const TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   /// 显示素材库选择对话框

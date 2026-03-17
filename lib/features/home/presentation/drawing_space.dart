@@ -1091,48 +1091,67 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     final saveDir = Directory(imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path);
     if (!await saveDir.exists()) await saveDir.create(recursive: true);
     
-    // 逐张生成（每张通过 web 自动化提交 + 轮询）
     final savedPaths = <String>[];
     
-    for (int i = 0; i < batchCount; i++) {
-      _logger.info('🎯 [Web] 生成第 ${i + 1}/$batchCount 张', module: '绘图空间');
+    // Google Flow 支持 x1-x4 批量：提交一次任务，传入 batchCount
+    final effectiveBatch = batchCount.clamp(1, 4);
+    final filename = 'flow_${DateTime.now().millisecondsSinceEpoch}_0.png';
+    final savePath = '${saveDir.path}${Platform.pathSeparator}$filename';
+    
+    _logger.info('🎯 [Web] Google Flow 批量生成 x$effectiveBatch', module: '绘图空间');
+    
+    try {
+      // 提交一次生成任务，batchCount 让 Google Flow 用 x1/x2/x3/x4
+      final taskResult = await aigcClient.submitGenerationTask(
+        platform: provider,
+        toolType: 'text2image',
+        payload: {
+          'prompt': widget.task.prompt,
+          'model': widget.task.model,
+          'savePath': savePath,
+          'aspectRatio': widget.task.ratio,
+          'batchCount': effectiveBatch,
+          if (widget.task.referenceImages.isNotEmpty)
+            'referenceFile': widget.task.referenceImages,
+        },
+      );
       
-      final filename = 'flow_${DateTime.now().millisecondsSinceEpoch}_$i.png';
-      final savePath = '${saveDir.path}${Platform.pathSeparator}$filename';
+      _logger.info('[Web] 任务已提交: ${taskResult.taskId}', module: '绘图空间');
       
-      try {
-        // 提交生成任务
-        final taskResult = await aigcClient.submitGenerationTask(
-          platform: provider,
-          toolType: 'text2image',
-          payload: {
-            'prompt': widget.task.prompt,
-            'model': widget.task.model,
-            'savePath': savePath,
-            'aspectRatio': widget.task.ratio,
-            if (widget.task.referenceImages.isNotEmpty)
-              'referenceFile': widget.task.referenceImages,
-          },
-        );
-        
-        _logger.info('[Web] 任务已提交: ${taskResult.taskId}', module: '绘图空间');
-        
-        // 轮询等待结果
-        final pollResult = await aigcClient.pollTaskStatus(
-          taskId: taskResult.taskId,
-          interval: const Duration(seconds: 5),
-          maxAttempts: 60, // 最多 5 分钟
-          onProgress: (result) {
-            if (result.isRunning) {
-              _logger.info('[Web] 第 ${i + 1} 张生成中...', module: '绘图空间');
+      // 轮询等待结果（后端会自动收集 batchCount 张图片）
+      final pollResult = await aigcClient.pollTaskStatus(
+        taskId: taskResult.taskId,
+        interval: const Duration(seconds: 5),
+        maxAttempts: 60 * effectiveBatch, // 每张最多 5 分钟
+        onProgress: (result) {
+          if (result.isRunning) {
+            _logger.info('[Web] x$effectiveBatch 生成中...', module: '绘图空间');
+          }
+        },
+      );
+      
+      if (pollResult.isSuccess) {
+        // 优先使用批量图片列表
+        final batchPaths = pollResult.localImagePaths;
+        if (batchPaths != null && batchPaths.isNotEmpty) {
+          for (final imgPath in batchPaths) {
+            if (imgPath.startsWith('http')) {
+              // 下载远程图片
+              final dlFilename = 'flow_${DateTime.now().millisecondsSinceEpoch}_${savedPaths.length}.png';
+              final dlPath = '${saveDir.path}${Platform.pathSeparator}$dlFilename';
+              final response = await http.get(Uri.parse(imgPath));
+              if (response.statusCode == 200) {
+                final file = File(dlPath);
+                await file.writeAsBytes(response.bodyBytes);
+                savedPaths.add(dlPath);
+              }
+            } else if (File(imgPath).existsSync()) {
+              savedPaths.add(imgPath);
             }
-          },
-        );
-        
-        if (pollResult.isSuccess) {
+          }
+        } else {
+          // 降级：单图结果
           final imagePath = pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
-          
-          // 如果返回的是 URL 而不是本地路径，需要下载
           if (imagePath.startsWith('http')) {
             final response = await http.get(Uri.parse(imagePath));
             if (response.statusCode == 200) {
@@ -1140,27 +1159,19 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
               await file.writeAsBytes(response.bodyBytes);
               savedPaths.add(savePath);
             }
+          } else if (File(imagePath).existsSync()) {
+            savedPaths.add(imagePath);
           } else {
-            // 本地路径，直接使用
-            if (File(imagePath).existsSync()) {
-              savedPaths.add(imagePath);
-            } else {
-              savedPaths.add(savePath);
-            }
+            savedPaths.add(savePath);
           }
-          
-          _logger.success('[Web] 第 ${i + 1} 张生成成功', module: '绘图空间');
-        } else {
-          _logger.error('[Web] 第 ${i + 1} 张生成失败: ${pollResult.error ?? pollResult.message}', module: '绘图空间');
         }
-      } catch (e) {
-        _logger.error('[Web] 第 ${i + 1} 张异常: $e', module: '绘图空间');
+        
+        _logger.success('[Web] 生成成功，共 ${savedPaths.length} 张', module: '绘图空间');
+      } else {
+        _logger.error('[Web] 生成失败: ${pollResult.error ?? pollResult.message}', module: '绘图空间');
       }
-      
-      // 间隔
-      if (i < batchCount - 1) {
-        await Future.delayed(const Duration(seconds: 2));
-      }
+    } catch (e) {
+      _logger.error('[Web] 异常: $e', module: '绘图空间');
     }
     
     // 替换占位符

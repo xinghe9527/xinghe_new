@@ -352,6 +352,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             'jimeng-image-3.1',
             'jimeng-image-3.0',
           ];
+        case 'google_flow':
+          return ['nano-banana-pro', 'nano-banana-2'];
         default:
           return [];
       }
@@ -421,6 +423,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       'comfyui': 'ComfyUI',
       'vidu': 'Vidu',
       'jimeng': '即梦',
+      'google_flow': 'Google Flow',
       'deepseek': 'DeepSeek',
       'aliyun': '阿里云',
     };
@@ -436,6 +439,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       {'key': 'comfyui', 'name': 'ComfyUI（本地）'},
       {'key': 'vidu', 'name': 'Vidu（网页服务商）'},
       {'key': 'jimeng', 'name': '即梦（网页服务商）'},
+      {'key': 'google_flow', 'name': 'Google Flow（网页服务商）'},
     ];
   }
 
@@ -694,9 +698,96 @@ class _AiCanvasPageState extends State<AiCanvasPage>
         node.data['isGenerating'] = true;
       });
 
-      // ✅ 检查是否为网页服务商（VIDU）
-      final isWebProvider = ['vidu'].contains(provider.toLowerCase());
-      if (isWebProvider && !isImage) {
+      // ✅ 检查是否为网页服务商
+      final isGoogleFlow = provider.toLowerCase() == 'google_flow';
+      final isViduWeb = ['vidu'].contains(provider.toLowerCase());
+
+      // ========== Google Flow 图片生成 ==========
+      if (isGoogleFlow && isImage) {
+        _logger.info('使用 Google Flow 生成图片', module: 'AI画布', extra: {'provider': provider});
+
+        final aigcClient = AutomationApiClient();
+        try {
+          final isHealthy = await aigcClient.checkHealth();
+          if (!isHealthy) {
+            throw Exception('Python API 服务未启动\n\n请先启动 Python 服务');
+          }
+
+          final prefs = await SharedPreferences.getInstance();
+          final payload = <String, dynamic>{
+            'prompt': prompt,
+            'model': model,
+            'aspectRatio': node.data['imageRatio'] as String? ?? '1:1',
+          };
+
+          // 保存路径
+          final canvasSavePath = prefs.getString('canvas_save_path');
+          final imgSavePath = prefs.getString('image_save_path');
+          final saveDirPath = (canvasSavePath != null && canvasSavePath.isNotEmpty)
+              ? canvasSavePath
+              : (imgSavePath != null && imgSavePath.isNotEmpty)
+                  ? imgSavePath
+                  : null;
+          if (saveDirPath != null) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final fileName = 'canvas_flow_${timestamp}_${node.id}.png';
+            payload['savePath'] = path.join(saveDirPath, fileName);
+          }
+
+          // 参考图片
+          final referenceImages = node.data['referenceImages'] as List<String>? ?? [];
+          if (referenceImages.isNotEmpty) {
+            payload['referenceFile'] = referenceImages;
+          }
+
+          final submitResult = await aigcClient.submitGenerationTask(
+            platform: 'google_flow',
+            toolType: 'text2image',
+            payload: payload,
+          );
+
+          final tid = submitResult.taskIds?.first ?? submitResult.taskId;
+          _logger.success('Google Flow 任务提交成功: $tid', module: 'AI画布');
+
+          final pollResult = await aigcClient.pollTaskStatus(
+            taskId: tid,
+            interval: const Duration(seconds: 5),
+            maxAttempts: 60,
+          );
+
+          if (pollResult.isSuccess) {
+            final imagePath = pollResult.localImagePath ?? pollResult.imageUrl;
+            if (imagePath == null || imagePath.isEmpty) {
+              throw Exception('任务完成但未返回图片地址');
+            }
+
+            String finalPath = imagePath;
+            if (imagePath.startsWith('http')) {
+              final downloaded = await _downloadAndSaveFile(imagePath, true);
+              if (downloaded != null) {
+                finalPath = downloaded;
+              }
+            }
+
+            setState(() {
+              node.data['generatedImagePath'] = finalPath;
+              node.data['_sizeAdjusted'] = false;
+              node.data['isGenerating'] = false;
+            });
+
+            _saveCanvasData();
+            _logger.success('Google Flow 图片生成成功', module: 'AI画布', extra: {'文件': finalPath});
+            _showMessage('图片生成成功！');
+          } else {
+            throw Exception(pollResult.error ?? 'Google Flow 生成失败');
+          }
+        } finally {
+          aigcClient.dispose();
+        }
+        return;
+      }
+
+      if (isViduWeb && !isImage) {
         // ========== VIDU 网页服务商路线（参考批量空间实现） ==========
         _logger.info('使用网页服务商生成视频', module: 'AI画布', extra: {'provider': provider});
 

@@ -398,13 +398,18 @@ $scriptContent
     ];
   }
 
-  /// 生成分镜图片（返回图片URL）
+  /// 生成分镜图片（返回图片URL或本地路径）
   Future<String> generateStoryboardImage({
     required String prompt,
   }) async {
     final config = await _getImageConfig();
     final provider = config['provider']!;
     final model = config['model'];
+
+    // Google Flow 走网页自动化
+    if (provider == 'google_flow') {
+      return await _generateImageViaGoogleFlow(prompt: prompt, model: model);
+    }
 
     try {
       final response = await _apiRepository.generateImages(
@@ -425,6 +430,64 @@ $scriptContent
       }
     } catch (e) {
       throw Exception('调用图片 API 失败: $e');
+    }
+  }
+
+  /// 通过 Google Flow 网页自动化生成图片
+  Future<String> _generateImageViaGoogleFlow({
+    required String prompt,
+    String? model,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final aigcClient = AutomationApiClient();
+    try {
+      final isHealthy = await aigcClient.checkHealth();
+      if (!isHealthy) {
+        throw Exception('Python API 服务未启动，请先启动 Python 服务');
+      }
+
+      _logger.success('Python API 服务连接成功', module: '创作空间');
+
+      final payload = <String, dynamic>{
+        'prompt': prompt,
+        'model': model ?? 'nano-banana-pro',
+      };
+
+      // 保存路径
+      final savePath = prefs.getString('image_save_path');
+      if (savePath != null && savePath.isNotEmpty) {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final fileName = 'creation_image_$timestamp.png';
+        payload['savePath'] = '$savePath/$fileName';
+      }
+
+      final submitResult = await aigcClient.submitGenerationTask(
+        platform: 'google_flow',
+        toolType: 'text2image',
+        payload: payload,
+      );
+
+      final tid = submitResult.taskIds?.first ?? submitResult.taskId;
+      _logger.success('Google Flow 任务提交成功: $tid', module: '创作空间');
+
+      final pollResult = await aigcClient.pollTaskStatus(
+        taskId: tid,
+        interval: const Duration(seconds: 5),
+        maxAttempts: 60,
+      );
+
+      if (pollResult.isSuccess) {
+        final imagePath = pollResult.localImagePath ?? pollResult.imageUrl;
+        if (imagePath == null || imagePath.isEmpty) {
+          throw Exception('任务完成但未返回图片地址');
+        }
+        _logger.success('Google Flow 图片生成完成: $imagePath', module: '创作空间');
+        return imagePath;
+      } else {
+        throw Exception(pollResult.error ?? 'Google Flow 生成失败');
+      }
+    } finally {
+      aigcClient.dispose();
     }
   }
 

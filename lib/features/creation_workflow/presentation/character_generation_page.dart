@@ -16,6 +16,7 @@ import '../../../services/api/api_repository.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/api/base/api_config.dart';
 import '../../../services/api/base/api_response.dart';
+import '../../../core/aigc_engine/automation_api_client.dart';
 import '../../../services/upload_queue_manager.dart';  // ✅ 上传队列管理器
 import '../../../services/api/providers/geeknow_service.dart';  // ✅ 直接导入服务
 import 'widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
@@ -1350,6 +1351,79 @@ ${widget.scriptContent}
         prompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$prompt';
       }
       
+      // ✅ Google Flow 走网页自动化
+      if (provider == 'google_flow') {
+        final aigcClient = AutomationApiClient();
+        try {
+          final isHealthy = await aigcClient.checkHealth();
+          if (!isHealthy) {
+            throw Exception('Python 后端未运行，请先启动后端服务');
+          }
+
+          final prefs2 = await SharedPreferences.getInstance();
+          final savePath = prefs2.getString('image_save_path');
+          final payload = <String, dynamic>{
+            'prompt': prompt,
+            'model': model ?? 'nano-banana-pro',
+            'aspectRatio': _imageRatio,
+          };
+          if (savePath != null && savePath.isNotEmpty) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            payload['savePath'] = '$savePath/character_${character.name}_$timestamp.png';
+          }
+          if (hasStyleImage) {
+            payload['referenceFile'] = _styleReferenceImage!;
+          }
+
+          final submitResult = await aigcClient.submitGenerationTask(
+            platform: 'google_flow',
+            toolType: 'text2image',
+            payload: payload,
+          );
+          final tid = submitResult.taskIds?.first ?? submitResult.taskId;
+          print('   ✅ Google Flow 任务提交: $tid');
+
+          final pollResult = await aigcClient.pollTaskStatus(
+            taskId: tid,
+            interval: const Duration(seconds: 5),
+            maxAttempts: 60,
+          );
+
+          if (pollResult.isSuccess) {
+            final imagePath = pollResult.localImagePath ?? pollResult.imageUrl;
+            if (imagePath == null || imagePath.isEmpty) {
+              throw Exception('任务完成但未返回图片地址');
+            }
+
+            String savedPath;
+            if (imagePath.startsWith('http')) {
+              savedPath = await _downloadAndSaveImage(imagePath, 'character_${character.name}');
+            } else {
+              savedPath = imagePath;
+            }
+
+            if (mounted) {
+              setState(() {
+                _characters[index] = _characters[index].copyWith(imageUrl: savedPath);
+                _generatingImages.remove(index);
+              });
+              await _saveCharacterData();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ ${character.name} 的图片生成成功'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+            return;
+          } else {
+            throw Exception(pollResult.error ?? 'Google Flow 生成失败');
+          }
+        } finally {
+          aigcClient.dispose();
+        }
+      }
+
       // ✅ 读取完整 API 配置
       final baseUrl = await storage.getBaseUrl(provider: provider, modelType: 'image');
       final apiKey = await storage.getApiKey(provider: provider, modelType: 'image');
@@ -1576,6 +1650,103 @@ ${widget.scriptContent}
     int successCount = 0;
     int failCount = 0;
 
+    // ✅ Google Flow 串行生成（不同图片逐个生成）
+    if (provider == 'google_flow') {
+      final aigcClient = AutomationApiClient();
+      try {
+        final isHealthy = await aigcClient.checkHealth();
+        if (!isHealthy) {
+          throw Exception('Python 后端未运行，请先启动后端服务');
+        }
+
+        final savePath = prefs.getString('image_save_path');
+        final hasStyleImage = _styleReferenceImage != null && _styleReferenceImage!.isNotEmpty;
+
+        for (var i = 0; i < _characters.length; i++) {
+          final character = _characters[i];
+          print('   📸 [${i + 1}/${_characters.length}] ${character.name}');
+
+          try {
+            String prompt = character.description;
+            if (_styleReferenceText.isNotEmpty) {
+              prompt = '$_styleReferenceText, $prompt';
+            }
+            if (hasStyleImage) {
+              prompt = '参考图片的艺术风格、色彩和构图风格，但不要融合图片内容。$prompt';
+            }
+
+            final payload = <String, dynamic>{
+              'prompt': prompt,
+              'model': model ?? 'nano-banana-pro',
+              'aspectRatio': _imageRatio,
+            };
+            if (savePath != null && savePath.isNotEmpty) {
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              payload['savePath'] = '$savePath/character_${character.name}_$timestamp.png';
+            }
+            if (hasStyleImage) {
+              payload['referenceFile'] = _styleReferenceImage!;
+            }
+
+            final submitResult = await aigcClient.submitGenerationTask(
+              platform: 'google_flow',
+              toolType: 'text2image',
+              payload: payload,
+            );
+            final tid = submitResult.taskIds?.first ?? submitResult.taskId;
+
+            final pollResult = await aigcClient.pollTaskStatus(
+              taskId: tid,
+              interval: const Duration(seconds: 5),
+              maxAttempts: 60,
+            );
+
+            if (pollResult.isSuccess) {
+              final imagePath = pollResult.localImagePath ?? pollResult.imageUrl;
+              if (imagePath != null && imagePath.isNotEmpty) {
+                String savedImagePath;
+                if (imagePath.startsWith('http')) {
+                  savedImagePath = await _downloadAndSaveImage(imagePath, 'character_${character.name}');
+                } else {
+                  savedImagePath = imagePath;
+                }
+                if (mounted) {
+                  setState(() {
+                    _characters[i] = _characters[i].copyWith(imageUrl: savedImagePath);
+                  });
+                }
+                successCount++;
+                print('      ✅ 成功\n');
+              } else {
+                failCount++;
+                print('      ❌ 失败: 未返回图片\n');
+              }
+            } else {
+              failCount++;
+              print('      ❌ 失败: ${pollResult.error}\n');
+            }
+          } catch (e) {
+            failCount++;
+            print('      ❌ 异常: $e\n');
+          }
+
+          await _saveCharacterData();
+        }
+      } finally {
+        aigcClient.dispose();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ 角色图片生成完成：成功 $successCount 个，失败 $failCount 个'),
+            backgroundColor: successCount > 0 ? Colors.green : Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     // ✅ 并发生成（每批 3 个，避免API限流）
     for (var batchStart = 0; batchStart < _characters.length; batchStart += 3) {
       final batchEnd = (batchStart + 3 > _characters.length) ? _characters.length : batchStart + 3;
@@ -1697,12 +1868,24 @@ ${widget.scriptContent}
             ],
           ),
         ),
+        PopupMenuItem(
+          value: 'image_library',
+          child: Row(
+            children: [
+              Icon(Icons.image, size: 16, color: Colors.orangeAccent),
+              SizedBox(width: 8),
+              Text('图片库', style: TextStyle(color: Color(0xFF888888))),
+            ],
+          ),
+        ),
       ],
     ).then((value) {
       if (value == 'library') {
         _selectFromLibrary(index);
       } else if (value == 'local') {
         _insertLocalImage(index);
+      } else if (value == 'image_library') {
+        _selectFromImageLibrary(index);
       }
     });
   }
@@ -1787,6 +1970,128 @@ ${widget.scriptContent}
   }
 
   /// 插入本地图片
+  /// 从图片库选择
+  Future<void> _selectFromImageLibrary(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    final imageLibJson = prefs.getString('image_library_data');
+    if (imageLibJson == null || imageLibJson.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图片库为空，请先在图片库中添加图片')),
+        );
+      }
+      return;
+    }
+
+    final List<dynamic> imageList = jsonDecode(imageLibJson);
+    final allImages = <Map<String, String>>[];
+    for (final item in imageList) {
+      final name = (item as Map<String, dynamic>)['name'] as String? ?? '';
+      final imgPath = item['path'] as String? ?? '';
+      if (name.isNotEmpty && imgPath.isNotEmpty) {
+        allImages.add({'name': name, 'path': imgPath});
+      }
+    }
+
+    if (allImages.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图片库中没有可用图片')),
+        );
+      }
+      return;
+    }
+
+    // 显示图片库选择对话框
+    final selected = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceBackground,
+        title: Row(
+          children: [
+            const Icon(Icons.image, color: Colors.orangeAccent, size: 24),
+            const SizedBox(width: 12),
+            Text('选择图片库图片', style: TextStyle(color: AppTheme.textColor)),
+          ],
+        ),
+        content: SizedBox(
+          width: 600,
+          height: 400,
+          child: GridView.builder(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 0.8,
+            ),
+            itemCount: allImages.length,
+            itemBuilder: (context, i) {
+              final image = allImages[i];
+              final imgFile = File(image['path']!);
+              return MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(context, image),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.dividerColor),
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                            child: imgFile.existsSync()
+                                ? Image.file(imgFile, fit: BoxFit.cover, width: double.infinity)
+                                : const Icon(Icons.broken_image, color: Colors.grey),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Text(
+                            image['name']!,
+                            style: TextStyle(color: AppTheme.textColor, fontSize: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    final filePath = selected['path']!;
+    _isUpdating = true;
+    _lastSaveTime = DateTime.now();
+
+    setState(() {
+      _characters[index] = CharacterData(
+        id: _characters[index].id,
+        name: _characters[index].name,
+        description: _characters[index].description.replaceAll(RegExp(r'@\w+,'), '').trim(),
+        imageUrl: filePath,
+        mappingCode: null,
+        isUploaded: false,
+      );
+    });
+    await _saveCharacterData();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('✅ 已从图片库选择: ${selected['name']}')),
+      );
+    }
+  }
+
   Future<void> _insertLocalImage(int index) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
