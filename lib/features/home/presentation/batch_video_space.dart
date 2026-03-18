@@ -853,6 +853,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     payload['resolution'] = task.quality;
     payload['duration'] = task.seconds;
 
+    // ✅ Vidu 去水印开关
+    final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+    if (viduWmFree) {
+      payload['watermarkFree'] = true;
+    }
+
     return payload;
   }
 
@@ -867,6 +873,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
       batchCount,
       (i) => 'loading_${DateTime.now().millisecondsSinceEpoch}_${task.id}_$i',
     );
+
+    // 记录每个占位符在 generatedVideos 中的固定索引（防止并发替换时 indexOf 竞态）
+    final baseIndex = task.generatedVideos.length;
+    final placeholderIndices = <String, int>{
+      for (var i = 0; i < placeholders.length; i++)
+        placeholders[i]: baseIndex + i,
+    };
 
     // 初始化进度
     for (var placeholder in placeholders) {
@@ -995,6 +1008,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               '【批量空间】Vidu 批量提交成功：${taskIds.length} 个任务 $taskIds',
               module: '批量空间',
             );
+            print('🔧 DEBUG批量: taskIds=$taskIds, placeholders=$placeholders');
 
             // 保存 pending 任务信息（防止切换页面丢失）
             for (var i = 0; i < taskIds.length && i < batchCount; i++) {
@@ -1011,11 +1025,12 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             for (var i = 0; i < taskIds.length && i < batchCount; i++) {
               final tid = taskIds[i];
               final placeholder = placeholders[i];
+              final fixedIndex = placeholderIndices[placeholder] ?? -1;
 
               pollFutures.add(() async {
                 try {
                   _logger.info(
-                    '【批量空间】Vidu 轮询任务 ${i + 1}/${taskIds.length}: $tid',
+                    '【批量空间】Vidu 轮询任务 ${i + 1}/${taskIds.length}: $tid (占位符索引: $fixedIndex)',
                     module: '批量空间',
                   );
 
@@ -1058,19 +1073,34 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                       }
                     }
 
-                    // 替换占位符
+                    // 替换占位符（使用固定索引，避免并发竞态）
                     final currentTask = _tasks.firstWhere((t) => t.id == task.id);
                     final currentVideos = List<String>.from(
                       currentTask.generatedVideos,
                     );
-                    final placeholderIndex = currentVideos.indexOf(placeholder);
-                    if (placeholderIndex != -1) {
-                      currentVideos[placeholderIndex] = videoPath;
+                    if (fixedIndex >= 0 &&
+                        fixedIndex < currentVideos.length &&
+                        currentVideos[fixedIndex] == placeholder) {
+                      currentVideos[fixedIndex] = videoPath;
                       _batchVideoProgress.remove(placeholder);
                       _updateTask(
                         currentTask.copyWith(generatedVideos: currentVideos),
                       );
-                      if (mounted) setState(() {});
+                    } else {
+                      // 索引验证失败，回退到 indexOf
+                      final fallbackIndex = currentVideos.indexOf(placeholder);
+                      if (fallbackIndex != -1) {
+                        currentVideos[fallbackIndex] = videoPath;
+                        _batchVideoProgress.remove(placeholder);
+                        _updateTask(
+                          currentTask.copyWith(generatedVideos: currentVideos),
+                        );
+                      } else {
+                        _logger.warning(
+                          '【批量空间】占位符替换失败: fixedIndex=$fixedIndex, placeholder=$placeholder',
+                          module: '批量空间',
+                        );
+                      }
                     }
                     await _removePendingTask(placeholder);
                   } else {
@@ -1090,9 +1120,13 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
                     final currentVideos = List<String>.from(
                       currentTask.generatedVideos,
                     );
-                    final placeholderIndex = currentVideos.indexOf(placeholder);
-                    if (placeholderIndex != -1) {
-                      currentVideos[placeholderIndex] =
+                    final idx = (fixedIndex >= 0 &&
+                            fixedIndex < currentVideos.length &&
+                            currentVideos[fixedIndex] == placeholder)
+                        ? fixedIndex
+                        : currentVideos.indexOf(placeholder);
+                    if (idx != -1) {
+                      currentVideos[idx] =
                           'failed_${DateTime.now().millisecondsSinceEpoch}';
                       _batchVideoProgress.remove(placeholder);
                       _updateTask(

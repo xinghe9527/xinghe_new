@@ -1071,6 +1071,7 @@ class ViduAutomation:
         segments: list = None,
     ) -> dict:
         """submit_generate 的内部实现（调用时已持有 _page_lock）"""
+        self._last_batch_count = count  # 记录批次数，publish_creation 使用
         try:
             # 1. 导航到对应页面（多次生成时刷新页面以清空旧内容）
             print(f"   [STEP 1] 开始导航到 {tool_type} 页面...", flush=True)
@@ -1308,7 +1309,7 @@ class ViduAutomation:
             
             # 如果有 creation_id，按 ID 精准匹配
             if creation_id:
-                match_result = self._poll_by_creation_id(creation_id)
+                match_result = self._poll_by_creation_id(creation_id, elapsed=elapsed)
                 if match_result['status'] == 'found':
                     video_url = match_result['video_url']
                     print(f"   ✅ 找到匹配视频 ({elapsed}s): {video_url[:80]}", flush=True)
@@ -1320,6 +1321,22 @@ class ViduAutomation:
                     return {'success': True, 'video_url': video_url, 'task_key': task_key}
                 elif match_result['status'] == 'failed':
                     return {'success': False, 'error': match_result.get('error', '生成失败')}
+                elif match_result['status'] == 'review':
+                    # 视频审核中 — 尝试通过历史 API 获取带水印 URL 作为降级
+                    print(f"   ⚠️  视频审核中，尝试获取带水印 URL 作为降级...", flush=True)
+                    fallback_url = self._get_review_video_url(creation_id)
+                    if fallback_url:
+                        print(f"   📎 获取到带水印 URL: {fallback_url[:80]}", flush=True)
+                        if save_path:
+                            download_video(fallback_url, save_path)
+                        return {
+                            'success': True,
+                            'video_url': fallback_url,
+                            'video_path': save_path if save_path else '',
+                            'task_key': task_key,
+                            'review': True,
+                        }
+                    return {'success': False, 'error': '视频审核中，无法获取视频'}
                 # 'waiting' → 继续轮询
                 if elapsed > 0 and elapsed % 60 == 0:
                     print(f"   ⏳ 已等待 {elapsed}s，等待 creation {creation_id[:16]}... 完成", flush=True)
@@ -1363,7 +1380,38 @@ class ViduAutomation:
         
         return {'success': False, 'error': f'等待超时 ({max_wait}s)'}
     
-    def _poll_by_creation_id(self, creation_id: str) -> dict:
+    def _get_review_video_url(self, creation_id: str) -> str:
+        """
+        视频审核中时，通过历史 API 尝试获取视频 URL（带水印版）。
+        审核中的视频可能已生成，只是页面不展示，但 API 可能仍有 URL。
+        """
+        with self._page_lock:
+            try:
+                result = self.page.evaluate(f"""async () => {{
+                    try {{
+                        const r = await fetch('https://service.vidu.cn/vidu/v1/tasks/history/me?page_no=1&page_size=10', {{
+                            credentials: 'include'
+                        }});
+                        if (!r.ok) return null;
+                        const d = await r.json();
+                        for (const t of (d.tasks || [])) {{
+                            for (const c of (t.creations || [])) {{
+                                const cid = String(c.id || '');
+                                if (cid === '{creation_id}') {{
+                                    return c.uri || c.download_uri || c.nomark_uri || '';
+                                }}
+                            }}
+                        }}
+                    }} catch(e) {{}}
+                    return null;
+                }}""")
+                if result and isinstance(result, str) and result.startswith('http'):
+                    return result
+            except Exception as e:
+                print(f"   ⚠️  获取审核视频 URL 异常: {e}", flush=True)
+        return ''
+    
+    def _poll_by_creation_id(self, creation_id: str, elapsed: int = 0) -> dict:
         """
         按 task/creation ID 精准查找匹配的视频 URL。
         
@@ -1460,6 +1508,16 @@ class ViduAutomation:
                             return {'status': 'failed', 'error': f'页面显示: {fail_text}'}
                     except:
                         continue
+                
+                # 检查"审核中"状态（等待 30 秒后才判定，避免误判）
+                if elapsed >= 30:
+                    try:
+                        review_visible = self.page.locator('text=审核中').first.is_visible(timeout=500)
+                        if review_visible:
+                            print(f'   ⚠️  检测到「审核中」，creation={creation_id[:16]}... 可能正在审核', flush=True)
+                            return {'status': 'review', 'error': '视频审核中'}
+                    except:
+                        pass
                 
                 return {'status': 'waiting'}
                 
@@ -1696,6 +1754,263 @@ class ViduAutomation:
         
         return ''
     
+    def _dismiss_popups(self):
+        """关闭页面上可能出现的弹窗/遮罩（如付费套餐弹窗）"""
+        try:
+            from auto_vidu_complete import close_popups_and_blockers
+            close_popups_and_blockers(self.page)
+        except Exception:
+            # 手动关闭常见弹窗
+            try:
+                close_btns = self.page.locator('[class*="close"], [aria-label="Close"], [class*="modal"] button:has-text("×")')
+                for i in range(min(close_btns.count(), 3)):
+                    try:
+                        close_btns.nth(i).click(timeout=1000)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    
+    # ============================================================
+    # 投稿 & 无水印视频下载
+    # ============================================================
+    
+    def publish_creation(self, creation_id: str, task_id: str = '', video_url: str = '') -> dict:
+        """
+        通过 UI 自动化点击页面上的"投稿"按钮，完成投稿流程。
+        
+        只投稿当前批次的视频：使用 _last_batch_count 限制点击数量，
+        避免投稿页面上历史视频。
+        
+        Returns:
+            {'success': True, 'published_count': N} 或 {'success': False, 'error': '...'}
+        """
+        max_clicks = getattr(self, '_last_batch_count', 1)
+        print(f"\n📤 投稿 creation (UI自动化, 最多{max_clicks}个): {creation_id}", flush=True)
+        
+        with self._page_lock:
+            try:
+                # 关闭可能的付费弹窗/遮罩
+                self._dismiss_popups()
+                time.sleep(1)
+                
+                # 查找页面上所有"投稿"按钮（排除"已投稿"）
+                post_btn = self.page.locator('button:has-text("投稿")').filter(has_not_text="已投稿")
+                count = post_btn.count()
+                print(f'   🔍 找到 {count} 个「投稿」按钮（限投 {max_clicks} 个）', flush=True)
+                
+                if count == 0:
+                    posted_count = self.page.locator('button:has-text("已投稿")').count()
+                    if posted_count > 0:
+                        print(f'   ⚠️  已有 {posted_count} 个「已投稿」，跳过', flush=True)
+                        return {'success': True, 'already_posted': True, 'published_count': 0}
+                    
+                    print('   ⏳ 未找到投稿按钮，等待页面加载...', flush=True)
+                    time.sleep(3)
+                    count = post_btn.count()
+                    if count == 0:
+                        return {'success': False, 'error': '页面上未找到「投稿」按钮'}
+                
+                # 只投稿 max_clicks 个（最上面的是最新生成的）
+                to_click = min(count, max_clicks)
+                published = 0
+                for i in range(to_click):
+                    remaining = self.page.locator('button:has-text("投稿")').filter(has_not_text="已投稿")
+                    if remaining.count() == 0:
+                        break
+                    
+                    target_btn = remaining.first
+                    target_btn.scroll_into_view_if_needed()
+                    time.sleep(0.5)
+                    print(f'   🖱️ [{i+1}/{to_click}] 点击「投稿」按钮...', flush=True)
+                    target_btn.click()
+                    
+                    submit_btn = self.page.locator('button:has-text("提交")')
+                    try:
+                        submit_btn.first.wait_for(state='visible', timeout=8000)
+                    except Exception:
+                        print(f'   ⚠️  [{i+1}] 未检测到「提交」按钮，跳过', flush=True)
+                        continue
+                    
+                    time.sleep(0.5)
+                    if submit_btn.count() > 0:
+                        print(f'   🖱️ [{i+1}/{to_click}] 点击「提交」...', flush=True)
+                        submit_btn.first.click()
+                    else:
+                        continue
+                    
+                    time.sleep(3)
+                    published += 1
+                    print(f'   ✅ [{i+1}/{to_click}] 投稿完成', flush=True)
+                
+                final_posted = self.page.locator('button:has-text("已投稿")').count()
+                print(f'   📊 投稿结果: 本次投稿 {published} 个，页面共 {final_posted} 个「已投稿」', flush=True)
+                
+                if published > 0 or final_posted > 0:
+                    return {'success': True, 'published_count': published}
+                return {'success': False, 'error': '未能成功投稿任何视频'}
+                    
+            except Exception as e:
+                print(f"   ❌ 投稿异常: {e}", flush=True)
+                return {'success': False, 'error': str(e)}
+    
+    def get_watermark_free_url(self, creation_id: str, max_wait: int = 120) -> dict:
+        """
+        通过 API 查询投稿的无水印视频 URL（craftify 路径）。
+        
+        注意：传入的 creation_id 可能是 task_id（从生成 API 捕获的），
+        需要先通过历史 API 解析出真正的 creation_ids，再去 inspirations 中匹配。
+        
+        Returns:
+            {'success': True, 'video_url': '...'} 或 {'success': False, 'error': '...'}
+        """
+        print(f'\n🔍 查询无水印视频 URL (id={creation_id})...', flush=True)
+        
+        # 第一步：通过历史 API 将 task_id 转换为 creation_ids
+        real_creation_ids = []
+        with self._page_lock:
+            try:
+                cids = self.page.evaluate("""async (taskId) => {
+                    try {
+                        const r = await fetch('https://service.vidu.cn/vidu/v1/tasks/history/me?page_no=1&page_size=10', {
+                            credentials: 'include'
+                        });
+                        if (!r.ok) return [];
+                        const d = await r.json();
+                        for (const t of (d.tasks || [])) {
+                            // 匹配 task.id 或 task 中的 creation
+                            const tid = String(t.id || '');
+                            if (tid === taskId) {
+                                return (t.creations || []).map(c => String(c.id || ''));
+                            }
+                            // 也检查 creations 里是否直接有这个 id
+                            for (const c of (t.creations || [])) {
+                                if (String(c.id || '') === taskId) {
+                                    return [taskId];
+                                }
+                            }
+                        }
+                    } catch(e) {}
+                    return [];
+                }""", creation_id)
+                if cids:
+                    real_creation_ids = cids
+                    print(f'   📋 task_id={creation_id} → creation_ids: {real_creation_ids}', flush=True)
+            except Exception as e:
+                print(f'   ⚠️  解析 creation_ids 异常: {e}', flush=True)
+        
+        # 如果无法解析，把原 ID 作为候选
+        if not real_creation_ids:
+            real_creation_ids = [creation_id]
+            print(f'   ⚠️  无法解析 creation_ids，使用原始 ID: {creation_id}', flush=True)
+        
+        start_time = time.time()
+        poll_interval = 5
+        
+        while time.time() - start_time < max_wait:
+            with self._page_lock:
+                try:
+                    # 将候选 creation_ids 传入 JS，在 inspirations 中逐个匹配
+                    data = self.page.evaluate("""async (targetCids) => {
+                        const r = await fetch('https://service.vidu.cn/vidu/v1/inspirations/my?page_no=1&page_size=20', {
+                            credentials: 'include'
+                        });
+                        if (!r.ok) return {error: 'API请求失败: ' + r.status};
+                        const data = await r.json();
+                        const inspirations = data.inspirations || [];
+                        if (inspirations.length === 0) return {found: false, reason: 'no_inspirations'};
+                        
+                        // 按 creation_id 列表匹配
+                        for (const insp of inspirations) {
+                            const ma = insp.media_asset || {};
+                            const cid = String(ma.creation_id || '');
+                            if (targetCids.includes(cid)) {
+                                const creation = ma.creation || {};
+                                const uri = creation.uri || '';
+                                return {
+                                    found: true,
+                                    matched: true,
+                                    video_url: uri,
+                                    cover_url: creation.cover_uri || '',
+                                    has_craftify: uri.includes('craftify'),
+                                    matched_cid: cid,
+                                };
+                            }
+                        }
+                        
+                        const avail = inspirations.slice(0, 5).map(i => String((i.media_asset || {}).creation_id || ''));
+                        return {found: false, reason: 'no_match', available_cids: avail};
+                    }""", real_creation_ids)
+                    
+                    if data and data.get('matched'):
+                        url = data.get('video_url', '')
+                        has_craftify = data.get('has_craftify', False)
+                        matched_cid = data.get('matched_cid', '')
+                        
+                        if has_craftify and url:
+                            print(f'   ✅ 匹配到 creation_id={matched_cid} 的无水印视频!', flush=True)
+                            print(f'   📎 {url[:100]}...', flush=True)
+                            return {'success': True, 'video_url': url}
+                        elif url:
+                            elapsed = int(time.time() - start_time)
+                            if elapsed % 15 == 0:
+                                print(f'   ⏳ 已匹配但 craftify 处理中... ({elapsed}s)', flush=True)
+                    
+                    elif data and not data.get('found'):
+                        elapsed = int(time.time() - start_time)
+                        reason = data.get('reason', '')
+                        if reason == 'no_match' and elapsed % 15 == 0:
+                            avail = data.get('available_cids', [])
+                            print(f'   ⏳ 未匹配，目标: {real_creation_ids}, 可用: {avail} ({elapsed}s)', flush=True)
+                        elif elapsed % 15 == 0:
+                            print(f'   ⏳ 等待投稿数据... ({elapsed}s)', flush=True)
+                    
+                    elif data and data.get('error'):
+                        print(f'   ⚠️  {data["error"]}', flush=True)
+                    
+                except Exception as e:
+                    print(f'   ⚠️  查询异常: {e}', flush=True)
+            
+            time.sleep(poll_interval)
+        
+        return {'success': False, 'error': f'等待无水印视频 URL 超时 ({max_wait}s), ids={real_creation_ids}'}
+    
+    def download_watermark_free(self, creation_id: str, save_path: str, task_id: str = '', max_wait: int = 180, video_url: str = '') -> dict:
+        """
+        一站式无水印视频下载：投稿 → 导航到个人主页 → 获取无水印 URL → 下载。
+        
+        Args:
+            creation_id: creation ID
+            save_path: 视频保存路径
+            task_id: task ID（可选）
+            max_wait: 最长等待秒数
+            video_url: 带水印视频 URL（备用）
+            
+        Returns:
+            {'success': True, 'video_path': '...', 'video_url': '...'} 
+            或 {'success': False, 'error': '...'}
+        """
+        # 1. 投稿（UI 自动化点击）
+        pub_result = self.publish_creation(creation_id, task_id, video_url=video_url)
+        if not pub_result.get('success'):
+            return pub_result
+        
+        # 2. 导航到个人主页获取无水印 URL
+        url_result = self.get_watermark_free_url(creation_id, max_wait=max_wait)
+        if not url_result.get('success'):
+            return url_result
+        
+        # 3. 下载无水印视频
+        wf_video_url = url_result['video_url']
+        if download_video(wf_video_url, save_path):
+            return {
+                'success': True,
+                'video_path': save_path,
+                'video_url': wf_video_url,
+            }
+        else:
+            return {'success': False, 'error': '无水印视频下载失败', 'video_url': wf_video_url}
+    
     # ============================================================
     # 完整生成流程（兼容旧接口，串行模式）
     # ============================================================
@@ -1712,6 +2027,7 @@ class ViduAutomation:
         character_name: str = None,
         save_path: str = None,
         max_wait: int = 900,
+        watermark_free: bool = False,
     ) -> dict:
         """完整的视频生成流程（串行模式，兼容旧接口）"""
         submit_result = self.submit_generate(
@@ -1728,12 +2044,42 @@ class ViduAutomation:
         if not submit_result.get('success'):
             return submit_result
         
-        return self.poll_result(
+        result = self.poll_result(
             task_key=submit_result.get('task_key', ''),
             initial_video_count=submit_result.get('initial_video_count', 0),
             max_wait=max_wait,
-            save_path=save_path,
+            save_path=save_path if not watermark_free else None,
+            creation_id=submit_result.get('creation_id', ''),
         )
+        
+        if not result.get('success'):
+            return result
+        
+        if watermark_free and save_path:
+            creation_id = submit_result.get('creation_id', '')
+            if not creation_id:
+                print("   ⚠️  无 creation_id，回退到带水印版本", flush=True)
+                if not result.get('video_path'):
+                    download_video(result['video_url'], save_path)
+                    result['video_path'] = save_path
+                return result
+            
+            wf_result = self.download_watermark_free(
+                creation_id=creation_id,
+                save_path=save_path,
+                max_wait=180,
+                video_url=result.get('video_url', ''),
+            )
+            if wf_result.get('success'):
+                return wf_result
+            
+            # 无水印失败时回退到带水印版本
+            print(f"   ⚠️  无水印下载失败: {wf_result.get('error')}，回退到带水印", flush=True)
+            if result.get('video_url'):
+                download_video(result['video_url'], save_path)
+                result['video_path'] = save_path
+        
+        return result
 
 
 # ============================================================
@@ -1752,6 +2098,7 @@ def main():
     parser.add_argument('--reference-file', default=None, help='参考文件路径')
     parser.add_argument('--character-name', default=None, help='主体库角色名称')
     parser.add_argument('--max-wait', default='10', help='最大等待时间（分钟）')
+    parser.add_argument('--watermark-free', action='store_true', help='下载无水印版本（通过投稿获取 craftify URL）')
     parser.add_argument('--profile', default=None, help='浏览器 profile 目录')
     
     args = parser.parse_args()
@@ -1784,6 +2131,7 @@ def main():
             character_name=args.character_name,
             save_path=args.save_path,
             max_wait=max_wait,
+            watermark_free=args.watermark_free,
         )
         
         print(json.dumps(result, ensure_ascii=False, indent=2))

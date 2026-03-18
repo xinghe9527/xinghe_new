@@ -449,7 +449,7 @@ class _VoiceGenerationDialogState extends State<VoiceGenerationDialog> {
                 border: Border.all(color: const Color(0xFF3A3A3C)),
               ),
               child: SingleChildScrollView(
-                child: Text(
+                child: SelectableText(
                   widget.storyboard.scriptSegment,
                   style: const TextStyle(
                     color: Color(0xFFCCCCCC),

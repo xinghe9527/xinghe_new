@@ -1,0 +1,831 @@
+{
+  "total": 0,
+  "tasks": [
+    {
+      "id": "3210210266177612",
+      "input": {
+        "creation_id": "0",
+        "prompts": [
+          {
+            "type": "text",
+            "content": "朵莉亚[@图1]在山丘[@图2]打丽雅[@图3]",
+            "negative": false,
+            "recaption": "",
+            "selected_region": null,
+            "src_img": "",
+            "src_imgs": [],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/input/prompt-01.jpeg?Expires=1774377285&Signature=XxI2D25naxXbQ1G3VQtKKNTZFbEML9XDiydJd~7d~z3dLtBLAw0NzIS8Kf7~yw8B8hCcK729XpA4aabRRhOwfk3K-SxEMD-CRjHH6ITO4jHWgIKSXP6X31tMc9df09bLBwlDqM-7MMTy7WBsEwr-GHyF2DNfEMhgHwKM-7h1P8LE8CxfcxikrMmNBjVdZqPz4oulbdO7r7ydY55IDMwMssKEbaDP9J-klAabtMoMxU-xCko8~Qcyas2niYs818KU5ccjtcm3lnG~KfA6hSTp93MF7GczET7MpmZKrUJhmeURO35-unGEJG4hTnBIh5rWhjJt3RaDX-5KsyDRDej~MQ__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 714
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/input/src-img-0101.jpeg?Expires=1774377285&Signature=g1BbNijFP17NB6xn5CVPzs4cfncyZtkzjjg9K3w6uDmmZyCIZ8aZ-migCIhm7oY67KG7HbcyyN3dSBd6D~-t8B2J2xz75ACP274AomQAeJNCXz8G4Sxbxgrdtjr6fXJmAfw-hrUSpNhMeF-jSMxLt5sgqa9D2CNoRn0yiwiupcU41GwnYBwmRNofWpbi3OF8w~0lr82EpeNgj8AzWMkLpFU-yYd5sfO-xuaN-5bupiYZ5KMocv0mvfzjOqjDeyhywqWHbwFLsTSBD0VEkM6LYTRMJSllBWTz2KmONoQoF1ZG7SwUjgguM4Ax7JIKZne822tWmlKY0sb~z7QGGwoquA__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图1",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/input/prompt-02.jpeg?Expires=1774377285&Signature=eWTYxXMasMdiXa~SQD1JGzpXEwXwVg72A0iOuz~VU~QzqsVxNpgF0njhJLzltsYVNYCV8TlnKJ-9xpzD~-U8jBwFjiJ43ESgr2Jlkx-IWmG4AVRxeZA9xo40rNC4nMdfb6myjca-eh85DNBybcSfMpWycykz6FHhHlyK127B9g767S1D9WJjw3AswcM~x4LJcaTNMcxt822SIMwWwalHN5qoQ1QfXHmnDYxIT5D5Fj-l0YS~u8vmXBIE3NSbecoFgiymRxz-ji4Z6NA~~GTQNvhb1XpGaS0COSrzIy19P2NjhMrX2bdnW3bcR4Abxa5t42Y1RVGH3nw1gUjs~Z0xZA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 717
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/input/src-img-0201.jpeg?Expires=1774377285&Signature=StexhsbnUTkVPHhBeJUkt5V~IGqHbv4CF6kPYtebZFE0YSV70ghoz3a09AWjpZ3Fll7anUwlsc4dSS5CiMEW0FmKiEFXLetMdUGi9k1VDaZyYHK-x6v3JaiZmWMZnUXGvYJhdeEAjrk-yqAmR0fSOyJB83itjRjeOoMoJv1cbrd8GzygIIE4TncHOCVpjpH7lfiZ9WtolCra-rDVnKtgbOmyIrdHDNVP9OrvOfPXxj1732nTtO6~vmqOxInuW9kBFl4DyX2Ls9oXOIlZqSOV800lEC5BDrFvFLh2a-KKn0O~GHtFxbeFsKaEMwb2nN2ADNIOuzLbc00owQSbGjSchQ__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图2",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/input/prompt-03.jpeg?Expires=1774377285&Signature=M-fNVAT0bh~TTDv63jHSPyojHcwBz8C6D~aa-KXoRxuscV-FVsBtkZC1Ys-mDAk9Ke7cjSflnve7gN9ZXafRpvQ5paNmKVKiViZ-TqZsKfZI8yxslarB4yDg53A20lS6Cp~0JjXwULam1keY0jV80mW~T8JwZTAkP8SZJxmQHjfIiHVT5B4BK3fj~GVxxzphqw~0pzIZYSgZ7iLipljVNFJr~b3ObcCzHakpAyH0k2KLycwqcbsrrL0SlDZF~~qRc~nDfo96adsIABk29oZstddltHMzrVqhdFcLNHDIddzmAYrbEGEMfTQ~CuLJOS5UYvXTyKU~cR3h1lUcscFsFA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 714
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/input/src-img-0301.jpeg?Expires=1774377285&Signature=FZw10nazAdwT86ABYuXA7U0VgD-deoZJzY9NOHC0KbtnEFKCdQDjjWrWdf-rBlqStPqWgWnVKFHOYgLPkkTBvDwylbciRkg4vHAlyGdVdUbo9zV~vO3S5KWJVpRpNplA-BKmrmRyJ1yZe4qmJPxFjleu14Oa1Ngi-oK9TLGECKHWnWyYOBfZF0dGUSTEEdqOnegJvYRbS~4v8D8~fyDYfI9MMOW3YGJJUxSDND-DT0wTbKpGVpedAb1qcPcUazy7EP5tbrYXmToUrmu~yjV~qmxK0FmwORXCQGD7tfv6GPPCgIl8XYRUdoi4PV~4enOsEeOxGsfrq0jGmVFCg9VzwA__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图3",
+            "cover_uri": ""
+          }
+        ],
+        "lang": "zh",
+        "enhance": true,
+        "skip_moderation": false,
+        "seed": "0",
+        "multi_image_boost": false,
+        "lora": null,
+        "invisible_watermark": null,
+        "editor_mode": "normal",
+        "with_audio": false,
+        "lip_sync": false,
+        "remix_mode": "unspecified"
+      },
+      "settings": {
+        "style": "",
+        "duration": 5,
+        "aspect_ratio": "16:9",
+        "model": "vidu",
+        "model_version": "3.1",
+        "resolution": "1080p",
+        "movement_amplitude": "auto",
+        "schedule_mode": "normal",
+        "sample_count": 1,
+        "use_trial": false,
+        "is_locked": false,
+        "transition": "unspecified",
+        "with_audio": false,
+        "lip_sync": false,
+        "frame_durations": [],
+        "image_count": 0,
+        "codec": "h265",
+        "retain_original_audio": false,
+        "biz_scene": "unspecified",
+        "voice_lang": ""
+      },
+      "type": "character2video",
+      "state": "success",
+      "creations": [
+        {
+          "id": "3210210278298290",
+          "task_id": "3210210266177612",
+          "type": "video",
+          "grade": "draft",
+          "uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210210278298290.mp4&Expires=1774377330&Signature=T6uxuVSQllBYV9Ev76RfXsMEqodCTzydgIwbnT2pA4cc1TJqqKGzbWymEsCASV33TtDUBbK~jOsqQWfmqxhBozI6tu2aHxC7ugQY4cX2mia-hrN4tLdanZDqAd0qiKMxJ3-RZNpCc-K~GuFEMoiHzPTiFicsxiczj8uJu~3ASggXHCw02uJlQPhFcqF~Xl3kM4ZZAZPHpquJgyQi~8QAQNJ2fNLGKuTsjSv7X0~yAGP5wR5mFre3R5pa0VyIvlYVEQaIfQdi-1nvFnuDPs4poBfFcEqdzv7a7HCUl0qh3sI5PxSjXHpLxSNcenpbXP-iYujdvfkfroNwdUwelWQ6NQ__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "download_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210210278298290.mp4&Expires=1774377330&Signature=T6uxuVSQllBYV9Ev76RfXsMEqodCTzydgIwbnT2pA4cc1TJqqKGzbWymEsCASV33TtDUBbK~jOsqQWfmqxhBozI6tu2aHxC7ugQY4cX2mia-hrN4tLdanZDqAd0qiKMxJ3-RZNpCc-K~GuFEMoiHzPTiFicsxiczj8uJu~3ASggXHCw02uJlQPhFcqF~Xl3kM4ZZAZPHpquJgyQi~8QAQNJ2fNLGKuTsjSv7X0~yAGP5wR5mFre3R5pa0VyIvlYVEQaIfQdi-1nvFnuDPs4poBfFcEqdzv7a7HCUl0qh3sI5PxSjXHpLxSNcenpbXP-iYujdvfkfroNwdUwelWQ6NQ__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "cover_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210210266177612/creation-02/cover.jpeg?Expires=1773858930&Signature=L0IREPsdRHcfA0bQI7LTTUidUXpqo8KAdnZqseXxh7pyjpNT8Sork0OUlx4WP4OKGWVujZr097Uo9Th12ECOH5L6of44CJXR5m8FxNJPoh1WBlUUblmBPNcWKZiD2krJ-H5g7-zhNo0VLoBjMDDEE-2PfbwI6hAa7rEn4zKtWBu8oP9ddODdqB~KZrbc33~5D2qiAnHAQnAkS2MJpOHgA5SNC1VvwWI9UzQUqDK3LO9i4Gjz4cbSfxHB6HT1y2-XkqWWJgZzn8pfDYpMNY8hpK3fKfmfEmFv8KM99OcEmHNSP1raWe5pIHla5xlTptWOaa9heyY9t3hm6fkNG1I4qg__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "resolution": {
+            "width": 1920,
+            "height": 1080,
+            "resolution": "1080p"
+          },
+          "vote": "unspecified",
+          "is_favor": false,
+          "src_video_duration": 0,
+          "creator_id": "3209556353473214",
+          "video": {
+            "duration": 5.041667,
+            "fps": 24,
+            "resolution": {
+              "width": 1920,
+              "height": 1080,
+              "resolution": "1080p"
+            },
+            "ratio": "Ratio_16_9"
+          },
+          "is_deleted": false,
+          "err_code": "",
+          "created_at": "2026-03-17T18:34:45.931713Z",
+          "origin_task_type": "character2video",
+          "style": "",
+          "duration": 5,
+          "has_audio": false,
+          "is_asset": true,
+          "is_work": false,
+          "asset_selected": false,
+          "nomark_uri": "",
+          "source_creation": null,
+          "origin_creation": {
+            "id": "3210210278298290",
+            "resolution": "1080p"
+          },
+          "err_info": {
+            "err_code": "",
+            "err_msg": ""
+          },
+          "file_name": "",
+          "is_posted": false,
+          "has_copyright": false
+        }
+      ],
+      "err_code": "",
+      "scene": "",
+      "created_at": "2026-03-17T18:34:45.338308Z",
+      "origin_task_type": "character2video",
+      "extra_params": null
+    },
+    {
+      "id": "3210188733416114",
+      "input": {
+        "creation_id": "0",
+        "prompts": [
+          {
+            "type": "text",
+            "content": "[@图1]写实, 真人画风, 电影感, 高级感, 电影胶片质感, 戏剧性光影, 高饱和度色彩, 精细的场景设计, 杰作, 4K, 最佳画质, 超细节；镜头以极缓慢斯坦尼康微距前推起幅（起始距离0.8m，焦距锁定右眼虹膜边缘反光点），同步轻微下沉3°模拟俯视压迫视角，运动速率由0.3s缓入→1.2s匀速推进→0.5s滞停于0.35m极限微距；全程无焦点转移，景深极浅（仅虹膜反光点与下唇凹痕区域锐利，纱帘投影在额际形成动态柔边虚化）；运镜节奏紧绷克制，与女主[@图2]屏息2.3秒完全同步——前推在第1.8秒微顿，余0.5秒凝滞于窒息临界点，此时呼吸声骤弱、环境低频嗡鸣初现；转场设计为硬切：当喉结完成最后一次短促滑动瞬间，画面右上角纱帘投影边缘随一次几乎不可见的帧率抖动（模拟胶片齿孔微偏）向内收缩0.7像素，随即精准匹配分镜2中落地窗玻璃映像的红光拖影起始位置，实现光影逻辑闭环与心理张力无缝传导；整体运镜拒绝晃动与修饰，强调机械式逼近感，强化被窥视的生理不适，奠定全片幽闭惊悚基调。",
+            "negative": false,
+            "recaption": "",
+            "selected_region": null,
+            "src_img": "",
+            "src_imgs": [],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/input/prompt-01.jpeg?Expires=1774375971&Signature=EGh-SGiahJxdJPIRASNHfQowWsmI7~ySbGKnQ8VfV0HQd~leyPRiRhfw083UhxyA8YBg8t6K7CGibL4be5W6znxGtFRMgHhqcMqJQRgj7uceV6CtNB2DYlVomFOmNnCMP4UuPEwLfItucOot4-zcc2bHFyAHUxKyPrHT0E2~LldmrP7F2OV8-m3dA51uGbVyryX1nYhjjl76sKQupsgajhS0wqDEzKJ1qZTKaiZT5aXU6Jf6qI6Dx7EdL9HtZYaUGV4x6TPCgHliEf5VAKY84lwfY4DnkI8j8k8UJXAnasbFSU9DxO8cgrPqISWsoi0DkOYN9Ju9RU5IKChiI0dCjQ__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 717
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/input/src-img-0101.jpeg?Expires=1774375971&Signature=YVO~4KP-uCAGPU1DrAtu7ypwn-CPPOzVZb-qfGCAXn~QFqr2bqCGdR40JsVirgFZJ41je06F4s3T~nFlgm-HSLPbb4FZ23IlufzXYmEjChf-6grb6dsQ2WlrEA5gv2-bKRf571NIV2KZ7BKWrHez0t5-fWnidQxGMzlHPtF~7oViF99dBC69ncIOr2Qr0VHagCi0acjDZ3IuzcDla0GUDXKYB6wUp9M38yi-ycRLyQTzNZYwU8SPWy7yRtqNjb14OGNSQbnzJSm6hodO30v1febrwBiuJL2IWkXizgJQfF7oFmNR4lwU3yXE52PrNGLEuPBGFuFQZa5F2ra1wdCdRg__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图1",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/input/prompt-02.jpeg?Expires=1774375971&Signature=Z0vgY~Gt-F-TJv0-DgtXCfWErLsvlHd7rfXnhbL6DbwU3ExhhPSIQVoNq1mmlScw1YHNLIl9wyDVO26cG-LjvkkMQZwB8eOOExMHswldsFSvqM-rwE6XEQefRqNUu~C5rj~tPX0PivPxp5SqqZJC2rkJbZP7N0INChXLpRuX~2H0wzwo401fhgm1Lu0cXVK4gbT3majqgNwzM6leoLDGj0fq6AdqYGgAxw6LRXsSfI8q-aV3kvGPxkx9ht3SHkTMoOLfFy3JGjDwhi9nIeBUbL32WbBJ14JR2eExUdOgubm-1ZaXpv7VXpIXJubmO24mZe6RlmdCjJCr1eRMH09Jcg__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 714
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/input/src-img-0201.jpeg?Expires=1774375971&Signature=IY8sgBnh8Ik2xTl1QiLBx8tkxT72mnV5uWjfOLVa5iDYCTcOrVihGruXYzpX8I8CDTorkw2hRecU3mAzkatmuWHudFsUugWvAvTVPD7lJ8uAYUjnuRSplXZhbwgjeTmFR6l1fmpUKD1DJ98EoaXE2UsYTDOJFStszIcDht7MPI35TIqbAcWYgBQdrFs8w2TXywI4wRmjLgYCFNC-HOmZbgWKg~bU2NdeN9AuPeb5yYOnfM6MbpNX~pWIGYe0utws8tayquaVzZNSHR6j6iEsMHZ7MWhmCSutkbyldcpI7oG6exQRR-VcrOmbgWox3~ihfbUXYyNM84XOlND8ZEJ5qA__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图2",
+            "cover_uri": ""
+          }
+        ],
+        "lang": "zh",
+        "enhance": true,
+        "skip_moderation": false,
+        "seed": "0",
+        "multi_image_boost": false,
+        "lora": null,
+        "invisible_watermark": null,
+        "editor_mode": "normal",
+        "with_audio": false,
+        "lip_sync": false,
+        "remix_mode": "unspecified"
+      },
+      "settings": {
+        "style": "",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "model": "vidu",
+        "model_version": "3.1",
+        "resolution": "1080p",
+        "movement_amplitude": "auto",
+        "schedule_mode": "normal",
+        "sample_count": 1,
+        "use_trial": false,
+        "is_locked": false,
+        "transition": "unspecified",
+        "with_audio": false,
+        "lip_sync": false,
+        "frame_durations": [],
+        "image_count": 0,
+        "codec": "h265",
+        "retain_original_audio": false,
+        "biz_scene": "unspecified",
+        "voice_lang": ""
+      },
+      "type": "character2video",
+      "state": "success",
+      "creations": [
+        {
+          "id": "3210188748247555",
+          "task_id": "3210188733416114",
+          "type": "video",
+          "grade": "draft",
+          "uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210188748247555.mp4&Expires=1774376036&Signature=upXLOaGabPi6LvFKdEcb18esVkPXFB-2lHsjuebRZmqixzrf195yKaH2FHiGY4sPyDh5DyT1B279jHENEsfuSlH7VBtvYV5iD~ejooApycWgKaPKkGCnjiLptN~66cHh6WVdybHbcS808VFRV3tn6ajguOr8JOwIKrtKXb82ux00K8-xZJ3XscNx-WhO0J856N1cc2Jf1mLDmoegyKOYUjsLF3Nv3DRpYzozrk7bTLqo-4JtYZWDNJB2a54~MGPw5DoQNJij8vI5p-PGl4ZY~aD-xvLKitttyXbgErb0-5A02YdcmjO8~R4RKNDJ8qQtmQvdX919NFyzpmQVcSuWpA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "download_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210188748247555.mp4&Expires=1774376036&Signature=upXLOaGabPi6LvFKdEcb18esVkPXFB-2lHsjuebRZmqixzrf195yKaH2FHiGY4sPyDh5DyT1B279jHENEsfuSlH7VBtvYV5iD~ejooApycWgKaPKkGCnjiLptN~66cHh6WVdybHbcS808VFRV3tn6ajguOr8JOwIKrtKXb82ux00K8-xZJ3XscNx-WhO0J856N1cc2Jf1mLDmoegyKOYUjsLF3Nv3DRpYzozrk7bTLqo-4JtYZWDNJB2a54~MGPw5DoQNJij8vI5p-PGl4ZY~aD-xvLKitttyXbgErb0-5A02YdcmjO8~R4RKNDJ8qQtmQvdX919NFyzpmQVcSuWpA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "cover_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210188733416114/creation-02/cover.jpeg?Expires=1773857636&Signature=l1q4HRC8xrdJOkNtCoRb7NroNDJXDgAqCHXuit2EFuQZe~HpamKSQJkS--ETFJsCoMacmFzcfQucoDVjK0kCUihfJjB11VBgIsnQGmh2suRUO5wCXrXNHSLAGTFSf-1vtZyROKgIEGY~lbLT16iNrgf2TKT0YEO97R2i5~8e2FxT~TrW67sNavbS9qGtL3K3dMgHFwzIjMJsr1PuXED0fUtt~ZKzMJTmvFkUmkcdiw9JQh6qOuFAMJup6biYTQcrgGdSdiw0vm3AFtaxuT~u~Edi4W9wEKJNLT4NNTxH1ZamzeHGrtRLBiOU5OD2z~Jxo9Z6XoSjaUJ-BKEC2gnEFw__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "resolution": {
+            "width": 1080,
+            "height": 1920,
+            "resolution": "1080p"
+          },
+          "vote": "unspecified",
+          "is_favor": false,
+          "src_video_duration": 0,
+          "creator_id": "3209556353473214",
+          "video": {
+            "duration": 5.041667,
+            "fps": 24,
+            "resolution": {
+              "width": 1080,
+              "height": 1920,
+              "resolution": "1080p"
+            },
+            "ratio": "Ratio_9_16"
+          },
+          "is_deleted": false,
+          "err_code": "",
+          "created_at": "2026-03-17T18:12:51.841621Z",
+          "origin_task_type": "character2video",
+          "style": "",
+          "duration": 5,
+          "has_audio": false,
+          "is_asset": false,
+          "is_work": false,
+          "asset_selected": false,
+          "nomark_uri": "",
+          "source_creation": null,
+          "origin_creation": {
+            "id": "3210188748247555",
+            "resolution": "1080p"
+          },
+          "err_info": {
+            "err_code": "",
+            "err_msg": ""
+          },
+          "file_name": "",
+          "is_posted": false,
+          "has_copyright": false
+        }
+      ],
+      "err_code": "",
+      "scene": "",
+      "created_at": "2026-03-17T18:12:51.225093Z",
+      "origin_task_type": "character2video",
+      "extra_params": null
+    },
+    {
+      "id": "3210183976972867",
+      "input": {
+        "creation_id": "0",
+        "prompts": [
+          {
+            "type": "text",
+            "content": "[@图1][@图2]",
+            "negative": false,
+            "recaption": "",
+            "selected_region": null,
+            "src_img": "",
+            "src_imgs": [],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/input/prompt-01.jpeg?Expires=1774375681&Signature=nk1I0mxJbYWSA~qG35SzKFRcV7sNqd9Sps~dVglrh9qmutQqQKTjwLMLHOHHuZrUwn4~tdNAuElT9Po62yPeOamaKDTQPhD4INgxKQAG4J~f8DcTtLBI8QxYnjn076VMGctkbTVOrW8~api7MJGKr~veR3cScBWluvgZmhJ8uTgANae07uXmFfYtYleUc1OXLcqNSp-FK3qz6c56GTi~HMyUvBGTv4-UR-xzxHh6is5uvyP5biKt8vONcQ7JAPsEt8hjGsWKTlZgWMAp4o2XygiRk9RDVZaruQCOCWHcEmW2OPNXDeOPEemIfWqAQuTvUqxUk4oMbVR7ZZzQJinsAg__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 717
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/input/src-img-0101.jpeg?Expires=1774375681&Signature=CrNeyc7VO~-nkwbfeUCu21wJyZxpsuNY4Gt26wCr3pz6o6ztO4~2oClsaiAWTKEggN1NOkUA0FYQBgVau~oIeJr44UCbJSlOdyfbIM6Z24rv7XLfuL0nghPbeo2cY~6w~u9ktVU~kIiXgaBZ3mwQaWLzsJdmudik20cNA6mViwYLChh891oeARrZXhjZMh0THb7nZT22hAvwNQie5daZnljBk1zRjVqf9ysW7ud6bhJJUY0eJbv9pb7JWKNt8kTy0XEQ1YIXYqMW8EDsk6~l7o42F0EPfgSj62WHSkwswsZboDW1mdU6~61KSOuIRCcszgQx4eQswpCHlPqisYKWvg__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图1",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/input/prompt-02.jpeg?Expires=1774375681&Signature=Vy2yCMLuSz9~EBXkF7HCIjG8QKR6kkq~rhrDfwbUEDvnUnmhGKVP945VCxetPe1CYaJRx-T-4GQHR7kJqaukTryfvfyT45i~jCQVsk6~8sSTksdcBxcWyBH4Rbxye5-cR81IEy07xcMRvFpVS2K-inAGs8Przk0P5roeHfEEEi~XZr-IW7Ge6rFBzDc0Bc2c8FqIdNUm2CrASU6cSYua06yp~-iauTYynlHlvbMw~y5WLs3jO-12Yvm1CU9by2QUCmCDSHV4QAjqmWViTwYAQ78c3OEF2VL3ePxisYxXLYfxdYgJmNwjgGk5DWsKUPewXa4yxzSJnD-MRmv1rA4nkw__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 714
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/input/src-img-0201.jpeg?Expires=1774375681&Signature=AfZa~hE6fENCJvmbjy75oLlAmRDxtmuSLC35CcSUzvPUCzbxIklmtg11oIq0fYsVQr8KAIdiXm4cl9D35d9QoMoL01FjVk2gp96Gx6zMBR7PNWwuPlNpuYjpvrpDMsasuUGTkuAmwW-yKhD4dJbvCZMxew1ujfNiDF1n~Jjivhz5G8PNKn6EBdi91gkDGvPds9~8v~LOF1AWpO4qw3OPo10rxtqOF-BTyoLUrPVVBqKlBtnqEbr95FBeIQ0fdRtBiFw0XzSeiDzbQk8C2FrKhXz~qjK8C6yz0AFN0jHNcts3N3Wz7YKu7gWJg9NxmThmWCOGXqeSCOoLMVBGxlTVCQ__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图2",
+            "cover_uri": ""
+          }
+        ],
+        "lang": "zh",
+        "enhance": true,
+        "skip_moderation": false,
+        "seed": "0",
+        "multi_image_boost": false,
+        "lora": null,
+        "invisible_watermark": null,
+        "editor_mode": "normal",
+        "with_audio": false,
+        "lip_sync": false,
+        "remix_mode": "unspecified"
+      },
+      "settings": {
+        "style": "",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "model": "vidu",
+        "model_version": "3.1",
+        "resolution": "1080p",
+        "movement_amplitude": "auto",
+        "schedule_mode": "normal",
+        "sample_count": 1,
+        "use_trial": false,
+        "is_locked": false,
+        "transition": "unspecified",
+        "with_audio": false,
+        "lip_sync": false,
+        "frame_durations": [],
+        "image_count": 0,
+        "codec": "h265",
+        "retain_original_audio": false,
+        "biz_scene": "unspecified",
+        "voice_lang": ""
+      },
+      "type": "character2video",
+      "state": "success",
+      "creations": [
+        {
+          "id": "3210183987440845",
+          "task_id": "3210183976972867",
+          "type": "video",
+          "grade": "draft",
+          "uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210183987440845.mp4&Expires=1774375735&Signature=t3RUdvRcbSS42PRy8b5uwTOHv3tI60AmurkKGVIHO1-~SgXWT7YoywIWMs3apK-Ds~za4vF-cIbzU9x7nUFShbIUtwoHnJDUQEn-qOXQr4x2JBTW6GczrJBU335RW4YLSLR~yFrw8JWtKtKtljdyogifv1saBbGaijWbQSg-xlC5Ym~dOr2JhAcPe1ihWHdRgzy0Hw~m80Ajh7zNf2Nha-xl-jko4jpXRLKxFLRq7MP4vFX84YPEvKl7vN~fsIPp~2Xl4TBcdrePWWAVe0SgtxEX3PwbfuiN4l~jzgd3NhuzvLhEr8eyAsiN2OUhtXrtgslL28EpmzGxJ0mFBvCaXA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "download_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210183987440845.mp4&Expires=1774375735&Signature=t3RUdvRcbSS42PRy8b5uwTOHv3tI60AmurkKGVIHO1-~SgXWT7YoywIWMs3apK-Ds~za4vF-cIbzU9x7nUFShbIUtwoHnJDUQEn-qOXQr4x2JBTW6GczrJBU335RW4YLSLR~yFrw8JWtKtKtljdyogifv1saBbGaijWbQSg-xlC5Ym~dOr2JhAcPe1ihWHdRgzy0Hw~m80Ajh7zNf2Nha-xl-jko4jpXRLKxFLRq7MP4vFX84YPEvKl7vN~fsIPp~2Xl4TBcdrePWWAVe0SgtxEX3PwbfuiN4l~jzgd3NhuzvLhEr8eyAsiN2OUhtXrtgslL28EpmzGxJ0mFBvCaXA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "cover_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210183976972867/creation-02/cover.jpeg?Expires=1773857335&Signature=L-4cwLc8FxFP6HkiBa2vRse-sp7tiXbce5ujxyFugS3T3CMiUEeVbD9~or~el5WRp4KlWwkm9ASnxjqUgYRI7zdkgFMiCWl3bB6cyWBch9lWSza5R-DYco2O8eDbd8SrJE5-J0rOMHt4S-5ikxbLaEcQfxb4DoqAS1neWOoD04b~cYqy05ymYshq~~0AH-oCpbJJcBeKETalMygG78JwHQvcsF3uiG-WWNUO61QmayRTcTXRJCDJW9qyRCm7EWJPPNM6HAxKke9hYgT0cXZ970RcxmZyf5sP308YSeD78~QLLS5zbVbDmJv2hrFschbNI0FkBp0AN8UIuN22WbYmGQ__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "resolution": {
+            "width": 1080,
+            "height": 1920,
+            "resolution": "1080p"
+          },
+          "vote": "unspecified",
+          "is_favor": false,
+          "src_video_duration": 0,
+          "creator_id": "3209556353473214",
+          "video": {
+            "duration": 5.041667,
+            "fps": 24,
+            "resolution": {
+              "width": 1080,
+              "height": 1920,
+              "resolution": "1080p"
+            },
+            "ratio": "Ratio_9_16"
+          },
+          "is_deleted": false,
+          "err_code": "",
+          "created_at": "2026-03-17T18:08:01.264768Z",
+          "origin_task_type": "character2video",
+          "style": "",
+          "duration": 5,
+          "has_audio": false,
+          "is_asset": false,
+          "is_work": false,
+          "asset_selected": false,
+          "nomark_uri": "",
+          "source_creation": null,
+          "origin_creation": {
+            "id": "3210183987440845",
+            "resolution": "1080p"
+          },
+          "err_info": {
+            "err_code": "",
+            "err_msg": ""
+          },
+          "file_name": "",
+          "is_posted": false,
+          "has_copyright": false
+        }
+      ],
+      "err_code": "",
+      "scene": "",
+      "created_at": "2026-03-17T18:08:00.759859Z",
+      "origin_task_type": "character2video",
+      "extra_params": null
+    },
+    {
+      "id": "3210177405977070",
+      "input": {
+        "creation_id": "0",
+        "prompts": [
+          {
+            "type": "text",
+            "content": "[@图1]写实, 真人画风, 电影感, 高级感, 电影胶片质感, 戏剧性光影, 高饱和度色彩, 精细的场景设计, 杰作, 4K, 最佳画质, 超细节；镜头以极缓慢斯坦尼康微距前推起幅（起始距离0.8m，焦距锁定右眼虹膜边屏息2.3秒完全同步——前推在第1.8秒微顿，余0.5秒凝滞于窒息临界点，此时呼吸声骤弱、环境低频嗡鸣初现；转场设计为硬切：当喉结完成最后一次短促滑动瞬间，画面右上角纱帘投影边缘随一次几乎不可见的帧率抖动（模拟胶片齿孔微偏）向内收缩0.7像素，随即精准匹配分镜2中落地窗玻璃映像的红光拖影起始位置，实现光影逻辑闭环与心理张力无缝传导；整体运镜拒绝晃动与修饰，强调机械式逼近感，强化被窥视的生理不适，奠定全片幽闭惊悚基调。缘反光点），同步轻微下沉3°模拟俯视压迫视角，运动速率由0.3s缓入→1.2s匀速推进→0.5s滞停于0.35m极限微距；全程无焦点转移，景深极浅（仅虹膜反光点与下唇凹痕区域锐利，纱帘投影在额际形成动态柔边虚化）；运镜节奏紧绷克制，与女主[@图2]",
+            "negative": false,
+            "recaption": "",
+            "selected_region": null,
+            "src_img": "",
+            "src_imgs": [],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/input/prompt-01.jpeg?Expires=1774375280&Signature=eBR~5329nc-YvBJ3QhrO5rX1tn-58fDZ8CegOcGQj3OmWbcMtZntNjL-Tg13G5XGXguL4x~UubpESp0Q6hwXvELuntA6~WWwc-Bw39YRNrRvJx5iFlWrJin4kHN6aQ3qe79Bb4IgoqEuyKm3JzYVDO5VgP-KWevSBXjhmWXVU1uNiqGwMcWhqkydUI6kH1Q~OAOjK3tC3-vB6CCOfSzqkMAGxSMbxWbLkV~ee58jhbD5QkMW0GGLo7vJnr8-aBmiDNxuNLxKtLlSQk~tTYPbU6ooHFErtAETzQt66sj-9lB9ix7xJB1Q20z0cKKLfPao9F3QoSDFfcrPtrTnSuJaTA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 717
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/input/src-img-0101.jpeg?Expires=1774375280&Signature=b3AO~ksV7eSkZuHw69wgLysQmT9TqRq7ehBBGAiTaXfoD6Fxs7uGPNKR--5y49Qmj5NR8DrWWJSKcsraD66zpyDnU~l3TUm4Pwlc1ZlxmN0Og94ny5CcEPzpOuMXOQ6ujDNnjhz7QscXLLskhZOBHWmCPYsRijTeZ6Ai8vusEocXjBl4HhdQ-fZksDJ2GBwboxR8WiQoaz-wSeaGQPOjx4ldX39e80DUv4vxUdCyZagpmPT1glu2riAxceJBF~~WTcWhmQWefzqi2Ew4h9AgFGha~m5jTP92aynCnl4MN0-TwEEhn2Xlnpd2zt-8BAwPAc~EbBDIhErszLsZjFQM8Q__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图1",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/input/prompt-02.jpeg?Expires=1774375280&Signature=PLGoKJSJwPUfXsfDWxbSAxNkxllaeJHtmwmJ83v~ZoubIHDNuSvSx6E0L5XRYplSesdfl0ms~vWqdZLv~L2DClTx7-w7zetMIH3GNvsOSd8lw3BrrWU5f-CW3VLz72CI1VjiN7KWtMawCTBcUWeFyP4xQA7t8lXvF0wW8V1KchiKcIfk8UNUEih2NRMjyAGHijOU8ql7clBP4Op183U25UMuB4BUHwsAbXcSU8~aztshj6qXJwGAMXhcqWrSogpXQYssHXyjgQUPWTplSbALnkirlfNIFEl4Z69uWd7WrOL6edwP7GYQWuFd6jHzHEeWbJiXPft022eUL1SukFCSkQ__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 714
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/input/src-img-0201.jpeg?Expires=1774375280&Signature=rvrO7dJEnk4sf~GcJSceivmkpcyLW0kIxyUsy1yPNLGH9jggBRtFkYASoPVLUMv0bq~4HTXgwqYqx91bn9lwhwj9li0IsGTfV3aLelDNySrQGPWbzRq2Qg38Z-I~kIxURhY-Vw0ua6f4Wn34IMOIERIQWDoESczvQrx6LzIjL7SBslVoC8Lrdg3q2mWd3PB6I-VATnwykf30fPea9wSqDXO-1edhOk-wGorvYw~pDFM4iIVVfpBf7WuwFKM87smQOFR0MRLxTPsbfTc9nimSHPxsjvNG8wuz2a4xiZVIHG21VauBA7WpCUEmYW-3t5YGqDUAfim-Btw2zeNDvKjlbQ__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图2",
+            "cover_uri": ""
+          }
+        ],
+        "lang": "zh",
+        "enhance": true,
+        "skip_moderation": false,
+        "seed": "0",
+        "multi_image_boost": false,
+        "lora": null,
+        "invisible_watermark": null,
+        "editor_mode": "normal",
+        "with_audio": false,
+        "lip_sync": false,
+        "remix_mode": "unspecified"
+      },
+      "settings": {
+        "style": "",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "model": "vidu",
+        "model_version": "3.1",
+        "resolution": "1080p",
+        "movement_amplitude": "auto",
+        "schedule_mode": "normal",
+        "sample_count": 1,
+        "use_trial": false,
+        "is_locked": false,
+        "transition": "unspecified",
+        "with_audio": false,
+        "lip_sync": false,
+        "frame_durations": [],
+        "image_count": 0,
+        "codec": "h265",
+        "retain_original_audio": false,
+        "biz_scene": "unspecified",
+        "voice_lang": ""
+      },
+      "type": "character2video",
+      "state": "success",
+      "creations": [
+        {
+          "id": "3210177418133087",
+          "task_id": "3210177405977070",
+          "type": "video",
+          "grade": "draft",
+          "uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210177418133087.mp4&Expires=1774375323&Signature=iI6DKbvIwBB2py2CVsQiAMImXINgaA0U5EbDapzqD-BKSXMKsVsB3p1FzgSDxfPJSA63BVB~WAdFUZZEPY-q8DYoz6SNJoDvHirGMqeG4Ux8vhblTe87elYt1t~cEdqQ2SQGW75GIYdmYv7fMjtaVVKz1lBbOsQNMZqcW2SkmGTzFD54B8woQD4zn3u-iWzTs8kvDSwidHxDDaeHe2RHtGqVS9QiJmaUU4JJJOqweLTCn1Z5OrVaGPJLSH0PNYITufUEF6gwq~4LKK2i6V-zwYBImIZOMscOJntJoittQng-AXfrB~5EKWm-bn9df63y-Qu3hmipv~B7dlXBPx5NvA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "download_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210177418133087.mp4&Expires=1774375323&Signature=iI6DKbvIwBB2py2CVsQiAMImXINgaA0U5EbDapzqD-BKSXMKsVsB3p1FzgSDxfPJSA63BVB~WAdFUZZEPY-q8DYoz6SNJoDvHirGMqeG4Ux8vhblTe87elYt1t~cEdqQ2SQGW75GIYdmYv7fMjtaVVKz1lBbOsQNMZqcW2SkmGTzFD54B8woQD4zn3u-iWzTs8kvDSwidHxDDaeHe2RHtGqVS9QiJmaUU4JJJOqweLTCn1Z5OrVaGPJLSH0PNYITufUEF6gwq~4LKK2i6V-zwYBImIZOMscOJntJoittQng-AXfrB~5EKWm-bn9df63y-Qu3hmipv~B7dlXBPx5NvA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "cover_uri": "https://files.vidu.cn/infer/tasks/26/0317/18/3210177405977070/creation-02/cover.jpeg?Expires=1773856923&Signature=YafrAJCnGUKy6uM6W1VnDx1bJIRBhom8Cno28pVVWZpL5ggf5QTCMotQC1ECBeSuN2rD1L0RHasmZ0TvfvOvxWDoCfajUK0qzQ0zidlpX-IzfI7AQpjzGO-ECTjuH4~bjzPplXkNo2188qN1p9MnJHLUo0IwC~iUlPD2x~EsQJlzhWQH2zGG9Pdp29~A3HgALsChTgzQvljsULXKY8N0SK-HxlVQ396XCosEv4d-Dqe-A8qh2V9xNctiEDJImCR5k2V8f1LU6KyS0M3aTFWQShJbsY0~DiNTH2XP3NTfqCfwQHaHcRZG8Yrzf74SA5DJKNwb5CfroEQ2uCGA7VAeSA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "resolution": {
+            "width": 1080,
+            "height": 1920,
+            "resolution": "1080p"
+          },
+          "vote": "unspecified",
+          "is_favor": false,
+          "src_video_duration": 0,
+          "creator_id": "3209556353473214",
+          "video": {
+            "duration": 5.041667,
+            "fps": 24,
+            "resolution": {
+              "width": 1080,
+              "height": 1920,
+              "resolution": "1080p"
+            },
+            "ratio": "Ratio_9_16"
+          },
+          "is_deleted": false,
+          "err_code": "",
+          "created_at": "2026-03-17T18:01:20.306098Z",
+          "origin_task_type": "character2video",
+          "style": "",
+          "duration": 5,
+          "has_audio": false,
+          "is_asset": false,
+          "is_work": false,
+          "asset_selected": false,
+          "nomark_uri": "",
+          "source_creation": null,
+          "origin_creation": {
+            "id": "3210177418133087",
+            "resolution": "1080p"
+          },
+          "err_info": {
+            "err_code": "",
+            "err_msg": ""
+          },
+          "file_name": "",
+          "is_posted": false,
+          "has_copyright": false
+        }
+      ],
+      "err_code": "",
+      "scene": "",
+      "created_at": "2026-03-17T18:01:19.843540Z",
+      "origin_task_type": "character2video",
+      "extra_params": null
+    },
+    {
+      "id": "3210162365267521",
+      "input": {
+        "creation_id": "0",
+        "prompts": [
+          {
+            "type": "text",
+            "content": "[@图1]写实, 真人画风, 电影感, 高级感, 电影胶片质感, 戏剧性光影, 高饱和度色彩, 精细的场景设计, 杰作, 4K, 最佳画质, 超细节；镜头以极缓慢斯坦尼康微距前推起幅（起始距离0.8m，焦距锁定右眼虹膜边缘反光点），同步轻微下沉3°模拟俯视压迫视角，运动速率由0.3s缓入→1.2s匀速推进→0.5s滞停于0.35m极限微距；全程无焦点转移，景深极浅（仅虹膜反光点与下唇凹痕区域锐利，纱帘投影在额际形成动态柔边虚化）；运镜节奏紧绷克制，与女主屏息2.3秒完全同步——前推在第1.8秒微顿，余0.5秒凝滞于窒息临界点，此时呼吸声骤弱、环境低频嗡鸣初现；转场设计为硬切：当喉结完成最后一次短促滑动瞬间，画面右上角纱帘投影边缘随一次几乎不可见的帧率抖动（模拟胶片齿孔微偏）向内收缩0.7像素，随即精准匹配分镜2中落地窗玻璃映像的红光拖影起始位置，实现光影逻辑闭环与心理张力无缝传导；整体运镜拒绝晃动与修饰，强调机械式逼近感，强化被窥视的生理不适，奠定全片幽闭惊悚基调。",
+            "negative": false,
+            "recaption": "",
+            "selected_region": null,
+            "src_img": "",
+            "src_imgs": [],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "",
+            "cover_uri": ""
+          },
+          {
+            "type": "image",
+            "content": "https://files.vidu.cn/infer/tasks/26/0317/17/3210162365267521/input/prompt-01.jpeg?Expires=1774374362&Signature=XOjYNZT5M81Mvp47XvztcFAbWcH24IK32IfLXhcCrTnDfNhA2qEXX-igTLN151LVX788NyJGd7npNB6NUx-FcZc1QGiPhjrWaWxHgvTY9VhCGrG2E0z4h8vAN968~mdFhJUksBB6a~behf2PPf7R4X5c6I6yaiIDWsijnmA6KoqBXlOxjX7z17P6bZDtLHJGfSOGMq0BOMVXHzo2zwwi2rPTE2cpoS5W2qrh2KhfDPI~AAFqv9BSGaMkYAGvY3jkT2DXoeKjCj0QJM1Zb-9I7nPtSQtbnFzqosPGftBSb4LyOomoshglAkhYaZmAnIUiFl49zGgiFnf~u2DYT1v1xA__&Key-Pair-Id=K3DNVHKWMZJUTO",
+            "negative": false,
+            "recaption": "",
+            "selected_region": {
+              "top_left": {
+                "x": 0,
+                "y": 0
+              },
+              "bottom_right": {
+                "x": 1280,
+                "y": 714
+              }
+            },
+            "src_img": "",
+            "src_imgs": [
+              "https://files.vidu.cn/infer/tasks/26/0317/17/3210162365267521/input/src-img-0101.jpeg?Expires=1774374362&Signature=EPp1u0DHiJuMKE-kMpQ5izKDf6P4~Pp~1e-5zAFCdt1cOi-OAdFKbBq9uCHt3CGWDKWAxCgK-uoaQ1WatFP40Mr82AF3TggYCRJjQoZB06UaN7xDeTatyeS30KH1ZD1IJNfXpv-3Z9O8wLV0BB5Hks~R7O5zAtuJeR2MXtihkNkRh9zTy96Q16y6MZUI7LkbgNx6LgouFgEeZP6EG8XMlttnGzL2uZ0jP8adUBuQVGqHT8K~q6Jz1yFqHpALaxaKVARdjl6XEWDJGTVW2v~utUkM8y25qNaLOvE6N1FQcAQqU6yXxXNz3colOY~KJlOstPs7bK7tP5f5-MrWfiZVuA__&Key-Pair-Id=K3DNVHKWMZJUTO"
+            ],
+            "preset": false,
+            "src_content": "",
+            "line_art_pos": "unspecified",
+            "name": "图1",
+            "cover_uri": ""
+          }
+        ],
+        "lang": "zh",
+        "enhance": true,
+        "skip_moderation": false,
+        "seed": "0",
+        "multi_image_boost": false,
+        "lora": null,
+        "invisible_watermark": null,
+        "editor_mode": "normal",
+        "with_audio": false,
+        "lip_sync": false,
+        "remix_mode": "unspecified"
+      },
+      "settings": {
+        "style": "",
+        "duration": 5,
+        "aspect_ratio": "9:16",
+        "model": "vidu",
+        "model_version": "3.1",
+        "resolution": "1080p",
+        "movement_amplitude": "auto",
+        "schedule_mode": "normal",
+        "sample_count": 1,
+        "use_trial": false,
+        "is_locked": false,
+        "transition": "unspecified",
+        "with_audio": false,
+        "lip_sync": false,
+        "frame_durations": [],
+        "image_count": 0,
+        "codec": "h265",
+        "retain_original_audio": false,
+        "biz_scene": "unspecified",
+        "voice_lang": ""
+      },
+      "type": "character2video",
+      "state": "success",
+      "creations": [
+        {
+          "id": "3210162377809898",
+          "task_id": "3210162365267521",
+          "type": "video",
+          "grade": "draft",
+          "uri": "https://files.vidu.cn/infer/tasks/26/0317/17/3210162365267521/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210162377809898.mp4&Expires=1774374406&Signature=ikO9OlLKsuiQOi-0osG~-pjNAjOfMlJKjx2qvKZgCyjOyqj4870c62n4XKlArqIFDqYhKxSsxjbIW5RGAXvFymgrRBVy610NQlVW-ghrcOSVj81jUor5YPS7XIgQdTo4fEwC5BbYM5-dR~vwO6WiKSY49WoWfdcO3znP-5vScsElV3gaJs3Du05ITGEVfo9t5F0iJPlF-Rs~8Z80M1qw9~AKBYYYSGgo95s6MaTmS2NVfI3TzTHaE3qnT~Bd7n~gnSJaMKOPIwalQ-8A5z9XrSnQIoCzbDAh~SvhK9wmRTUgaDkWDr6rc0YcJ2iOyED-EGFXdZPP6JRU~yyZwA-j~Q__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "download_uri": "https://files.vidu.cn/infer/tasks/26/0317/17/3210162365267521/creation-02/watermarked.mp4?response-content-disposition=attachment;filename=vidu-video-3210162377809898.mp4&Expires=1774374406&Signature=ikO9OlLKsuiQOi-0osG~-pjNAjOfMlJKjx2qvKZgCyjOyqj4870c62n4XKlArqIFDqYhKxSsxjbIW5RGAXvFymgrRBVy610NQlVW-ghrcOSVj81jUor5YPS7XIgQdTo4fEwC5BbYM5-dR~vwO6WiKSY49WoWfdcO3znP-5vScsElV3gaJs3Du05ITGEVfo9t5F0iJPlF-Rs~8Z80M1qw9~AKBYYYSGgo95s6MaTmS2NVfI3TzTHaE3qnT~Bd7n~gnSJaMKOPIwalQ-8A5z9XrSnQIoCzbDAh~SvhK9wmRTUgaDkWDr6rc0YcJ2iOyED-EGFXdZPP6JRU~yyZwA-j~Q__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "cover_uri": "https://files.vidu.cn/infer/tasks/26/0317/17/3210162365267521/creation-02/cover.jpeg?Expires=1773856006&Signature=U0pEhkcfORsoh9mw85Iyh~akiaQGUbpr8xyWFTwOiFTE3m9hwBlduf7Nxa5kdAphxfW9FtS0wTNW0NboaRuNCd6sApuxdgD3USfdH8KEMnyshhhOoWZVJMENKA~TaeAK~qrUvVjs8ZkIEYWpRtP3--gcftnYyx68vfCcTEy9mqP1YcXCqsMvj9zdS1-kVru4KomQ1nAYdsYOERmj4WMKjkr1dVQ85JxhSPl-U0ZE0orR2H-jZ~D2EtiKRO6YIOw66YWh8vvXSCxUNxvxb1pMIie5E2vXq66UjMxeRICOqLc73M6oREPcDjBGDspSv-eys-brE8S8k2AB1MubBxN62w__&Key-Pair-Id=K3DNVHKWMZJUTO",
+          "resolution": {
+            "width": 1080,
+            "height": 1920,
+            "resolution": "1080p"
+          },
+          "vote": "unspecified",
+          "is_favor": false,
+          "src_video_duration": 0,
+          "creator_id": "3209556353473214",
+          "video": {
+            "duration": 5.041667,
+            "fps": 24,
+            "resolution": {
+              "width": 1080,
+              "height": 1920,
+              "resolution": "1080p"
+            },
+            "ratio": "Ratio_9_16"
+          },
+          "is_deleted": false,
+          "err_code": "",
+          "created_at": "2026-03-17T17:46:02.318371Z",
+          "origin_task_type": "character2video",
+          "style": "",
+          "duration": 5,
+          "has_audio": false,
+          "is_asset": false,
+          "is_work": false,
+          "asset_selected": false,
+          "nomark_uri": "",
+          "source_creation": null,
+          "origin_creation": {
+            "id": "3210162377809898",
+            "resolution": "1080p"
+          },
+          "err_info": {
+            "err_code": "",
+            "err_msg": ""
+          },
+          "file_name": "",
+          "is_posted": false,
+          "has_copyright": false
+        }
+      ],
+      "err_code": "",
+      "scene": "",
+      "created_at": "2026-03-17T17:46:01.855851Z",
+      "origin_task_type": "character2video",
+      "extra_params": null
+    }
+  ],
+  "next_page_token": "{\"created_at\":\"2026-03-17T17:46:01.855851Z\"}"
+}

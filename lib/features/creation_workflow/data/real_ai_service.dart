@@ -641,6 +641,12 @@ $scriptContent
         payload['referenceFile'] = referenceImages.first;
       }
 
+      // ✅ Vidu 去水印开关
+      final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+      if (viduWmFree) {
+        payload['watermarkFree'] = true;
+      }
+
       _logger.info('提交 VIDU 生成任务', module: '创作空间', extra: {
         'tool': webTool,
         'model': webModel,

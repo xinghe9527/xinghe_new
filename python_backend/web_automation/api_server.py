@@ -244,6 +244,7 @@ async def execute_vidu_batch_automation(
     max_wait: int,
     batch_count: int,
     segments: list = None,
+    watermark_free: bool = False,
 ):
     """
     Vidu 批量生成：一次填写提示词 + 点 N 次创作，每个任务独立轮询。
@@ -375,13 +376,37 @@ async def execute_vidu_batch_automation(
             result = await loop.run_in_executor(_vidu_thread_pool, _do_poll)
             
             if result.get('success'):
+                final_video_url = result.get('video_url', '')
+                
+                # ✅ 无水印下载（审核中的视频跳过，直接用带水印版本）
+                if watermark_free and cid and not result.get('review'):
+                    print(f"   🎯 [{tid}] 开始无水印下载流程...", flush=True)
+                    def _run_wf(c_id=cid, s_path=sp, v_url=final_video_url):
+                        global _vidu_auto_instance
+                        auto = _vidu_auto_instance
+                        if auto is None:
+                            return {'success': False, 'error': 'Vidu 实例丢失'}
+                        return auto.download_watermark_free(
+                            creation_id=c_id, save_path=s_path, max_wait=180,
+                            video_url=v_url,
+                        )
+                    try:
+                        wf_result = await loop.run_in_executor(_vidu_thread_pool, _run_wf)
+                        if wf_result.get('success'):
+                            final_video_url = wf_result.get('video_url', final_video_url)
+                            print(f"   ✅ [{tid}] 无水印视频下载成功", flush=True)
+                        else:
+                            print(f"   ⚠️  [{tid}] 无水印下载失败: {wf_result.get('error')}，保留带水印版本", flush=True)
+                    except Exception as wf_err:
+                        print(f"   ⚠️  [{tid}] 无水印下载异常: {wf_err}，保留带水印版本", flush=True)
+                
                 task_manager.update_task(
                     tid,
                     status=TaskStatus.SUCCESS,
                     result={
                         'success': True,
                         'local_video_path': sp,
-                        'video_url': result.get('video_url', ''),
+                        'video_url': final_video_url,
                         'task_key': task_key,
                         'message': 'Vidu 视频生成成功',
                     },
@@ -427,6 +452,7 @@ async def execute_vidu_automation(
     character_name: Optional[str] = None,
     max_wait: int = 900,
     segments: list = None,
+    watermark_free: bool = False,
 ):
     """
     后台异步执行 Vidu 自动化（并发模式）
@@ -603,13 +629,42 @@ async def execute_vidu_automation(
             print(f"   🔒 [{task_id}] 轮询锁已释放", flush=True)
         
         if result.get('success'):
+            final_video_url = result.get('video_url', '')
+            final_video_path = save_path
+            
+            # 无水印下载：投稿 → 获取 craftify URL → 下载覆盖（审核中的视频跳过）
+            if watermark_free and creation_id and not result.get('review'):
+                print(f"   🎯 [{task_id}] 开始无水印下载流程...", flush=True)
+                
+                def _run_watermark_free():
+                    global _vidu_auto_instance
+                    auto = _vidu_auto_instance
+                    if auto is None:
+                        return {'success': False, 'error': 'Vidu 实例丢失'}
+                    return auto.download_watermark_free(
+                        creation_id=creation_id,
+                        save_path=save_path,
+                        max_wait=180,
+                        video_url=final_video_url,
+                    )
+                
+                try:
+                    wf_result = await loop.run_in_executor(_vidu_thread_pool, _run_watermark_free)
+                    if wf_result.get('success'):
+                        final_video_url = wf_result.get('video_url', final_video_url)
+                        print(f"   ✅ [{task_id}] 无水印视频下载成功", flush=True)
+                    else:
+                        print(f"   ⚠️  [{task_id}] 无水印下载失败: {wf_result.get('error')}，保留带水印版本", flush=True)
+                except Exception as wf_err:
+                    print(f"   ⚠️  [{task_id}] 无水印下载异常: {wf_err}，保留带水印版本", flush=True)
+            
             task_manager.update_task(
                 task_id,
                 status=TaskStatus.SUCCESS,
                 result={
                     'success': True,
-                    'local_video_path': save_path,
-                    'video_url': result.get('video_url', ''),
+                    'local_video_path': final_video_path,
+                    'video_url': final_video_url,
                     'task_key': result.get('task_key', ''),
                     'message': 'Vidu 视频生成成功',
                 },
@@ -1343,7 +1398,8 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         reference_file = request.payload.get('referenceFile')  # ✅ 获取参考文件路径
         character_name = request.payload.get('characterName')  # ✅ 获取主体库角色名称
         segments = request.payload.get('segments')  # ✅ 图片库模式：交替输入段落列表
-        print(f"  🔍 [VIDU DEBUG] segments={segments}, tool_type={tool_type}", flush=True)
+        watermark_free = bool(request.payload.get('watermarkFree', False))  # ✅ 无水印模式
+        print(f"  🔍 [VIDU DEBUG] segments={segments}, tool_type={tool_type}, watermark_free={watermark_free}", flush=True)
         
         # ✅ 从 payload 中提取超时配置（默认 900 秒 = 15 分钟）
         max_wait = int(request.payload.get('maxWait', 900))
@@ -1353,6 +1409,9 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         # ✅ 批量生成：batchCount > 1 时，一次填写提示词 + 点 N 次创作
         batch_count = int(request.payload.get('batchCount', 1))
         batch_count = max(1, min(batch_count, 10))  # 限制 1-10
+        
+        # 用于在响应中返回所有批量 task_id（避免后续重新搜索出错）
+        vidu_batch_task_ids = None
         
         if batch_count > 1:
             # 批量模式：创建 N 个任务，一次 submit 点 N 次创作
@@ -1369,6 +1428,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
                 extra_task_ids.append(extra_id)
             
             all_task_ids = [task_id] + extra_task_ids
+            vidu_batch_task_ids = all_task_ids  # 直接传递给响应，不再重新搜索
             
             background_tasks.add_task(
                 execute_vidu_batch_automation,
@@ -1379,6 +1439,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
                 tool_type, model, reference_file, character_name,
                 max_wait, batch_count,
                 segments,
+                watermark_free,
             )
         else:
             # 单任务模式
@@ -1396,6 +1457,7 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
                 character_name,
                 max_wait,
                 segments,
+                watermark_free,
             )
     elif request.platform == 'jimeng':
         # ✅ 即梦：UI 自动化方案
@@ -1458,17 +1520,11 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         print(f"📁 保存路径: {request.payload.get('savePath')}")
     
     # 批量信息
-    batch_count_val = int(request.payload.get('batchCount', 1)) if request.platform == 'vidu' else 1
-    batch_count_val = max(1, min(batch_count_val, 10))
     batch_task_ids = None
-    if batch_count_val > 1:
-        # 收集本次批量创建的所有 task_id
-        batch_task_ids = [task_id]
-        for tid_key, t in task_manager.tasks.items():
-            if tid_key != task_id and t.get('prompt') == request.payload.get('prompt') and t.get('status') == TaskStatus.PENDING:
-                batch_task_ids.append(tid_key)
-                if len(batch_task_ids) >= batch_count_val:
-                    break
+    if request.platform == 'vidu':
+        # 优先使用已确定的 vidu_batch_task_ids（避免按 prompt 重新搜索匹配到旧任务）
+        batch_task_ids = locals().get('vidu_batch_task_ids')
+    if batch_task_ids:
         print(f"📦 批量: {len(batch_task_ids)} 个任务 {batch_task_ids}")
     print()
     

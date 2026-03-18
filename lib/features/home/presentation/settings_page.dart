@@ -82,6 +82,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _videoWebTool;  // 选择的工具类型
   String? _videoWebModel;  // 选择的模型
   String? _videoWebMode;  // 选择的方式（即梦视频生成的自定义下拉：全能参考/首尾帧等）
+  bool _viduWatermarkFree = false;  // ✅ Vidu 去水印开关
 
   // 语音合成 配置
   bool _voiceEnabled = false;  // 是否启用语音合成
@@ -462,6 +463,7 @@ class _SettingsPageState extends State<SettingsPage> {
       // ✅ 加载网页服务商配置
       final webTool = prefs.getString('video_web_tool');
       final webModel = prefs.getString('video_web_model');
+      final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
 
       if (mounted) {
         setState(() {
@@ -471,6 +473,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _videoModelController.text = model ?? '';
           _videoWebTool = webTool;
           _videoWebModel = webModel;
+          _viduWatermarkFree = viduWmFree;
         });
       }
     } catch (e) {
@@ -655,6 +658,8 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_videoWebModel != null) {
           await prefs.setString('video_web_model', _videoWebModel!);
         }
+        // ✅ 保存 Vidu 去水印开关
+        await prefs.setBool('vidu_watermark_free', _viduWatermarkFree);
       } else {
         // 保存 API 服务商配置
         if (_videoApiKeyController.text.isNotEmpty) {
@@ -3682,6 +3687,59 @@ class _SettingsPageState extends State<SettingsPage> {
                   }
                 },
               ),
+            ),
+          ),
+        ],
+
+        // ✅ Vidu 去水印开关（仅 Vidu 视频模式显示）
+        if (provider == 'vidu' && modelType == 'video') ...[
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppTheme.textColor.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.textColor.withOpacity(0.08)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.water_drop_outlined,
+                  color: _viduWatermarkFree ? const Color(0xFF2AF598) : AppTheme.subTextColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '去水印',
+                        style: TextStyle(
+                          color: AppTheme.textColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _viduWatermarkFree ? '生成后自动投稿并下载无水印版本' : '使用原始带水印视频',
+                        style: TextStyle(
+                          color: AppTheme.subTextColor,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: _viduWatermarkFree,
+                  activeColor: const Color(0xFF2AF598),
+                  onChanged: (v) {
+                    setState(() => _viduWatermarkFree = v);
+                  },
+                ),
+              ],
             ),
           ),
         ],

@@ -2908,7 +2908,13 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     payload['aspectRatio'] = widget.task.ratio;
     payload['resolution'] = widget.task.quality;
     payload['duration'] = _parseSeconds(widget.task.seconds);
-    
+
+    // ✅ Vidu 去水印开关
+    final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+    if (viduWmFree) {
+      payload['watermarkFree'] = true;
+    }
+
     return payload;
   }
 
