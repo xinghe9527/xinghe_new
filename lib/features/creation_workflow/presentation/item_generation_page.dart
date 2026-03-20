@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:xinghe_new/core/logger/error_translator.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1444,7 +1445,7 @@ ${widget.scriptContent}
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('上传失败: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('上传失败: ${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -2113,7 +2114,7 @@ ${widget.scriptContent}
       debugPrint('定位文件失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('定位文件失败: $e')),
+          SnackBar(content: Text('定位文件失败: ${ErrorTranslator.translate('$e')}')),
         );
       }
     }

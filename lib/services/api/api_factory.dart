@@ -6,6 +6,7 @@ import 'providers/yunwu_service.dart';
 import 'providers/deepseek_service.dart';
 import 'providers/aliyun_service.dart';  // ✅ 导入 AliyunService
 import 'providers/comfyui_service.dart';  // ✅ 导入 ComfyUIService
+import 'providers/runninghub_service.dart';  // ✅ 导入 RunningHubService
 import 'providers/custom_service.dart';
 import 'providers/gemini_image_service.dart';
 import 'providers/gemini_pro_image_service.dart';
@@ -44,6 +45,9 @@ class ApiFactory {
       
       case 'comfyui':  // ✅ ComfyUI 本地服务
         return ComfyUIService(config);
+      
+      case 'runninghub':  // ✅ RunningHub 云端服务
+        return RunningHubService(config);
       
       case 'gemini':
       case 'gemini-image':

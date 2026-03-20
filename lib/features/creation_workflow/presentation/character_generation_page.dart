@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:xinghe_new/core/logger/error_translator.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:file_picker/file_picker.dart';
@@ -970,7 +971,7 @@ class _CharacterGenerationPageState extends State<CharacterGenerationPage> with 
       debugPrint('堆栈: $stackTrace');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开失败: $e')),
+          SnackBar(content: Text('打开失败: ${ErrorTranslator.translate('$e')}')),
         );
       }
     }
@@ -2359,7 +2360,7 @@ ${widget.scriptContent}
     } catch (e) {
       debugPrint('定位文件失败: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('定位文件失败: $e')),
+        SnackBar(content: Text('定位文件失败: ${ErrorTranslator.translate('$e')}')),
       );
     }
   }

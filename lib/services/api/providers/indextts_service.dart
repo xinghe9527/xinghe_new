@@ -9,6 +9,7 @@ import 'package:xinghe_new/core/logger/log_manager.dart';
 /// 调用方式：优先通过本地 WebUI（Gradio）http://127.0.0.1:7860 的 /call/gen_single 接口，
 /// 在已启动的 WebUI 进程内合成（模型只加载一次、速度快、界面有记录）；失败则回退到 Python 子进程。
 class IndexTTSService {
+  static const _module = '语音合成';
   /// Gradio WebUI 根地址，如 http://127.0.0.1:7860
   final String baseUrl;
   final String? pythonPath;
@@ -26,21 +27,21 @@ class IndexTTSService {
   /// 测试服务连接（GET 根路径，Gradio 会返回 200）
   Future<bool> testConnection() async {
     try {
-      _logger.info('测试 IndexTTS 连接', module: 'IndexTTS', extra: {
+      _logger.info('测试 IndexTTS 连接', module: _module, extra: {
         'baseUrl': baseUrl,
       });
 
       final url = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
       final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
 
-      _logger.info('IndexTTS 响应', module: 'IndexTTS', extra: {
+      _logger.info('IndexTTS 响应', module: _module, extra: {
         'statusCode': response.statusCode,
         'body': response.body.length > 200 ? '${response.body.substring(0, 200)}...' : response.body,
       });
 
       return response.statusCode == 200;
     } catch (e) {
-      _logger.error('IndexTTS连接测试失败: $e', module: 'IndexTTS');
+      _logger.error('IndexTTS连接测试失败: $e', module: _module);
       return false;
     }
   }
@@ -220,7 +221,7 @@ class IndexTTSService {
       await File(path).writeAsBytes(response.bodyBytes);
       return path;
     } catch (e) {
-      _logger.warning('下载 Gradio 输出失败: $e', module: 'IndexTTS');
+      _logger.warning('下载 Gradio 输出失败: $e', module: _module);
       return null;
     }
   }
@@ -287,14 +288,14 @@ class IndexTTSService {
       
       final workDir = (indexttsPath ?? 'D:\\Index-TTS2_XH').replaceAll(RegExp(r'[/\\]+$'), '');
       
-      _logger.info('执行 IndexTTS Python 脚本', module: 'IndexTTS', extra: {
+      _logger.info('执行 IndexTTS Python 脚本', module: _module, extra: {
         'scriptPath': scriptPath,
         'outputPath': finalOutputPath,
         'workDir': workDir,
       });
       
       // 先保存脚本内容到日志，方便调试
-      _logger.info('生成的 Python 脚本内容:', module: 'IndexTTS', extra: {
+      _logger.info('生成的 Python 脚本内容:', module: _module, extra: {
         'script': pythonCode.toString().substring(0, pythonCode.length > 500 ? 500 : pythonCode.length),
       });
       
@@ -321,7 +322,7 @@ class IndexTTSService {
       }
       late ProcessResult result;
       if (venvPython != null) {
-        _logger.info('使用 IndexTTS 虚拟环境 Python', module: 'IndexTTS', extra: {'venvPython': venvPython});
+        _logger.info('使用 IndexTTS 虚拟环境 Python', module: _module, extra: {'venvPython': venvPython});
         print('[IndexTTS] 使用 venv: $venvPython');
         result = await Process.run(
           venvPython,
@@ -343,7 +344,7 @@ class IndexTTSService {
              stderrFirst.toLowerCase().contains('uv') && stderrFirst.toLowerCase().contains('not recognized'));
         final bool noModuleUv = result.exitCode != 0 && stderrFirst.contains('No module named uv');
         if (isUvNotFound || noModuleUv) {
-          _logger.info('未找到/未安装 uv，尝试使用 python -m uv', module: 'IndexTTS');
+          _logger.info('未找到/未安装 uv，尝试使用 python -m uv', module: _module);
           print('[IndexTTS] uv 不可用，改用 python -m uv');
           result = await Process.run(
             'python',
@@ -370,7 +371,7 @@ class IndexTTSService {
       // 详细日志输出（同时 print 方便控制台查看）
       final stdoutStr = result.stdout.toString();
       final stderrStr = result.stderr.toString();
-      _logger.info('Python 脚本执行完成', module: 'IndexTTS', extra: {
+      _logger.info('Python 脚本执行完成', module: _module, extra: {
         'exitCode': result.exitCode,
         'stdoutLength': stdoutStr.length,
         'stderrLength': stderrStr.length,
@@ -379,21 +380,21 @@ class IndexTTSService {
       print('[IndexTTS] stdout: $stdoutStr');
       print('[IndexTTS] stderr: $stderrStr');
       
-      _logger.info('Stdout: $stdoutStr', module: 'IndexTTS');
-      _logger.info('Stderr: $stderrStr', module: 'IndexTTS');
+      _logger.info('Stdout: $stdoutStr', module: _module);
+      _logger.info('Stderr: $stderrStr', module: _module);
       
       // 清理临时脚本
       try {
         await File(scriptPath).delete();
       } catch (e) {
-        _logger.warning('清理临时脚本失败: $e', module: 'IndexTTS');
+        _logger.warning('清理临时脚本失败: $e', module: _module);
       }
       
       // 检查结果
       if (result.exitCode == 0 && result.stdout.toString().contains('SUCCESS')) {
         if (await File(finalOutputPath).exists()) {
           final fileSize = await File(finalOutputPath).length();
-          _logger.success('Python脚本生成成功', module: 'IndexTTS', extra: {
+          _logger.success('Python脚本生成成功', module: _module, extra: {
             'path': finalOutputPath,
             'size': '${(fileSize / 1024).toStringAsFixed(2)} KB',
           });
@@ -415,7 +416,7 @@ class IndexTTSService {
       
       throw Exception(errorMsg.toString());
     } on ProcessException catch (e) {
-      _logger.error('IndexTTS 进程执行失败: $e', module: 'IndexTTS');
+      _logger.error('IndexTTS 进程执行失败: $e', module: _module);
       print('[IndexTTS] ProcessException: $e');
       throw Exception(
         '无法执行 uv 命令。请确保：\n'
@@ -424,7 +425,7 @@ class IndexTTSService {
         '原始错误: $e',
       );
     } catch (e, st) {
-      _logger.error('Python脚本生成失败: $e', module: 'IndexTTS');
+      _logger.error('Python脚本生成失败: $e', module: _module);
       print('[IndexTTS] 合成异常: $e');
       print('[IndexTTS] 堆栈: $st');
       rethrow;
@@ -462,11 +463,11 @@ class IndexTTSService {
           useRandom: useRandom,
         );
         if (result != null) {
-          _logger.info('本次合成通过 WebUI 完成', module: 'IndexTTS');
+          _logger.info('本次合成通过 WebUI 完成', module: _module);
           return result;
         }
       } catch (e) {
-        _logger.info('WebUI 不可用，改用 Python 子进程: $e', module: 'IndexTTS');
+        _logger.info('WebUI 不可用，改用 Python 子进程: $e', module: _module);
       }
     }
     // 2. 回退到 Python 脚本调用（每次新进程会重新加载模型，较慢）
@@ -552,7 +553,7 @@ class IndexTTSService {
       print('[IndexTTS] WebUI 失败: 下载输出文件失败，回退 Python');
       throw Exception('下载 WebUI 输出失败');
     }
-    _logger.success('语音合成完成(WebUI)', module: 'IndexTTS', extra: {'outputPath': outPath});
+    _logger.success('语音合成完成(WebUI)', module: _module, extra: {'outputPath': outPath});
     return outPath;
   }
 
@@ -680,7 +681,7 @@ class IndexTTSService {
       
       return duration;
     } catch (e) {
-      _logger.error('获取音频时长失败: $e', module: 'IndexTTS');
+      _logger.error('获取音频时长失败: $e', module: _module);
       return 0.0;
     }
   }

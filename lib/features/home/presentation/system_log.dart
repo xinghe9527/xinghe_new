@@ -116,12 +116,12 @@ class _SystemLogState extends State<SystemLog> {
                       _logManager.clearLogs();
                       _showMessage('日志已清空');
                     },
-                    child: const Text('确定', style: TextStyle(color: Colors.red)),
+                    child: Text('确定', style: TextStyle(color: AppTheme.textColor)),
                   ),
                 ],
               ),
             );
-          }, color: Colors.red),
+          }, color: null),
         ],
       ),
     );
@@ -136,22 +136,22 @@ class _SystemLogState extends State<SystemLog> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: isSelected ? AppTheme.accentColor.withOpacity(0.15) : AppTheme.inputBackground,
+            color: isSelected ? Colors.white.withOpacity(0.12) : AppTheme.inputBackground,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: isSelected ? AppTheme.accentColor : AppTheme.dividerColor,
+              color: isSelected ? Colors.white.withOpacity(0.5) : AppTheme.dividerColor,
               width: isSelected ? 1.5 : 1,
             ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: isSelected ? AppTheme.accentColor : AppTheme.subTextColor),
+              Icon(icon, size: 14, color: isSelected ? Colors.white : AppTheme.subTextColor),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
-                  color: isSelected ? AppTheme.accentColor : AppTheme.subTextColor,
+                  color: isSelected ? Colors.white : AppTheme.subTextColor,
                   fontSize: 12,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                 ),

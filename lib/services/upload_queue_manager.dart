@@ -91,7 +91,7 @@ class UploadQueueManager {
       task.status = UploadTaskStatus.converting;
       _notifyStatusChange(task);
       
-      _logger.info('Step 1/4: 本地图片转视频（3秒 H.264）', module: '上传队列');
+      _logger.info('步骤 1/4: 本地图片转视频（3秒 H.264）', module: '上传队列');
       debugPrint('[队列管理器] 开始本地转码: ${task.imageFile.path}');
       
       videoFile = await _ffmpegService.convertImageToVideo(task.imageFile);
@@ -107,7 +107,7 @@ class UploadQueueManager {
       // Step 2: 直连 OSS 上传（并发，不需要等待）
       task.status = UploadTaskStatus.uploading;
       _notifyStatusChange(task);
-      _logger.info('Step 2/4: 直连 OSS 上传（user_videos/）', module: '上传队列');
+      _logger.info('步骤 2/4: 直连 OSS 上传（user_videos/）', module: '上传队列');
       
       // 生成目标路径：user_videos/时间戳.mp4
       final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -118,11 +118,11 @@ class UploadQueueManager {
       final videoUrl = await _uploadService.uploadVideo(videoFile, targetPath: targetPath);
       task.videoUrl = videoUrl;
       
-      _logger.success('视频上传成功，URL: $videoUrl', module: '上传队列');
+      _logger.success('视频上传成功', module: '上传队列');
       debugPrint('[队列管理器] ✅ OSS 上传成功: $videoUrl');
       
       // Step 3: 调用 Sora API 创建角色
-      _logger.info('Step 3/4: 创建 Sora 角色', module: '上传队列');
+      _logger.info('步骤 3/4: 创建 Sora 角色', module: '上传队列');
       debugPrint('[队列管理器] 开始创建角色，视频URL: $videoUrl');
       debugPrint('[队列管理器] API配置: ${task.apiConfig.provider}, ${task.apiConfig.baseUrl}');
       
@@ -144,7 +144,7 @@ class UploadQueueManager {
       }
       
       // Step 4: 清理临时文件
-      _logger.info('Step 4/4: 清理临时文件', module: '上传队列');
+      _logger.info('步骤 4/4: 清理临时文件', module: '上传队列');
       await videoFile.delete();
       
     } catch (e, stackTrace) {

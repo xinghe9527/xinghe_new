@@ -34,7 +34,7 @@ class DirectOssUploadService {
       
       debugPrint('[直连 OSS] Bucket: $bucket');
       debugPrint('[直连 OSS] Endpoint: $endpoint');
-      debugPrint('[直连 OSS] AccessKeyId: ${accessKeyId?.substring(0, 10)}...');
+      debugPrint('[直连 OSS] AccessKeyId: ****已隐藏****');
       
       // 2. 检查文件是否存在
       if (!await videoFile.exists()) {

@@ -318,6 +318,8 @@ class AutomationApiClient {
     required String prompt,
     String? model,
     int? duration,
+    List<String>? referenceImages,
+    List<String>? characterNames,
   }) async {
     return submitGenerationTask(
       platform: 'jimeng',
@@ -326,6 +328,8 @@ class AutomationApiClient {
         'prompt': prompt,
         if (model != null) 'model': model,
         if (duration != null) 'duration': duration,
+        if (referenceImages != null) 'referenceImages': referenceImages,
+        if (characterNames != null) 'characterNames': characterNames,
       },
     );
   }

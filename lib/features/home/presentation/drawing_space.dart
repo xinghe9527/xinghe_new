@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:xinghe_new/services/api/providers/openai_service.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/base/api_response.dart';
@@ -118,7 +117,7 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
           _saveTasks();
         }
         
-        _logger.success('成功加载 ${_tasks.length} 个绘图任务', module: '绘图空间');
+        _logger.debug('成功加载 ${_tasks.length} 个绘图任务', module: '绘图空间');
       }
     } catch (e) {
       debugPrint('加载任务失败: $e');
@@ -323,28 +322,19 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
             referenceImages: task.referenceImages.isNotEmpty ? task.referenceImages : null,
             parameters: {'size': task.ratio, 'quality': task.quality},
           );
-        } else if (service is OpenAIService) {
-          result = await service.generateImagesByChat(
-            prompt: task.prompt,
-            model: task.model,
-            referenceImagePaths: task.referenceImages.isNotEmpty ? task.referenceImages : null,
-            parameters: {'n': 1, 'size': task.ratio, 'quality': task.quality},
-          );
         } else {
           result = await service.generateImages(
             prompt: task.prompt,
             model: task.model,
             referenceImages: task.referenceImages.isNotEmpty ? task.referenceImages : null,
-            parameters: {'size': task.ratio, 'quality': task.quality},
+            parameters: {'n': 1, 'size': task.ratio, 'quality': task.quality},
           );
         }
         
         // 提取图片URL
         List<String> imageUrls = [];
         if (result.isSuccess && result.data != null) {
-          if (result.data is ChatImageResponse) {
-            imageUrls = (result.data as ChatImageResponse).imageUrls;
-          } else if (result.data is List) {
+          if (result.data is List) {
             imageUrls = (result.data as List).map((img) => img.imageUrl as String).toList();
           }
         }
@@ -680,7 +670,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // 如果服务商没变，跳过重复加载
       if (provider == _imageProvider) return;
       
-      _logger.info('加载图片服务商配置', module: '绘图空间', extra: {'provider': provider});
+      _logger.debug('加载图片服务商配置: $provider', module: '绘图空间');
       
       if (mounted) {
         setState(() {
@@ -688,7 +678,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           _models = _getModelsForProvider(provider);
           
           // 如果当前任务的模型不在新列表中，设置为列表第一个并更新任务
-          if (!_models.contains(widget.task.model)) {
+          if (!_models.contains(widget.task.model) && _models.isNotEmpty) {
             final newModel = _models.first;
             _logger.warning(
               '当前模型不在服务商模型列表中，已切换', 
@@ -788,10 +778,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       // 从设置中读取保存路径
       final savePath = imageSavePathNotifier.value;
       
-      _logger.info('图片保存路径', module: '绘图空间', extra: {
-        'path': savePath,
-        'imageCount': imageUrls.length,
-      });
+      _logger.debug('图片保存路径: $savePath, 图片数: ${imageUrls.length}', module: '绘图空间');
       
       if (savePath == '未设置' || savePath.isEmpty) {
         _logger.warning('未设置图片保存路径，图片仅在线显示', module: '绘图空间');
@@ -901,6 +888,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
       final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
       final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
+      final configModel = await _storage.getModel(provider: provider, modelType: 'image');
 
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置图片 API，请先在设置中配置');
@@ -911,6 +899,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         provider: provider,
         baseUrl: baseUrl,
         apiKey: apiKey,
+        model: configModel,
       );
 
       // ✅ 使用 ApiFactory 根据 provider 创建正确的服务
@@ -918,79 +907,52 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       final service = factory.createService(provider, config);
 
       // 📤 详细记录发送给 API 的所有参数
-      _logger.info('📤 发送给 API 的完整参数', module: '绘图空间', extra: {
-        '🌐 API Provider': provider,
-        '🔗 API BaseUrl': baseUrl,
-        '📝 提示词': widget.task.prompt,
-        '🤖 模型': widget.task.model,
-        '📐 比例 (ratio/size)': widget.task.ratio,
-        '🎨 质量 (quality)': widget.task.quality,
-        '🔢 批量数量': batchCount,
-        '🖼️ 参考图片数量': widget.task.referenceImages.length,
-        '📁 参考图片路径': widget.task.referenceImages.isEmpty 
-            ? '无参考图片（文生图）' 
-            : widget.task.referenceImages.join(' | '),
-      });
+      debugPrint('📤 发送给 API: provider=$provider, model=$configModel, ratio=${widget.task.ratio}, batch=$batchCount');
 
       // 批量生成：多次调用 API
       final allImageUrls = <String>[];
       
       for (int i = 0; i < batchCount; i++) {
-        _logger.info('🎯 生成第 ${i + 1}/$batchCount 张', module: '绘图空间');
+        debugPrint('🎯 生成第 ${i + 1}/$batchCount 张');
         
-        _logger.info('📦 单次 API 请求 parameters', module: '绘图空间', extra: {
-          'n': 1,
-          'size': widget.task.ratio,
-          'quality': widget.task.quality,
-        });
+        debugPrint('📦 参数: n=1, size=${widget.task.ratio}, quality=${widget.task.quality}');
         
         // ✅ 调用图片生成 API
-        // ComfyUI 使用标准的 generateImages 方法
-        // 其他服务使用 generateImagesByChat 方法（如果支持）
+        // 所有服务统一使用 generateImages 方法
         ApiResponse<dynamic> result;
+        
+        // 优先使用设置里配的模型，任务模型作为备选
+        final effectiveModel = configModel ?? widget.task.model;
         
         if (provider == 'comfyui') {
           // ComfyUI 使用标准接口
           result = await service.generateImages(
             prompt: widget.task.prompt,
-            model: widget.task.model,
+            model: effectiveModel,
             referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
             parameters: {
               'size': widget.task.ratio,
               'quality': widget.task.quality,
             },
           );
-        } else if (service is OpenAIService) {
-          // OpenAI 兼容服务使用 generateImagesByChat
-          result = await service.generateImagesByChat(
+        } else {
+          // 标准接口
+          result = await service.generateImages(
             prompt: widget.task.prompt,
-            model: widget.task.model,
-            referenceImagePaths: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
+            model: effectiveModel,
+            referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
             parameters: {
               'n': 1,
               'size': widget.task.ratio,
               'quality': widget.task.quality,
             },
           );
-        } else {
-          // 其他服务使用标准接口
-          result = await service.generateImages(
-            prompt: widget.task.prompt,
-            model: widget.task.model,
-            referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
-            parameters: {
-              'size': widget.task.ratio,
-              'quality': widget.task.quality,
-            },
-          );
         }
         
-        // ✅ 统一处理结果（兼容两种返回类型）
+        // ✅ 统一处理结果
         List<String> imageUrls = [];
         if (result.isSuccess && result.data != null) {
-          if (result.data is ChatImageResponse) {
-            imageUrls = (result.data as ChatImageResponse).imageUrls;
-          } else if (result.data is List) {
+          if (result.data is List) {
             imageUrls = (result.data as List).map((img) => img.imageUrl as String).toList();
           }
         }
@@ -1325,9 +1287,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     ));
     
     _logger.info('删除图片', module: '绘图空间', extra: {
-      'remainingImages': currentImages.length,
-      'hasLoading': hasLoadingPlaceholder,
-      'newStatus': newStatus.toString(),
+      '剩余图片': currentImages.length,
+      '有加载中': hasLoadingPlaceholder,
+      '新状态': newStatus.toString(),
     });
   }
 

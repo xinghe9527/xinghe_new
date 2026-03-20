@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:xinghe_new/core/logger/error_translator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:xinghe_new/main.dart';
@@ -1730,7 +1731,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       debugPrint('定位文件失败: $e');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('定位文件失败: $e')));
+      ).showSnackBar(SnackBar(content: Text('定位文件失败: ${ErrorTranslator.translate('$e')}')));
     }
   }
 
@@ -2132,7 +2133,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       debugPrint('[合成] 失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ 合成失败: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('❤ 合成失败: ${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -2420,7 +2421,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('播放失败: $e')));
+        ).showSnackBar(SnackBar(content: Text('播放失败: ${ErrorTranslator.translate('$e')}')));
       }
     }
   }
@@ -2476,7 +2477,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('打开视频失败: $e')));
+        ).showSnackBar(SnackBar(content: Text('打开视频失败: ${ErrorTranslator.translate('$e')}')));
       }
     }
   }
@@ -2512,7 +2513,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
       debugPrint('定位文件失败: $e');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('定位文件失败: $e')));
+      ).showSnackBar(SnackBar(content: Text('定位文件失败: ${ErrorTranslator.translate('$e')}')));
     }
   }
 
@@ -2737,7 +2738,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           segments.add({'type': 'text', 'content': text});
         }
       }
-      final name = match.group(1)!;
+      final name = match.group(1)!.trim();
       final path = nameToPath[name];
       if (path != null) {
         segments.add({'type': 'image', 'name': name, 'path': path});
@@ -2777,7 +2778,7 @@ class _ProductionSpacePageState extends State<ProductionSpacePage> {
           segments.add({'type': 'text', 'content': text});
         }
       }
-      final name = match.group(1)!;
+      final name = match.group(1)!.trim();
       final path = nameToPath[name];
       if (path != null) {
         segments.add({'type': 'image', 'name': name, 'path': path});
@@ -3191,7 +3192,7 @@ ${widget.scriptContent}
       print('❌ 生成分镜失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('生成失败：$e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('生成失败：${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -3534,7 +3535,7 @@ ${widget.scriptContent}
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('❌ 批量生成失败：$e')));
+        ).showSnackBar(SnackBar(content: Text('❌ 批量生成失败：${ErrorTranslator.translate('$e')}')));
       }
     } finally {
       if (mounted) {
@@ -3777,6 +3778,14 @@ ${widget.scriptContent}
                     payload['prompt'] = fullPrompt;
                     print('   📷 [${storyboardIndex + 1}] segments 模式: ${segments.length}个段, 资产: ${segmentAssets.keys.join(", ")}');
                   }
+                } else {
+                  // fallback: 从提示词中解析 [📷name] 占位符
+                  final parsedSegments = _parsePromptToSegments(fullPrompt);
+                  if (parsedSegments != null && parsedSegments.isNotEmpty) {
+                    payload['segments'] = parsedSegments;
+                    payload['prompt'] = fullPrompt;
+                    print('   📷 [${storyboardIndex + 1}] 提示词占位符 segments 模式: ${parsedSegments.length}个段');
+                  }
                 }
                 if (mappedAssetNames.isNotEmpty) {
                   payload['characterName'] = mappedAssetNames.join(',');
@@ -3784,8 +3793,37 @@ ${widget.scriptContent}
                 }
                 if (localImagePaths.isNotEmpty && segmentAssets.isEmpty && mappedAssetNames.isEmpty) {
                   payload['referenceFile'] = localImagePaths.first;
-                } else if (segmentAssets.isEmpty && mappedAssetNames.isEmpty && referenceImage != null) {
+                } else if (segmentAssets.isEmpty && mappedAssetNames.isEmpty && !payload.containsKey('segments') && referenceImage != null) {
                   payload['referenceFile'] = referenceImage;
+                }
+              }
+
+              // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
+              if (provider == 'jimeng') {
+                payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+                final segments = payload['segments'] as List<Map<String, String>>?;
+                if (segments != null && segments.isNotEmpty) {
+                  final List<String> refImages = [];
+                  final List<String> charNames = [];
+                  String cleanPrompt = '';
+                  for (final seg in segments) {
+                    if (seg['type'] == 'image' && seg['path'] != null && seg['path']!.isNotEmpty) {
+                      final name = seg['name'] ?? '';
+                      if (!charNames.contains(name)) {
+                        refImages.add(seg['path']!);
+                        charNames.add(name);
+                      }
+                    } else {
+                      cleanPrompt += seg['content'] ?? '';
+                    }
+                  }
+                  if (refImages.isNotEmpty) {
+                    payload.remove('segments');
+                    payload['referenceImages'] = refImages;
+                    payload['characterNames'] = charNames;
+                    payload['prompt'] = cleanPrompt;
+                    print('   📷 [${storyboardIndex + 1}] 即梦全能参考：${refImages.length}张图, 角色=${charNames.join(",")}');
+                  }
                 }
               }
 
@@ -3994,6 +4032,35 @@ ${widget.scriptContent}
                     payload['referenceFile'] = assetImagePaths.first;
                   } else if (referenceImage != null && assetNames.isEmpty) {
                     payload['referenceFile'] = referenceImage;
+                  }
+                }
+              }
+
+              // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
+              if (provider == 'jimeng') {
+                payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+                final segments = payload['segments'] as List<Map<String, String>>?;
+                if (segments != null && segments.isNotEmpty) {
+                  final List<String> refImages = [];
+                  final List<String> charNames = [];
+                  String cleanPrompt = '';
+                  for (final seg in segments) {
+                    if (seg['type'] == 'image' && seg['path'] != null && seg['path']!.isNotEmpty) {
+                      final name = seg['name'] ?? '';
+                      if (!charNames.contains(name)) {
+                        refImages.add(seg['path']!);
+                        charNames.add(name);
+                      }
+                    } else {
+                      cleanPrompt += seg['content'] ?? '';
+                    }
+                  }
+                  if (refImages.isNotEmpty) {
+                    payload.remove('segments');
+                    payload['referenceImages'] = refImages;
+                    payload['characterNames'] = charNames;
+                    payload['prompt'] = cleanPrompt;
+                    print('   📷 [${storyboardIndex + 1}] 即梦全能参考：${refImages.length}张图, 角色=${charNames.join(",")}');
                   }
                 }
               }
@@ -4228,7 +4295,7 @@ ${widget.scriptContent}
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('❌ 批量生成失败：$e')));
+        ).showSnackBar(SnackBar(content: Text('❌ 批量生成失败：${ErrorTranslator.translate('$e')}')));
       }
     } finally {
       if (mounted) {
@@ -5012,7 +5079,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       print('❌ 推理失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('推理失败：$e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('推理失败：${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -5216,7 +5283,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       print('❌ 推理失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('推理失败：$e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('推理失败：${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -5573,7 +5640,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('播放失败: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('播放失败: ${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -6048,7 +6115,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       print('❌ 图片生成失败: $e\n');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ 图片生成失败: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('❌ 图片生成失败: ${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -6265,6 +6332,14 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
               payload['prompt'] = fullPrompt;
               print('📷 segments 模式: ${segments.length}个段, 资产: ${segmentAssets.keys.join(", ")}');
             }
+          } else {
+            // fallback: 从提示词中解析 [📷name] 占位符
+            final parsedSegments = _parsePromptToSegments(fullPrompt);
+            if (parsedSegments != null && parsedSegments.isNotEmpty) {
+              payload['segments'] = parsedSegments;
+              payload['prompt'] = fullPrompt;
+              print('📷 提示词占位符 segments 模式: ${parsedSegments.length}个段');
+            }
           }
           // 素材库主体
           if (mappedAssetNames.isNotEmpty) {
@@ -6275,9 +6350,38 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
           if (localImagePaths.isNotEmpty && segmentAssets.isEmpty && mappedAssetNames.isEmpty) {
             payload['referenceFile'] = localImagePaths.first;
             print('📁 ref2video: 本地图片参考 ${localImagePaths.first}');
-          } else if (segmentAssets.isEmpty && mappedAssetNames.isEmpty && selectedImageUrl != null) {
+          } else if (segmentAssets.isEmpty && mappedAssetNames.isEmpty && !payload.containsKey('segments') && selectedImageUrl != null) {
             payload['referenceFile'] = selectedImageUrl;
             print('📁 ref2video: 使用分镜图片作为参考');
+          }
+        }
+
+        // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
+        if (provider == 'jimeng') {
+          payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+          final segments = payload['segments'] as List<Map<String, String>>?;
+          if (segments != null && segments.isNotEmpty) {
+            final List<String> refImages = [];
+            final List<String> charNames = [];
+            String cleanPrompt = '';
+            for (final seg in segments) {
+              if (seg['type'] == 'image' && seg['path'] != null && seg['path']!.isNotEmpty) {
+                final name = seg['name'] ?? '';
+                if (!charNames.contains(name)) {
+                  refImages.add(seg['path']!);
+                  charNames.add(name);
+                }
+              } else {
+                cleanPrompt += seg['content'] ?? '';
+              }
+            }
+            if (refImages.isNotEmpty) {
+              payload.remove('segments');
+              payload['referenceImages'] = refImages;
+              payload['characterNames'] = charNames;
+              payload['prompt'] = cleanPrompt;
+              print('📷 即梦全能参考：${refImages.length}张图, 角色=${charNames.join(",")}');
+            }
           }
         }
 
@@ -6450,7 +6554,7 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
       print('❌ 视频生成失败: $e\n');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ 视频生成失败: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('❌ 视频生成失败: ${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }

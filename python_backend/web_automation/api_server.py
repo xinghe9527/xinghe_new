@@ -745,6 +745,8 @@ async def execute_jimeng_automation(
     model: Optional[str] = None,
     mode: Optional[str] = None,
     reference_file: Optional[str] = None,
+    reference_images: Optional[list] = None,
+    character_names: Optional[list] = None,
 ):
     """
     后台异步执行即梦自动化（并发模式）
@@ -810,6 +812,8 @@ async def execute_jimeng_automation(
                             resolution=resolution or '720p',
                             duration=dur,
                             reference_file=reference_file,
+                            reference_images=reference_images,
+                            character_names=character_names,
                         )
                         
                         return submit_result
@@ -1469,6 +1473,8 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
         model = request.payload.get('model')
         mode = request.payload.get('mode')
         reference_file = request.payload.get('referenceFile')
+        reference_images = request.payload.get('referenceImages')
+        character_names = request.payload.get('characterNames')
         
         background_tasks.add_task(
             execute_jimeng_automation,
@@ -1482,6 +1488,8 @@ async def generate_universal(request: UniversalGenerateRequest, background_tasks
             model,
             mode,
             reference_file,
+            reference_images,
+            character_names,
         )
     elif request.platform == 'google_flow':
         # ✅ Google Flow：图片生成自动化

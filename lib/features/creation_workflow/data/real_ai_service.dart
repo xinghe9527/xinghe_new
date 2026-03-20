@@ -11,6 +11,7 @@ import '../domain/models/entity.dart';
 
 /// 真实 AI 服务（调用实际的 API）
 class RealAIService {
+  static const _module = 'AI剧本';
   final ApiRepository _apiRepository = ApiRepository();
   final SecureStorageManager _storage = SecureStorageManager();
   final LogManager _logger = LogManager();
@@ -55,7 +56,7 @@ class RealAIService {
     required String theme,
     String? presetPrompt,  // ✅ 新增：剧本提示词预设
   }) async {
-    _logger.info('🎬 开始生成剧本', module: 'RealAIService', extra: {'theme': theme});
+    _logger.info('🎬 开始生成剧本', module: _module, extra: {'theme': theme});
     
     final config = await _getLLMConfig();
     final provider = config['provider']!;
@@ -65,7 +66,7 @@ class RealAIService {
     final apiKey = await _storage.getApiKey(provider: provider, modelType: 'llm');
     final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'llm');
     
-    _logger.info('📋 LLM配置信息', module: 'RealAIService', extra: {
+    _logger.info('📋 LLM配置信息', module: _module, extra: {
       'provider': provider,
       'model': model ?? '未设置',
       'baseUrl': baseUrl ?? '未配置',
@@ -83,15 +84,15 @@ class RealAIService {
 
 现在开始创作：''';
 
-    _logger.info('📝 提示词长度', module: 'RealAIService', extra: {'length': prompt.length});
+    _logger.info('📝 提示词长度', module: _module, extra: {'length': prompt.length});
 
     try {
       final startTime = DateTime.now();
-      _logger.info('🚀 开始调用 API', module: 'RealAIService');
+      _logger.info('🚀 开始调用 API', module: _module);
       
       // ✅ 清除缓存，确保使用最新配置
       _apiRepository.clearCache();
-      _logger.info('🔄 已清除 API 缓存', module: 'RealAIService');
+      _logger.info('🔄 已清除 API 缓存', module: _module);
       
       // ✅ 构建 messages 数组（提示词预设融入 user message 前面）
       final messages = <Map<String, String>>[];
@@ -108,14 +109,14 @@ $presetPrompt
 
 $prompt''';
         
-        _logger.info('✨ 使用提示词预设（融入用户消息）', module: 'RealAIService', extra: {'preset': presetPrompt});
+        _logger.info('✨ 使用提示词预设（融入用户消息）', module: _module, extra: {'preset': presetPrompt});
         print('\n🎨 提示词预设（作为强制指令）:');
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         print(presetPrompt);
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       } else {
         fullUserPrompt = prompt;
-        _logger.info('⚠️ 没有提示词预设', module: 'RealAIService');
+        _logger.info('⚠️ 没有提示词预设', module: _module);
       }
       
       // 添加用户消息（包含提示词预设）
@@ -145,12 +146,12 @@ $prompt''';
       );
       
       final elapsed = DateTime.now().difference(startTime).inSeconds;
-      _logger.info('⏱️ API 响应时间', module: 'RealAIService', extra: {'seconds': elapsed});
+      _logger.info('⏱️ API 响应时间', module: _module, extra: {'seconds': elapsed});
 
       if (response.isSuccess && response.data != null) {
         final responseText = response.data!.text;
         
-        _logger.success('✅ API 调用成功', module: 'RealAIService', extra: {
+        _logger.success('✅ API 调用成功', module: _module, extra: {
           'responseLength': responseText.length,
           'tokensUsed': response.data!.tokensUsed ?? 0,
         });
@@ -167,7 +168,7 @@ $prompt''';
           final finishReason = metadata['choices'][0]['finish_reason'];
           if (finishReason == 'length') {
             print('⚠️ 警告：剧本被截断（达到 max_tokens 限制）\n');
-            _logger.warning('剧本被截断', module: 'RealAIService', extra: {
+            _logger.warning('剧本被截断', module: _module, extra: {
               'finishReason': 'length',
               'tokensUsed': response.data!.tokensUsed,
             });
@@ -180,12 +181,12 @@ $prompt''';
         
         // 解析响应文本，提取剧本行
         final scriptLines = _parseScriptFromResponse(responseText);
-        _logger.success('🎉 剧本生成成功', module: 'RealAIService', extra: {'lines': scriptLines.length});
+        _logger.success('🎉 剧本生成成功', module: _module, extra: {'lines': scriptLines.length});
         
         return scriptLines;
       } else {
         final errorDetail = response.error ?? '未知错误';
-        _logger.error('❌ API 返回错误', module: 'RealAIService', extra: {
+        _logger.error('❌ API 返回错误', module: _module, extra: {
           'error': errorDetail,
           'statusCode': response.statusCode ?? 0,
           'provider': provider,
@@ -205,7 +206,7 @@ $prompt''';
         );
       }
     } catch (e) {
-      _logger.error('💥 调用 API 异常', module: 'RealAIService', extra: {'exception': e.toString()});
+      _logger.error('💥 调用 API 异常', module: _module, extra: {'exception': e.toString()});
       throw Exception('调用 API 失败: $e');
     }
   }

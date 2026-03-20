@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
+import 'package:xinghe_new/core/logger/error_translator.dart';
 import 'package:xinghe_new/services/api/api_repository.dart';
 import 'package:xinghe_new/services/api/providers/indextts_service.dart';
 import 'package:xinghe_new/features/home/domain/voice_asset.dart';
@@ -1972,7 +1973,7 @@ ${widget.storyboard.scriptSegment}
       debugPrint('❌ 定位文件失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('定位失败: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('定位失败: ${ErrorTranslator.translate('$e')}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -2202,6 +2203,7 @@ ${widget.storyboard.scriptSegment}
   }
 
   void _showErrorDialog(String title, String message) {
+    final friendlyMessage = ErrorTranslator.translate(message);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -2214,7 +2216,7 @@ ${widget.storyboard.scriptSegment}
           ],
         ),
         content: Text(
-          message,
+          friendlyMessage,
           style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 14),
         ),
         actions: [

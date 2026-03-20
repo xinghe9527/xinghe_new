@@ -45,7 +45,7 @@ class OpenAIService extends ApiServiceBase {
   }) async {
     try {
       final requestBody = {
-        'model': model ?? config.model ?? 'gpt-4',
+        'model': model ?? config.model ?? 'gpt-4o',
         'messages': messages,  // ✅ 直接使用传入的 messages
         ...?parameters,
       };
@@ -109,14 +109,34 @@ class OpenAIService extends ApiServiceBase {
     Map<String, dynamic>? parameters,
   }) async {
     try {
-      final requestBody = {
-        'model': model ?? 'dall-e-3',
+      // 从 parameters 中提取 size/quality，优先使用命名参数
+      final effectiveRatio = ratio ?? parameters?['size'] as String?;
+      final effectiveModel = model ?? config.model ?? 'dall-e-3';
+      
+      final requestBody = <String, dynamic>{
+        'model': effectiveModel,
         'prompt': prompt,
-        'n': count,
-        'size': _convertRatioToSize(ratio),
-        'quality': quality?.toLowerCase() ?? 'standard',
-        ...?parameters,
       };
+      
+      final effectiveN = parameters?['n'] ?? count;
+      if (effectiveN > 1) {
+        requestBody['n'] = effectiveN;
+      }
+      if (effectiveRatio != null) {
+        requestBody['size'] = _convertRatioToSize(effectiveRatio);
+      }
+      
+      // 传递其他自定义参数（排除已处理的字段）
+      if (parameters != null) {
+        for (final entry in parameters.entries) {
+          if (!{'size', 'quality', 'n'}.contains(entry.key)) {
+            requestBody[entry.key] = entry.value;
+          }
+        }
+      }
+
+      print('🖼️ [OpenAI] generateImages 请求: ${config.baseUrl}/images/generations');
+      print('🖼️ [OpenAI] requestBody: $requestBody');
 
       final response = await http.post(
         Uri.parse('${config.baseUrl}/images/generations'),
@@ -126,6 +146,9 @@ class OpenAIService extends ApiServiceBase {
         },
         body: jsonEncode(requestBody),
       );
+
+      print('🖼️ [OpenAI] 响应状态: ${response.statusCode}');
+      print('🖼️ [OpenAI] 响应内容: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -159,8 +182,202 @@ class OpenAIService extends ApiServiceBase {
     List<String>? referenceImages,
     Map<String, dynamic>? parameters,
   }) async {
-    // OpenAI暂时不支持视频生成
-    return ApiResponse.failure('OpenAI暂不支持视频生成');
+    try {
+      final body = <String, dynamic>{
+        'model': model ?? config.model ?? 'grok-imagine-1.0-video',
+        'prompt': prompt,
+      };
+
+      // 尺寸映射
+      if (ratio != null && ratio.isNotEmpty) {
+        body['size'] = _mapRatioToSize(ratio);
+      }
+
+      // 时长
+      final seconds = parameters?['seconds'];
+      if (seconds != null) {
+        body['seconds'] = int.tryParse(seconds.toString()) ?? 6;
+      }
+
+      // 质量
+      if (quality != null && quality.isNotEmpty) {
+        body['quality'] = quality.toLowerCase();
+      }
+
+      // 图生视频：参考图片
+      if (referenceImages != null && referenceImages.isNotEmpty) {
+        try {
+          final imgPath = referenceImages.first;
+          String imageUrl;
+          if (imgPath.startsWith('http')) {
+            imageUrl = imgPath;
+          } else {
+            final file = File(imgPath);
+            if (file.existsSync()) {
+              final bytes = file.readAsBytesSync();
+              final b64 = base64Encode(bytes);
+              final ext = imgPath.split('.').last.toLowerCase();
+              final mime = ext == 'png' ? 'image/png' : 'image/jpeg';
+              imageUrl = 'data:$mime;base64,$b64';
+            } else {
+              print('🎬 [OpenAI] 参考图片不存在，跳过: $imgPath');
+              imageUrl = '';
+            }
+          }
+          if (imageUrl.isNotEmpty) {
+            body['image_reference'] = {'image_url': imageUrl};
+          }
+        } catch (e) {
+          print('🎬 [OpenAI] 参考图片处理失败: $e');
+        }
+      }
+
+      print('🎬 [OpenAI] generateVideos 请求: ${config.baseUrl}/videos');
+      // 打印 body 时排除 base64 数据避免刷屏
+      final logBody = Map<String, dynamic>.from(body);
+      if (logBody.containsKey('image_reference')) {
+        logBody['image_reference'] = '(base64 data omitted)';
+      }
+      print('🎬 [OpenAI] body: $logBody');
+      print('🎬 [OpenAI] 正在发送 HTTP POST...');
+
+      final response = await http.post(
+        Uri.parse('${config.baseUrl}/videos'),
+        headers: {
+          'Authorization': 'Bearer ${config.apiKey}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 60));
+
+      print('🎬 [OpenAI] HTTP 完成');
+
+      print('🎬 [OpenAI] 响应状态: ${response.statusCode}');
+      print('🎬 [OpenAI] 响应内容: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        String? videoUrl = _extractVideoUrl(data);
+        final videoId = data['id']?.toString();
+
+        if (videoUrl != null) {
+          return ApiResponse.success([
+            VideoResponse(videoUrl: videoUrl, videoId: videoId),
+          ], statusCode: response.statusCode);
+        }
+
+        // 异步模式：返回了任务ID，需要轮询
+        if (videoId != null) {
+          return await _pollVideoTask(videoId);
+        }
+
+        return ApiResponse.failure('响应中未找到视频URL');
+      }
+
+      return ApiResponse.failure(
+        '视频生成失败: ${response.statusCode} - ${response.body}',
+        statusCode: response.statusCode,
+      );
+    } catch (e) {
+      return ApiResponse.failure('视频生成错误: $e');
+    }
+  }
+
+  /// 从响应数据中提取视频URL（兼容多种格式）
+  String? _extractVideoUrl(Map<String, dynamic> data) {
+    // {video: {url: "..."}}
+    if (data['video'] is Map && data['video']['url'] != null) {
+      return data['video']['url'] as String;
+    }
+    // {url: "..."}
+    if (data['url'] is String) {
+      return data['url'] as String;
+    }
+    // {data: [{url: "..."}]}
+    if (data['data'] is List && (data['data'] as List).isNotEmpty) {
+      final first = (data['data'] as List).first;
+      if (first is Map && first['url'] != null) {
+        return first['url'] as String;
+      }
+    }
+    // {output: {video_url: "..."}}
+    if (data['output'] is Map && data['output']['video_url'] != null) {
+      return data['output']['video_url'] as String;
+    }
+    return null;
+  }
+
+  /// 轮询视频生成任务状态
+  Future<ApiResponse<List<VideoResponse>>> _pollVideoTask(String taskId) async {
+    for (int i = 0; i < 120; i++) {
+      await Future.delayed(const Duration(seconds: 5));
+
+      try {
+        final response = await http.get(
+          Uri.parse('${config.baseUrl}/videos/$taskId'),
+          headers: {
+            'Authorization': 'Bearer ${config.apiKey}',
+          },
+        ).timeout(const Duration(seconds: 30));
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final status = data['status']?.toString().toLowerCase();
+
+          if (status == 'completed' || status == 'succeeded') {
+            final videoUrl = _extractVideoUrl(data);
+            if (videoUrl != null) {
+              return ApiResponse.success([
+                VideoResponse(videoUrl: videoUrl, videoId: taskId),
+              ]);
+            }
+          } else if (status == 'failed' || status == 'error') {
+            final error = data['error']?.toString() ?? '视频生成失败';
+            return ApiResponse.failure(error);
+          }
+          // processing/queued → 继续轮询
+        }
+      } catch (_) {
+        // 网络异常，继续轮询
+      }
+    }
+
+    return ApiResponse.failure('视频生成超时（10分钟）');
+  }
+
+  /// 比例字符串映射为像素尺寸
+  String _mapRatioToSize(String ratio) {
+    // 先处理标准比例格式
+    switch (ratio) {
+      case '16:9':
+        return '1280x720';
+      case '9:16':
+        return '720x1280';
+      case '4:3':
+        return '1024x768';
+      case '3:4':
+        return '768x1024';
+      case '1:1':
+        return '1024x1024';
+    }
+    
+    // 如果是像素尺寸格式（如 1080x1920），根据宽高比映射到最近的有效尺寸
+    if (ratio.contains('x')) {
+      final parts = ratio.split('x');
+      if (parts.length == 2) {
+        final w = int.tryParse(parts[0]) ?? 0;
+        final h = int.tryParse(parts[1]) ?? 0;
+        if (w > 0 && h > 0) {
+          final aspect = w / h;
+          if (aspect > 1.2) return '1280x720';       // 横屏 (16:9)
+          if (aspect < 0.8) return '720x1280';        // 竖屏 (9:16)
+          return '1024x1024';                         // 接近正方形 (1:1)
+        }
+      }
+      return ratio; // 无法解析，原样返回
+    }
+    
+    return '1280x720'; // 默认横屏
   }
 
   @override

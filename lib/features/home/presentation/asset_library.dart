@@ -349,7 +349,7 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
           });
         });
         
-        _logger.success('成功加载素材库数据', module: '素材库');
+        _logger.debug('成功加载素材库数据', module: '素材库');
       }
       
       // ✅ 加载语音库数据
@@ -363,7 +363,7 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
           _voiceAssets = voicesList;
         });
         
-        _logger.success('成功加载 ${voicesList.length} 个语音素材', module: '素材库');
+        _logger.debug('成功加载 ${voicesList.length} 个语音素材', module: '素材库');
       }
       
       // ✅ 加载图片库数据
@@ -375,7 +375,7 @@ class _AssetLibraryState extends State<AssetLibrary> with WidgetsBindingObserver
         setState(() {
           _imageLibraryAssets = list;
         });
-        _logger.success('成功加载 ${list.length} 个图片库素材', module: '素材库');
+        _logger.debug('成功加载 ${list.length} 个图片库素材', module: '素材库');
       }
       
       debugPrint('✅ [素材库] 加载数据成功');

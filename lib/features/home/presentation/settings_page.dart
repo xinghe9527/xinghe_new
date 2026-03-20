@@ -84,6 +84,10 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _videoWebMode;  // 选择的方式（即梦视频生成的自定义下拉：全能参考/首尾帧等）
   bool _viduWatermarkFree = false;  // ✅ Vidu 去水印开关
 
+  // ✅ RunningHub 配置
+  final TextEditingController _runninghubImageWebappIdController = TextEditingController();
+  final TextEditingController _runninghubVideoWebappIdController = TextEditingController();
+
   // 语音合成 配置
   bool _voiceEnabled = false;  // 是否启用语音合成
   final TextEditingController _voiceServiceUrlController = TextEditingController();
@@ -191,39 +195,45 @@ class _SettingsPageState extends State<SettingsPage> {
   final Map<String, dynamic> _jimengConfig = {
     'tools': {
       'video': [
-        {'id': 'image_gen', 'name': '图片生成', 'icon': Icons.image},
         {'id': 'video_gen', 'name': '视频生成', 'icon': Icons.videocam},
-        {'id': 'agent', 'name': 'Agent 模式', 'icon': Icons.smart_toy},
       ],
     },
     'models': {
-      'image_gen': [
-        {'id': 'jimeng-image-5.0-lite', 'name': '图片 5.0 Lite', 'desc': '轻量快速'},
-        {'id': 'jimeng-image-4.6', 'name': '图片 4.6', 'desc': '人像、数码摄影'},
-        {'id': 'jimeng-image-4.5', 'name': '图片 4.5', 'desc': '强化一致性'},
-        {'id': 'jimeng-image-4.1', 'name': '图片 4.1', 'desc': '多元创意，美学标杆'},
-        {'id': 'jimeng-image-4.0', 'name': '图片 4.0', 'desc': '多参考图，系列图生成'},
-        {'id': 'jimeng-image-3.1', 'name': '图片 3.1', 'desc': '丰富多样性'},
-        {'id': 'jimeng-image-3.0', 'name': '图片 3.0', 'desc': '基础模型'},
-      ],
       'video_gen': [
-        {'id': 'seedance-2.0-fast', 'name': 'Seedance 2.0 Fast', 'desc': '快速版'},
-        {'id': 'seedance-2.0', 'name': 'Seedance 2.0', 'desc': '旗舰模型'},
-        {'id': 'jimeng-video-3.5-pro', 'name': '视频 3.5 Pro', 'desc': '全新升级'},
-        {'id': 'jimeng-video-3.0-pro', 'name': '视频 3.0 Pro', 'desc': '高质量'},
-        {'id': 'jimeng-video-3.0-fast', 'name': '视频 3.0 Fast', 'desc': '快速版'},
-        {'id': 'jimeng-video-3.0', 'name': '视频 3.0', 'desc': '基础模型'},
-      ],
-      'agent': [
-        {'id': 'seedance-2.0-agent', 'name': 'Seedance 2.0 全能参考', 'desc': '最强模型'},
+        {'id': 'seedance-2.0-fast', 'name': 'Seedance 2.0 Fast', 'desc': '高性价比，音视文图均可参考'},
+        {'id': 'seedance-2.0', 'name': 'Seedance 2.0', 'desc': '全能王者，音视文图均可参考'},
+        {'id': 'jimeng-video-3.5-pro', 'name': '视频 3.5 Pro', 'desc': '音画同出，全新体验'},
+        {'id': 'jimeng-video-3.0-pro', 'name': '视频 3.0 Pro', 'desc': '效果最佳，画质超清'},
+        {'id': 'jimeng-video-3.0-fast', 'name': '视频 3.0 Fast', 'desc': 'Pro级表现，加量不加价'},
+        {'id': 'jimeng-video-3.0', 'name': '视频 3.0', 'desc': '精准响应，支持多镜头和运镜'},
       ],
     },
     'modes': {
-      'video_gen': [
+      'seedance-2.0-fast': [
         {'id': 'all_ref', 'name': '全能参考', 'desc': '上传参考图，自由组合'},
         {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
-        {'id': 'smart_multi_frame', 'name': '智能多帧', 'desc': '多帧智能生成'},
-        {'id': 'subject_ref', 'name': '主体参考', 'desc': '保持主体一致'},
+        {'id': 'smart_multi_frame', 'name': '智能多帧', 'desc': '智能多帧生成'},
+        {'id': 'subject_ref', 'name': '主体参考', 'desc': '参考主体风格'},
+      ],
+      'seedance-2.0': [
+        {'id': 'all_ref', 'name': '全能参考', 'desc': '上传参考图，自由组合'},
+        {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
+        {'id': 'smart_multi_frame', 'name': '智能多帧', 'desc': '智能多帧生成'},
+        {'id': 'subject_ref', 'name': '主体参考', 'desc': '参考主体风格'},
+      ],
+      'jimeng-video-3.5-pro': [
+        {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
+      ],
+      'jimeng-video-3.0-pro': [
+        {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
+      ],
+      'jimeng-video-3.0-fast': [
+        {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
+        {'id': 'smart_multi_frame', 'name': '智能多帧', 'desc': '智能多帧生成'},
+      ],
+      'jimeng-video-3.0': [
+        {'id': 'first_last_frame', 'name': '首尾帧', 'desc': '指定首帧和尾帧'},
+        {'id': 'subject_ref', 'name': '主体参考', 'desc': '参考主体风格'},
       ],
     },
   };
@@ -331,7 +341,7 @@ class _SettingsPageState extends State<SettingsPage> {
       
       // 加载工作流文件夹路径
       final folder = prefs.getString('comfyui_workflow_folder');
-      if (folder != null && folder.isNotEmpty) {
+      if (folder != null && folder.isNotEmpty && mounted) {
         setState(() {
           _comfyUIWorkflowFolder = folder;
         });
@@ -344,15 +354,17 @@ class _SettingsPageState extends State<SettingsPage> {
         final workflows = List<Map<String, dynamic>>.from(
           (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
         );
-        setState(() {
-          _loadedWorkflows = workflows;
-        });
+        if (mounted) {
+          setState(() {
+            _loadedWorkflows = workflows;
+          });
+        }
         debugPrint('✅ 加载 ${workflows.length} 个 ComfyUI 工作流');
       }
       
       // 加载选中的工作流
       final selectedImageWorkflow = prefs.getString('comfyui_selected_image_workflow');
-      if (selectedImageWorkflow != null) {
+      if (selectedImageWorkflow != null && mounted) {
         setState(() {
           _selectedImageWorkflow = selectedImageWorkflow;
         });
@@ -360,7 +372,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       
       final selectedVideoWorkflow = prefs.getString('comfyui_selected_video_workflow');
-      if (selectedVideoWorkflow != null) {
+      if (selectedVideoWorkflow != null && mounted) {
         setState(() {
           _selectedVideoWorkflow = selectedVideoWorkflow;
         });
@@ -382,22 +394,18 @@ class _SettingsPageState extends State<SettingsPage> {
 
       if (imagePath != null && imagePath.isNotEmpty) {
         imageSavePathNotifier.value = imagePath;
-        _logger.info('加载图片保存路径: $imagePath', module: '设置');
       }
 
       if (videoPath != null && videoPath.isNotEmpty) {
         videoSavePathNotifier.value = videoPath;
-        _logger.info('加载视频保存路径: $videoPath', module: '设置');
       }
 
       if (workPath != null && workPath.isNotEmpty) {
         workSavePathNotifier.value = workPath;
-        _logger.info('加载作品保存路径: $workPath', module: '设置');
       }
 
       if (canvasPath != null && canvasPath.isNotEmpty) {
         canvasSavePathNotifier.value = canvasPath;
-        _logger.info('加载画布空间保存路径: $canvasPath', module: '设置');
       }
     } catch (e) {
       _logger.error('加载保存路径配置失败: $e', module: '设置');
@@ -429,22 +437,28 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
-      final model = await _storage.getModel(provider: provider, modelType: 'image');
+      // vidu/jimeng 已从图片模型移除，旧配置自动回退到 openai
+      final validProvider = (provider == 'vidu' || provider == 'jimeng') ? 'openai' : provider;
+      final apiKey = await _storage.getApiKey(provider: validProvider, modelType: 'image');
+      final baseUrl = await _storage.getBaseUrl(provider: validProvider, modelType: 'image');
+      final model = await _storage.getModel(provider: validProvider, modelType: 'image');
 
       // ✅ 加载网页服务商配置
       final webTool = prefs.getString('image_web_tool');
       final webModel = prefs.getString('image_web_model');
 
+      // ✅ 加载 RunningHub 配置
+      final rhImageWebappId = prefs.getString('runninghub_image_webapp_id');
+
       if (mounted) {
         setState(() {
-          _imageProvider = provider;
+          _imageProvider = validProvider;
           _imageApiKeyController.text = apiKey ?? '';
-          _imageBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+          _imageBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(validProvider);
           _imageModelController.text = model ?? '';
           _imageWebTool = webTool;
           _imageWebModel = webModel;
+          _runninghubImageWebappIdController.text = rhImageWebappId ?? '';
         });
       }
     } catch (e) {
@@ -463,7 +477,11 @@ class _SettingsPageState extends State<SettingsPage> {
       // ✅ 加载网页服务商配置
       final webTool = prefs.getString('video_web_tool');
       final webModel = prefs.getString('video_web_model');
+      final webMode = prefs.getString('video_web_mode');
       final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+
+      // ✅ 加载 RunningHub 配置
+      final rhVideoWebappId = prefs.getString('runninghub_video_webapp_id');
 
       if (mounted) {
         setState(() {
@@ -473,7 +491,9 @@ class _SettingsPageState extends State<SettingsPage> {
           _videoModelController.text = model ?? '';
           _videoWebTool = webTool;
           _videoWebModel = webModel;
+          _videoWebMode = webMode;
           _viduWatermarkFree = viduWmFree;
+          _runninghubVideoWebappIdController.text = rhVideoWebappId ?? '';
         });
       }
     } catch (e) {
@@ -518,11 +538,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _defaultEmotionAlpha = emotionAlpha;
         });
       }
-      _logger.info('加载语音合成配置', module: '设置', extra: {
-        'enabled': enabled,
-        'serviceUrl': serviceUrl,
-        'indexttsPath': indexttsPath,
-      });
+      _logger.debug('加载语音合成配置', module: '设置');
     } catch (e) {
       _logger.error('加载语音合成配置失败: $e', module: '设置');
     }
@@ -569,6 +585,8 @@ class _SettingsPageState extends State<SettingsPage> {
         return 'https://api.anthropic.com/v1';
       case 'comfyui':  // ✅ ComfyUI 本地服务
         return 'http://127.0.0.1:8188/';
+      case 'runninghub':  // ✅ RunningHub 云端
+        return 'https://www.runninghub.cn';
       default:
         return 'https://api.openai.com/v1';
     }
@@ -632,6 +650,10 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_imageModelController.text.isNotEmpty) {
           await _storage.saveModel(provider: _imageProvider, modelType: 'image', model: _imageModelController.text);
         }
+        // ✅ 保存 RunningHub WebApp ID
+        if (_imageProvider == 'runninghub') {
+          await prefs.setString('runninghub_image_webapp_id', _runninghubImageWebappIdController.text.trim());
+        }
       }
 
       _logger.success('保存图片API配置成功', module: '设置', extra: {'provider': _imageProvider});
@@ -658,6 +680,9 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_videoWebModel != null) {
           await prefs.setString('video_web_model', _videoWebModel!);
         }
+        if (_videoWebMode != null) {
+          await prefs.setString('video_web_mode', _videoWebMode!);
+        }
         // ✅ 保存 Vidu 去水印开关
         await prefs.setBool('vidu_watermark_free', _viduWatermarkFree);
       } else {
@@ -670,6 +695,10 @@ class _SettingsPageState extends State<SettingsPage> {
         }
         if (_videoModelController.text.isNotEmpty) {
           await _storage.saveModel(provider: _videoProvider, modelType: 'video', model: _videoModelController.text);
+        }
+        // ✅ 保存 RunningHub WebApp ID
+        if (_videoProvider == 'runninghub') {
+          await prefs.setString('runninghub_video_webapp_id', _runninghubVideoWebappIdController.text.trim());
         }
       }
 
@@ -1868,7 +1897,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ] else ...[
           // API 服务商配置界面（原有逻辑）
-          if (_imageProvider != 'comfyui') ...[  // ComfyUI 不需要 API Key
+          if (_imageProvider != 'comfyui' && _imageProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要推理模型相关配置
             _buildFieldLabel('API Key'),
             const SizedBox(height: 10),
             _buildEditableTextField(
@@ -1885,15 +1914,47 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 30),
           ],
-          _buildFieldLabel('Base URL (API 地址)'),
-          const SizedBox(height: 10),
-          _buildEditableTextField(
-            _imageBaseUrlController, 
-            'https://api.openai.com/v1',
-            onSave: () => _debouncedSave(_saveImageConfig),
-          ),
           
-          if (_imageProvider != 'comfyui') ...[  // ComfyUI 不需要推理模型
+          // ✅ RunningHub 专属配置
+          if (_imageProvider == 'runninghub') ...[
+            _buildFieldLabel('API Key'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _imageApiKeyController,
+              '请输入 RunningHub API Key（32位）',
+              isPassword: true,
+              isVisible: _imageApiKeyVisible,
+              onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
+              onCopy: () async {
+                await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
+                _showMessage('API Key 已复制', isError: false);
+              },
+              onSave: () => _debouncedSave(_saveImageConfig),
+            ),
+            const SizedBox(height: 30),
+            _buildFieldLabel('AI 应用 ID（WebApp ID）'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _runninghubImageWebappIdController,
+              '从 RunningHub 应用链接末尾获取',
+              onSave: () => _debouncedSave(_saveImageConfig),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '* 注意：需要 AI 应用 ID，不是工作流 ID\n  AI 应用链接格式: https://www.runninghub.cn/ai-detail/xxx\n  工作流链接 /workflow/xxx 不能直接用，需先发布为 AI 应用',
+              style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+            ),
+          ] else if (_imageProvider != 'comfyui') ...[
+            _buildFieldLabel('Base URL (API 地址)'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _imageBaseUrlController, 
+              'https://api.openai.com/v1',
+              onSave: () => _debouncedSave(_saveImageConfig),
+            ),
+          ],
+          
+          if (_imageProvider != 'comfyui' && _imageProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要推理模型
             const SizedBox(height: 30),
             _buildFieldLabel('选择推理模型'),
             const SizedBox(height: 10),
@@ -1990,7 +2051,10 @@ class _SettingsPageState extends State<SettingsPage> {
               });
             },
             onModelChanged: (model) {
-              setState(() => _videoWebModel = model);
+              setState(() {
+                _videoWebModel = model;
+                _videoWebMode = null; // 切换模型时重置方式（不同模型支持不同模式）
+              });
             },
             onModeChanged: (mode) {
               setState(() => _videoWebMode = mode);
@@ -1998,7 +2062,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ] else ...[
           // API 服务商配置界面（原有逻辑）
-          if (_videoProvider != 'comfyui') ...[  // ComfyUI 不需要 API Key
+          if (_videoProvider != 'comfyui' && _videoProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要通用 API Key
             _buildFieldLabel('API Key'),
             const SizedBox(height: 10),
             _buildEditableTextField(
@@ -2015,15 +2079,47 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 30),
           ],
-          _buildFieldLabel('Base URL (API 地址)'),
-          const SizedBox(height: 10),
-          _buildEditableTextField(
-            _videoBaseUrlController, 
-            'https://api.openai.com/v1',
-            onSave: () => _debouncedSave(_saveVideoConfig),
-          ),
           
-          if (_videoProvider != 'comfyui') ...[  // ComfyUI 不需要推理模型
+          // ✅ RunningHub 专属配置
+          if (_videoProvider == 'runninghub') ...[
+            _buildFieldLabel('API Key'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _videoApiKeyController,
+              '请输入 RunningHub API Key（32位）',
+              isPassword: true,
+              isVisible: _videoApiKeyVisible,
+              onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
+              onCopy: () async {
+                await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
+                _showMessage('API Key 已复制', isError: false);
+              },
+              onSave: () => _debouncedSave(_saveVideoConfig),
+            ),
+            const SizedBox(height: 30),
+            _buildFieldLabel('AI 应用 ID（WebApp ID）'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _runninghubVideoWebappIdController,
+              '从 RunningHub 应用链接末尾获取',
+              onSave: () => _debouncedSave(_saveVideoConfig),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '* 注意：需要 AI 应用 ID，不是工作流 ID\n  AI 应用链接格式: https://www.runninghub.cn/ai-detail/xxx\n  工作流链接 /workflow/xxx 不能直接用，需先发布为 AI 应用',
+              style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+            ),
+          ] else if (_videoProvider != 'comfyui') ...[
+            _buildFieldLabel('Base URL (API 地址)'),
+            const SizedBox(height: 10),
+            _buildEditableTextField(
+              _videoBaseUrlController, 
+              'https://api.openai.com/v1',
+              onSave: () => _debouncedSave(_saveVideoConfig),
+            ),
+          ],
+          
+          if (_videoProvider != 'comfyui' && _videoProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要推理模型
             const SizedBox(height: 30),
             _buildFieldLabel('选择推理模型'),
             const SizedBox(height: 10),
@@ -2409,11 +2505,11 @@ class _SettingsPageState extends State<SettingsPage> {
       // LLM 模型包含 DeepSeek 和阿里云
       providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun'];
     } else if (modelType == 'image') {
-      // 图片模型：API服务商 + ComfyUI + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng', 'google_flow'];
+      // 图片模型：API服务商 + ComfyUI + RunningHub + 网页服务商
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'runninghub', 'google_flow'];
     } else if (modelType == 'video') {
-      // 视频模型：API服务商 + ComfyUI + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'vidu', 'jimeng'];
+      // 视频模型：API服务商 + ComfyUI + RunningHub + 网页服务商
+      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'runninghub', 'vidu', 'jimeng'];
     } else {
       // 其他（上传等）：只有 API 服务商
       providers = ['openai', 'geeknow', 'yunwu'];
@@ -2426,6 +2522,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'deepseek': 'DeepSeek',
       'aliyun': '阿里云',  // ✅ 添加阿里云
       'comfyui': 'ComfyUI（本地）',  // ✅ ComfyUI
+      'runninghub': 'RunningHub（云端）',  // ✅ RunningHub
       'azure': 'Azure',
       'anthropic': 'Anthropic',
       // ✅ 网页服务商
@@ -2436,6 +2533,9 @@ class _SettingsPageState extends State<SettingsPage> {
       'google_flow': 'Google Flow（网页服务商）',
     };
 
+    // 确保 value 在列表中，否则回退到第一个
+    final safeValue = providers.contains(value) ? value : providers.first;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(
@@ -2445,7 +2545,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: value,
+          value: safeValue,
           isExpanded: true,
           dropdownColor: AppTheme.surfaceBackground,
           icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
@@ -3453,8 +3553,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     // 获取当前选择工具的方式列表（如即梦视频生成的：全能参考/首尾帧/智能多帧/主体参考）
+    // 优先按模型ID查找（不同模型支持不同模式），回退到工具ID
     List<dynamic> modes = [];
-    if (effectiveTool != null) {
+    if (selectedModel != null) {
+      modes = (config['modes']?[selectedModel] as List<dynamic>?) ?? [];
+    }
+    if (modes.isEmpty && effectiveTool != null) {
       modes = (config['modes']?[effectiveTool] as List<dynamic>?) ?? [];
     }
 

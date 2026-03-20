@@ -641,6 +641,8 @@ class ComfyUIService extends ApiServiceBase {
   Future<List<Map<String, dynamic>>> _waitForCompletion(String promptId) async {
     debugPrint('   ⏳ 等待生成完成（包括排队时间）...');
     
+    int consecutiveErrors = 0;
+    
     // ✅ 增加到30分钟，支持大批量图片生成
     for (var i = 0; i < 1800; i++) {  // 30分钟 = 1800秒
       await Future.delayed(const Duration(seconds: 1));
@@ -648,9 +650,10 @@ class ComfyUIService extends ApiServiceBase {
       try {
         final response = await http.get(
           Uri.parse('${config.baseUrl}history/$promptId'),
-        );
+        ).timeout(const Duration(seconds: 10));
         
         if (response.statusCode == 200) {
+          consecutiveErrors = 0;
           final data = jsonDecode(response.body);
           
           if (data[promptId] != null) {
@@ -671,7 +674,11 @@ class ComfyUIService extends ApiServiceBase {
           }
         }
       } catch (e) {
-        debugPrint('   ⚠️ 查询状态失败: $e');
+        consecutiveErrors++;
+        debugPrint('   ⚠️ 查询状态失败 ($consecutiveErrors次): $e');
+        if (consecutiveErrors >= 30) {
+          throw Exception('ComfyUI 连续 $consecutiveErrors 次查询失败，服务可能已关闭\n\n请检查 ComfyUI 是否正常运行');
+        }
       }
       
       // ✅ 改进日志输出（减少刷屏）

@@ -43,6 +43,15 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
   final Map<String, TextEditingController> _promptControllers = {};
 
   @override
+  void dispose() {
+    for (final controller in _promptControllers.values) {
+      controller.dispose();
+    }
+    _promptControllers.clear();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -85,7 +94,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           _saveTasks();
         }
 
-        _logger.success('成功加载 ${_tasks.length} 个批量任务', module: '批量空间');
+        _logger.debug('成功加载 ${_tasks.length} 个批量任务', module: '批量空间');
 
         // 恢复未完成的生成任务轮询
         if (pendingPlaceholders.isNotEmpty) {
@@ -777,6 +786,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     required String webTool,
     required int index,
     required SharedPreferences prefs,
+    String? provider,
   }) async {
     final payload = <String, dynamic>{'prompt': task.prompt, 'model': webModel};
 
@@ -857,6 +867,43 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
     if (viduWmFree) {
       payload['watermarkFree'] = true;
+    }
+
+    // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
+    if (provider == 'jimeng') {
+      payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+      
+      // 如果 segments 未设置（webTool 不是 ref2video），但 prompt 中有 [📷xxx]，直接解析
+      var segments = payload['segments'] as List<Map<String, String>>?;
+      if (segments == null && RegExp(r'\[📷[^\]]+\]').hasMatch(task.prompt)) {
+        segments = await _parsePromptToSegments(task.prompt, prefs);
+        if (segments.isNotEmpty) {
+          payload['prompt'] = task.prompt.replaceAll(RegExp(r'\[📷[^\]]+\]'), '').trim();
+        }
+      }
+      
+      if (segments != null && segments.isNotEmpty) {
+        final List<String> refImages = [];
+        final List<String> charNames = [];
+        String cleanPrompt = '';
+        for (final seg in segments) {
+          if (seg['type'] == 'image' && seg['path'] != null && seg['path']!.isNotEmpty) {
+            final name = seg['name'] ?? '';
+            if (!charNames.contains(name)) {
+              refImages.add(seg['path']!);
+              charNames.add(name);
+            }
+          } else {
+            cleanPrompt += seg['content'] ?? '';
+          }
+        }
+        if (refImages.isNotEmpty) {
+          payload.remove('segments');
+          payload['referenceImages'] = refImages;
+          payload['characterNames'] = charNames;
+          payload['prompt'] = cleanPrompt;
+        }
+      }
     }
 
     return payload;
@@ -990,6 +1037,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               webTool: webTool,
               index: 0,
               prefs: prefs,
+              provider: provider,
             );
             // 告诉 Python 点 N 次创作
             payload['batchCount'] = batchCount;
@@ -1171,6 +1219,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
               webTool: webTool!,
               index: i,
               prefs: prefs,
+              provider: provider,
             );
 
             // 提交生成任务
@@ -1427,6 +1476,15 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         }
       }
 
+      // ✅ RunningHub 检查：需要配置 WebApp ID
+      if (provider.toLowerCase() == 'runninghub') {
+        final webappId = prefs.getString('runninghub_video_webapp_id');
+        if (webappId == null || webappId.isEmpty) {
+          throw Exception('未配置 RunningHub 视频 WebApp ID\n\n请前往设置页面配置 RunningHub AI 应用 ID');
+        }
+        _logger.success('【批量空间】使用 RunningHub: $webappId', module: '批量空间');
+      }
+
       final config = ApiConfig(
         provider: provider,
         baseUrl: baseUrl,
@@ -1446,8 +1504,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         parameters['seconds'] = seconds;
       }
 
-      // ComfyUI 同步生成
-      if (provider.toLowerCase() == 'comfyui') {
+      // ComfyUI / RunningHub / OpenAI 同步生成
+      if (provider.toLowerCase() == 'comfyui' || provider.toLowerCase() == 'runninghub' || provider.toLowerCase() == 'openai') {
         final generateFutures = List.generate(batchCount, (i) async {
           final placeholder = placeholders[i];
 
@@ -1852,7 +1910,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
           segments.add({'type': 'text', 'content': textBefore});
         }
       }
-      final name = match.group(1)!;
+      final name = match.group(1)!.trim();
       final filePath = nameToPath[name] ?? '';
       if (filePath.isNotEmpty) {
         segments.add({'type': 'image', 'name': name, 'path': filePath});
@@ -2803,9 +2861,9 @@ taskIndex 从 0 开始，对应任务序号。''';
       return MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onTap: () {
+          onTapUp: (details) {
             _logger.info('点击添加图片', module: '批量空间', extra: {'taskId': task.id});
-            _showImageSourceDialog(task.id); // ✅ 传递 task ID
+            _showImageSourceDialog(task.id, tapPosition: details.globalPosition);
           },
           child: Center(
             child: Icon(
@@ -2914,7 +2972,9 @@ taskIndex 从 0 开始，对应任务序号。''';
     }
     final controller = _promptControllers[task.id]!;
     // 同步外部更新（智能匹配等）
-    if (controller.text != task.prompt) {
+    // IME 组合期间不同步，避免打断输入法造成重复输入
+    if (controller.text != task.prompt &&
+        controller.value.composing == TextRange.empty) {
       final cursorPos = controller.selection.baseOffset;
       controller.text = task.prompt;
       if (cursorPos >= 0 && cursorPos <= task.prompt.length) {
@@ -2944,10 +3004,12 @@ taskIndex 从 0 开始，对应任务序号。''';
           isDense: true,
         ),
         onChanged: (v) {
-          // ✅ 使用 post frame callback 避免在构建期间调用 setState
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _updateTask(task.copyWith(prompt: v));
-          });
+          // 直接更新数据，不触发 setState/rebuild（避免打断 IME 输入法）
+          final index = _tasks.indexWhere((t) => t.id == task.id);
+          if (index != -1) {
+            _tasks[index] = _tasks[index].copyWith(prompt: v);
+            _saveTasks();
+          }
         },
       ),
     );
@@ -3497,186 +3559,56 @@ taskIndex 从 0 开始，对应任务序号。''';
   }
 
   /// 显示图片来源选择对话框
-  void _showImageSourceDialog(String taskId) {
-    _logger.info('显示图片来源对话框', module: '批量空间', extra: {'taskId': taskId});
-    showDialog(
+  void _showImageSourceDialog(String taskId, {Offset? tapPosition}) {
+    _logger.info('显示图片来源菜单', module: '批量空间', extra: {'taskId': taskId});
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final pos = tapPosition ?? Offset(overlay.size.width / 2, overlay.size.height / 2);
+    
+    showMenu<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppTheme.surfaceBackground,
-        title: Text('选择图片来源', style: TextStyle(color: AppTheme.textColor)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 本地图片
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.pop(context);
-                  // ✅ 传递 task ID
-                  _addLocalImages(taskId);
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppTheme.inputBackground,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.dividerColor),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.folder_open,
-                        color: AppTheme.accentColor,
-                        size: 32,
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '本地图片',
-                              style: TextStyle(
-                                color: AppTheme.textColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '从电脑中选择图片',
-                              style: TextStyle(
-                                color: AppTheme.subTextColor,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: AppTheme.subTextColor),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // 素材库图片
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.pop(context);
-                  // ✅ 传递 task ID
-                  _addAssetLibraryImages(taskId);
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppTheme.inputBackground,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.dividerColor),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.photo_library,
-                        color: AppTheme.accentColor,
-                        size: 32,
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '素材库',
-                              style: TextStyle(
-                                color: AppTheme.textColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '从素材库中选择',
-                              style: TextStyle(
-                                color: AppTheme.subTextColor,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: AppTheme.subTextColor),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // 图片库（插入占位符到提示词）
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.pop(context);
-                  _addImageLibraryPlaceholders(taskId);
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppTheme.inputBackground,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.dividerColor),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.image,
-                        color: Colors.orangeAccent,
-                        size: 32,
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '图片库',
-                              style: TextStyle(
-                                color: AppTheme.textColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '插入 [📷名称] 占位符到提示词',
-                              style: TextStyle(
-                                color: AppTheme.subTextColor,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: AppTheme.subTextColor),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
-          ),
-        ],
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(pos.dx, pos.dy, 0, 0),
+        Offset.zero & overlay.size,
       ),
-    );
+      color: AppTheme.surfaceBackground,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      items: [
+        PopupMenuItem(
+          value: 'local',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 16, color: AppTheme.textColor),
+              const SizedBox(width: 8),
+              Text('本地文件', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'library',
+          child: Row(
+            children: [
+              Icon(Icons.photo_library, size: 16, color: AppTheme.textColor),
+              const SizedBox(width: 8),
+              Text('素材库', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'image_library',
+          child: Row(
+            children: [
+              Icon(Icons.image, size: 16, color: AppTheme.textColor),
+              const SizedBox(width: 8),
+              Text('图片库', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'local') _addLocalImages(taskId);
+      else if (value == 'library') _addAssetLibraryImages(taskId);
+      else if (value == 'image_library') _addImageLibraryPlaceholders(taskId);
+    });
   }
 
   /// 添加本地图片
@@ -3756,14 +3688,6 @@ taskIndex 从 0 开始，对应任务序号。''';
         extra: {'接收到的taskId': taskId},
       );
 
-      // ✅ 先输出所有任务的ID，确认列表状态
-      for (var i = 0; i < _tasks.length; i++) {
-        _logger.info(
-          '  任务列表[$i]: ID=${_tasks[i].id}, 图片数=${_tasks[i].referenceImages.length}',
-          module: '批量空间',
-        );
-      }
-
       // 加载素材库数据
       final prefs = await SharedPreferences.getInstance();
       final assetsJson = prefs.getString('asset_library_data');
@@ -3773,75 +3697,53 @@ taskIndex 从 0 开始，对应任务序号。''';
         return;
       }
 
-      // 解析素材数据
+      // 按分类整理素材
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
-      final allAssets = <Map<String, String>>[]; // ✅ 使用Map存储素材信息
+      final assetsByCategory = <int, List<Map<String, String>>>{};
 
-      data.forEach((key, value) {
-        final stylesList = (value as List);
-        for (var styleData in stylesList) {
-          final assets = (styleData['assets'] as List?) ?? [];
-          for (var assetData in assets) {
-            final assetMap = assetData as Map<String, dynamic>;
-            allAssets.add({
-              'path': assetMap['path'] as String,
-              'name': assetMap['name'] as String,
-            });
+      for (int i = 0; i < 3; i++) {
+        final categoryData = data['$i'];
+        final assets = <Map<String, String>>[];
+        if (categoryData != null) {
+          final stylesList = categoryData as List;
+          for (var styleData in stylesList) {
+            final assetsList = (styleData['assets'] as List?) ?? [];
+            for (var assetData in assetsList) {
+              final asset = assetData as Map<String, dynamic>;
+              assets.add({
+                'path': asset['path'] as String,
+                'name': asset['name'] as String,
+              });
+            }
           }
         }
-      });
+        assetsByCategory[i] = assets;
+      }
 
-      _logger.info('素材库中找到 ${allAssets.length} 张图片', module: '批量空间');
-
-      if (allAssets.isEmpty) {
+      final totalAssets = assetsByCategory.values.fold<int>(0, (sum, list) => sum + list.length);
+      if (totalAssets == 0) {
         _showMessage('素材库中没有图片\n请先在素材库中添加图片', isError: true);
         return;
       }
 
       // 显示素材库选择对话框
-      final selectedAssets = await _showAssetLibraryDialog(allAssets);
+      final selectedAssets = await _showAssetLibraryDialog(assetsByCategory);
 
       if (selectedAssets != null && selectedAssets.isNotEmpty) {
-        final newImages = selectedAssets
-            .map((asset) => asset['path']!)
-            .toList();
-        _logger.info('【添加素材库图片】选择了 ${newImages.length} 张图片', module: '批量空间');
+        _logger.info('【添加素材库图片】选择了 ${selectedAssets.length} 张图片', module: '批量空间');
 
-        // ✅ 从列表中获取正确的 task
         final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
         if (taskIndex == -1) {
-          _logger.error(
-            '【添加素材库图片】未找到任务！',
-            module: '批量空间',
-            extra: {'taskId': taskId},
-          );
           _showMessage('任务不存在', isError: true);
           return;
         }
 
         final task = _tasks[taskIndex];
-        _logger.info(
-          '【添加素材库图片】找到任务，索引: $taskIndex，当前图片数: ${task.referenceImages.length}',
-          module: '批量空间',
-        );
-
         final updatedTask = task.copyWith(
-          referenceImages: [...task.referenceImages, ...newImages],
-        );
-
-        _logger.info(
-          '更新任务，图片总数: ${updatedTask.referenceImages.length}',
-          module: '批量空间',
+          referenceImages: [...task.referenceImages, ...selectedAssets],
         );
         _updateTask(updatedTask);
-        _showMessage('从素材库添加了 ${newImages.length} 张图片');
-        _logger.success(
-          '从素材库添加图片成功',
-          module: '批量空间',
-          extra: {'数量': newImages.length, '任务索引': taskIndex},
-        );
-      } else {
-        _logger.info('用户取消选择', module: '批量空间');
+        _showMessage('从素材库添加了 ${selectedAssets.length} 张图片');
       }
     } catch (e, stackTrace) {
       _logger.error(
@@ -3932,131 +3834,104 @@ taskIndex 从 0 开始，对应任务序号。''';
   Future<List<Map<String, String>>?> _showImageLibraryDialog(
     List<Map<String, String>> allImages,
   ) async {
-    final selectedImages = <Map<String, String>>[];
+    String searchQuery = '';
 
     return showDialog<List<Map<String, String>>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
+          final filtered = searchQuery.isEmpty
+              ? allImages
+              : allImages.where((item) {
+                  final name = (item['name'] ?? '').toLowerCase();
+                  return name.contains(searchQuery.toLowerCase());
+                }).toList();
           return AlertDialog(
             backgroundColor: AppTheme.surfaceBackground,
-            title: Row(
-              children: [
-                Icon(Icons.image, color: Colors.orangeAccent, size: 24),
-                const SizedBox(width: 12),
-                Text('选择图片库图片', style: TextStyle(color: AppTheme.textColor)),
-                const Spacer(),
-                if (selectedImages.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.orangeAccent.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '已选 ${selectedImages.length}',
-                      style: TextStyle(
-                        color: Colors.orangeAccent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+            title: Text('选择图片插入', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
             content: SizedBox(
-              width: 700,
-              height: 500,
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 0.8,
-                ),
-                itemCount: allImages.length,
-                itemBuilder: (context, index) {
-                  final image = allImages[index];
-                  final isSelected = selectedImages.any((a) => a['name'] == image['name']);
-
-                  return MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          if (isSelected) {
-                            selectedImages.removeWhere((a) => a['name'] == image['name']);
-                          } else {
-                            selectedImages.add(image);
-                          }
-                        });
-                      },
-                      child: Stack(
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected ? Colors.orangeAccent : AppTheme.dividerColor,
-                                width: isSelected ? 3 : 1,
-                              ),
-                              image: DecorationImage(
-                                image: FileImage(File(image['path']!)),
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          ),
-                          // 名称标签
-                          Positioned(
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.6),
-                                borderRadius: const BorderRadius.only(
-                                  bottomLeft: Radius.circular(7),
-                                  bottomRight: Radius.circular(7),
-                                ),
-                              ),
-                              child: Text(
-                                image['name']!,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.white, fontSize: 11),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                          if (isSelected)
-                            Positioned(
-                              top: 4,
-                              right: 4,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.orangeAccent,
-                                  shape: BoxShape.circle,
-                                ),
-                                padding: const EdgeInsets.all(2),
-                                child: const Icon(Icons.check, color: Colors.white, size: 16),
-                              ),
-                            ),
-                        ],
+              width: 400,
+              height: 350,
+              child: Column(
+                children: [
+                  TextField(
+                    style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: '搜索图片名称...',
+                      hintStyle: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                      prefixIcon: Icon(Icons.search, color: AppTheme.subTextColor, size: 18),
+                      filled: true,
+                      fillColor: AppTheme.inputBackground,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
                       ),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                      isDense: true,
                     ),
-                  );
-                },
+                    onChanged: (v) => setState(() => searchQuery = v),
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? Center(child: Text('无匹配结果', style: TextStyle(color: AppTheme.subTextColor)))
+                        : GridView.builder(
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                              childAspectRatio: 1,
+                            ),
+                            itemCount: filtered.length,
+                            itemBuilder: (context, index) {
+                              final image = filtered[index];
+                              return MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: GestureDetector(
+                                  onTap: () => Navigator.pop(context, [image]),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.inputBackground,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: AppTheme.dividerColor),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Expanded(
+                                          child: ClipRRect(
+                                            borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                            child: Image.file(File(image['path']!), fit: BoxFit.cover, width: double.infinity),
+                                          ),
+                                        ),
+                                        Container(
+                                          width: double.infinity,
+                                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.surfaceBackground,
+                                            borderRadius: const BorderRadius.vertical(bottom: Radius.circular(7)),
+                                          ),
+                                          child: Text(
+                                            image['name']!,
+                                            style: TextStyle(fontSize: 10, color: AppTheme.textColor),
+                                            textAlign: TextAlign.center,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
               ),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, null),
                 child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
-              ),
-              ElevatedButton(
-                onPressed: selectedImages.isEmpty ? null : () => Navigator.pop(context, selectedImages),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
-                child: Text('插入占位符 (${selectedImages.length})', style: const TextStyle(color: Colors.white)),
               ),
             ],
           );
@@ -4066,170 +3941,194 @@ taskIndex 从 0 开始，对应任务序号。''';
   }
 
   /// 显示素材库选择对话框
-  Future<List<Map<String, String>>?> _showAssetLibraryDialog(
-    List<Map<String, String>> allAssets,
+  Future<List<String>?> _showAssetLibraryDialog(
+    Map<int, List<Map<String, String>>> assetsByCategory,
   ) async {
-    final selectedAssets = <Map<String, String>>[];
+    const categoryNames = ['角色素材', '场景素材', '物品素材'];
+    const categoryIcons = [Icons.person_outline, Icons.landscape_outlined, Icons.inventory_2_outlined];
 
-    return showDialog<List<Map<String, String>>>(
+    return showDialog<List<String>>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            backgroundColor: AppTheme.surfaceBackground,
-            title: Row(
-              children: [
-                Icon(
-                  Icons.photo_library,
-                  color: AppTheme.accentColor,
-                  size: 24,
-                ),
-                const SizedBox(width: 12),
-                Text('选择素材库图片', style: TextStyle(color: AppTheme.textColor)),
-                const Spacer(),
-                if (selectedAssets.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppTheme.accentColor.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '已选 ${selectedAssets.length}',
-                      style: TextStyle(
-                        color: AppTheme.accentColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            content: SizedBox(
-              width: 700,
-              height: 500,
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 0.8,
-                ),
-                itemCount: allAssets.length,
-                itemBuilder: (context, index) {
-                  final asset = allAssets[index];
-                  final assetPath = asset['path']!;
-                  final isSelected = selectedAssets.any(
-                    (a) => a['path'] == assetPath,
-                  );
-
-                  return MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          if (isSelected) {
-                            selectedAssets.removeWhere(
-                              (a) => a['path'] == assetPath,
-                            );
-                          } else {
-                            selectedAssets.add(asset);
-                          }
-                        });
-                      },
-                      child: Stack(
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected
-                                    ? AppTheme.accentColor
-                                    : AppTheme.dividerColor,
-                                width: isSelected ? 3 : 1,
-                              ),
-                              image: DecorationImage(
-                                image: FileImage(File(asset['path']!)),
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          ),
-                          if (isSelected)
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.accentColor,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.check,
-                                  color: Colors.white,
-                                  size: 16,
-                                ),
-                              ),
-                            ),
-                          Positioned(
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
+      builder: (ctx) {
+        int selectedCategory = 0;
+        final selectedPaths = <String>[];
+        String searchQuery = '';
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final currentAssets = assetsByCategory[selectedCategory] ?? [];
+            final filtered = searchQuery.isEmpty
+                ? currentAssets
+                : currentAssets.where((item) {
+                    final name = (item['name'] ?? '').toLowerCase();
+                    return name.contains(searchQuery.toLowerCase());
+                  }).toList();
+            return AlertDialog(
+              backgroundColor: AppTheme.surfaceBackground,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              title: Row(
+                children: [
+                  Icon(Icons.photo_library, color: Colors.white, size: 22),
+                  const SizedBox(width: 8),
+                  Text('选择素材', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
+                  const Spacer(),
+                  if (selectedPaths.isNotEmpty)
+                    Text('已选 ${selectedPaths.length}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                ],
+              ),
+              content: SizedBox(
+                width: 500,
+                height: 440,
+                child: Column(
+                  children: [
+                    // 分类标签栏
+                    Row(
+                      children: List.generate(3, (i) {
+                        final isActive = selectedCategory == i;
+                        final count = assetsByCategory[i]?.length ?? 0;
+                        return Expanded(
+                          child: GestureDetector(
+                            onTap: () => setDialogState(() {
+                              selectedCategory = i;
+                              searchQuery = '';
+                            }),
                             child: Container(
-                              padding: const EdgeInsets.all(6),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.7),
-                                borderRadius: const BorderRadius.vertical(
-                                  bottom: Radius.circular(8),
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: isActive ? Colors.white : Colors.transparent,
+                                    width: 2,
+                                  ),
                                 ),
                               ),
-                              child: Text(
-                                asset['name']!,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(categoryIcons[i], size: 16,
+                                    color: isActive ? Colors.white : AppTheme.subTextColor),
+                                  const SizedBox(width: 4),
+                                  Text('${categoryNames[i]}($count)',
+                                    style: TextStyle(
+                                      color: isActive ? Colors.white : AppTheme.subTextColor,
+                                      fontSize: 12,
+                                      fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                                    )),
+                                ],
                               ),
                             ),
                           ),
-                        ],
-                      ),
+                        );
+                      }),
                     ),
-                  );
-                },
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, null),
-                child: Text(
-                  '取消',
-                  style: TextStyle(color: AppTheme.subTextColor),
+                    const SizedBox(height: 8),
+                    // 搜索栏
+                    TextField(
+                      style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: '搜索素材名称...',
+                        hintStyle: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                        prefixIcon: Icon(Icons.search, color: AppTheme.subTextColor, size: 18),
+                        filled: true,
+                        fillColor: AppTheme.inputBackground,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        isDense: true,
+                      ),
+                      onChanged: (v) => setDialogState(() => searchQuery = v),
+                    ),
+                    const SizedBox(height: 8),
+                    // 素材网格
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? Center(child: Text(
+                              searchQuery.isEmpty ? '该分类暂无素材' : '无匹配结果',
+                              style: TextStyle(color: AppTheme.subTextColor)))
+                          : GridView.builder(
+                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 4,
+                                crossAxisSpacing: 8,
+                                mainAxisSpacing: 8,
+                                childAspectRatio: 0.85,
+                              ),
+                              itemCount: filtered.length,
+                              itemBuilder: (ctx, index) {
+                                final asset = filtered[index];
+                                final isSelected = selectedPaths.contains(asset['path']);
+                                return GestureDetector(
+                                  onTap: () {
+                                    setDialogState(() {
+                                      if (isSelected) {
+                                        selectedPaths.remove(asset['path']);
+                                      } else {
+                                        selectedPaths.add(asset['path']!);
+                                      }
+                                    });
+                                  },
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: isSelected ? Colors.white : AppTheme.dividerColor,
+                                        width: isSelected ? 2 : 1,
+                                      ),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Expanded(
+                                          child: ClipRRect(
+                                            borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                            child: Image.file(
+                                              File(asset['path']!),
+                                              fit: BoxFit.cover,
+                                              width: double.infinity,
+                                              errorBuilder: (_, __, ___) => Container(
+                                                color: AppTheme.inputBackground,
+                                                child: Icon(Icons.broken_image, color: AppTheme.subTextColor),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.all(4),
+                                          child: Text(
+                                            asset['name']!,
+                                            style: TextStyle(color: AppTheme.textColor, fontSize: 10),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
                 ),
               ),
-              TextButton(
-                onPressed: selectedAssets.isEmpty
-                    ? null
-                    : () => Navigator.pop(context, selectedAssets),
-                child: Text(
-                  '确定 (${selectedAssets.length})',
-                  style: TextStyle(
-                    color: selectedAssets.isEmpty
-                        ? AppTheme.subTextColor
-                        : AppTheme.accentColor,
-                    fontWeight: FontWeight.bold,
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+                ),
+                ElevatedButton(
+                  onPressed: selectedPaths.isEmpty ? null : () => Navigator.pop(ctx, selectedPaths),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black87,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
+                  child: const Text('确定'),
                 ),
-              ),
-            ],
-          );
-        },
-      ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -4255,9 +4154,9 @@ taskIndex 从 0 开始，对应任务序号。''';
                 MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: GestureDetector(
-                    onTap: () {
+                    onTapUp: (details) {
                       Navigator.pop(dialogContext);
-                      _showImageSourceDialog(taskId); // ✅ 传递 task ID
+                      _showImageSourceDialog(taskId, tapPosition: details.globalPosition);
                     },
                     child: Container(
                       padding: const EdgeInsets.all(8),
@@ -4311,7 +4210,7 @@ taskIndex 从 0 开始，对应任务序号。''';
                           ElevatedButton.icon(
                             onPressed: () {
                               Navigator.pop(dialogContext);
-                              _showImageSourceDialog(taskId); // ✅ 传递 task ID
+                              _showImageSourceDialog(taskId);
                             },
                             icon: const Icon(Icons.add),
                             label: const Text('添加图片'),

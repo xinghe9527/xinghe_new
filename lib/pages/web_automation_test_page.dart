@@ -48,13 +48,15 @@ class _WebAutomationTestPageState extends State<WebAutomationTestPage> {
         final testChinese = result['test_chinese'] ?? '';
         final emojiTest = result['emoji_test'] ?? '';
         
-        setState(() {
-          _lastResult = '✅ 通信成功！\n\n'
-              '📩 Python 返回消息：\n$message\n\n'
-              '📥 接收到的参数：\n$receivedParam\n\n'
-              '🇨🇳 中文测试：\n$testChinese\n\n'
-              '😀 Emoji 测试：\n$emojiTest';
-        });
+        if (mounted) {
+          setState(() {
+            _lastResult = '✅ 通信成功！\n\n'
+                '📩 Python 返回消息：\n$message\n\n'
+                '📥 接收到的参数：\n$receivedParam\n\n'
+                '🇨🇳 中文测试：\n$testChinese\n\n'
+                '😀 Emoji 测试：\n$emojiTest';
+          });
+        }
         
         // 显示成功提示
         if (mounted) {
@@ -62,9 +64,11 @@ class _WebAutomationTestPageState extends State<WebAutomationTestPage> {
         }
       } else {
         final error = result['error'] ?? '未知错误';
-        setState(() {
-          _lastResult = '❌ 通信失败：\n$error';
-        });
+        if (mounted) {
+          setState(() {
+            _lastResult = '❌ 通信失败：\n$error';
+          });
+        }
         
         if (mounted) {
           _showErrorSnackBar('Python 返回错误: $error');
@@ -72,9 +76,11 @@ class _WebAutomationTestPageState extends State<WebAutomationTestPage> {
       }
       
     } catch (e) {
-      setState(() {
-        _lastResult = '❌ 调用失败：\n$e';
-      });
+      if (mounted) {
+        setState(() {
+          _lastResult = '❌ 调用失败：\n$e';
+        });
+      }
       
       if (mounted) {
         _showErrorSnackBar('调用 Python 失败: $e');

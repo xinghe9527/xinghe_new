@@ -4,6 +4,7 @@ import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xinghe_new/services/api/providers/veo_video_service.dart';
+import 'package:xinghe_new/core/logger/error_translator.dart';
 import 'package:xinghe_new/services/api/providers/geeknow_service.dart';
 import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
@@ -131,7 +132,7 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
           _saveTasks();
         }
         
-        _logger.success('成功加载 ${_tasks.length} 个视频任务', module: '视频空间');
+        _logger.debug('成功加载 ${_tasks.length} 个视频任务', module: '视频空间');
       }
     } catch (e) {
       debugPrint('加载任务失败: $e');
@@ -487,7 +488,7 @@ class _VideoSpaceState extends State<VideoSpace> with WidgetsBindingObserver {
       final seconds = _parseSeconds(task.seconds);
       
       // ComfyUI 同步生成
-      if (provider.toLowerCase() == 'comfyui') {
+      if (provider.toLowerCase() == 'comfyui' || provider.toLowerCase() == 'openai') {
         final generateFutures = List.generate(batchCount, (i) async {
           final placeholder = placeholders[i];
           
@@ -887,7 +888,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('video_provider') ?? 'openai';
       
-      _logger.info('加载视频服务商配置', module: '视频空间', extra: {'provider': provider});
+      _logger.debug('加载视频服务商配置: $provider', module: '视频空间');
       
       final models = _getModelsForProvider(provider);
       
@@ -1038,6 +1039,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   }
 
   void _showErrorDialog(String title, String message) {
+    final friendlyMessage = ErrorTranslator.translate(message);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1060,7 +1062,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           constraints: const BoxConstraints(maxWidth: 500),
           child: SingleChildScrollView(
             child: SelectableText(
-              message,
+              friendlyMessage,
               style: TextStyle(
                 color: AppTheme.textColor,
                 fontSize: 14,
@@ -1373,6 +1375,41 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
               }
             }
             
+            // ✅ 即梦：始终传递模式（默认全能参考）
+            if (provider == 'jimeng') {
+              payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+              
+              // 解析 prompt 中的 [📷X] 占位符，提取图片路径和角色名
+              final segments = await _parsePromptToSegments(widget.task.prompt, prefs);
+              final List<String> refImages = [];
+              final List<String> charNames = [];
+              String cleanPrompt = '';
+              
+              for (final seg in segments) {
+                if (seg['type'] == 'image' && seg['path'] != null && seg['path']!.isNotEmpty) {
+                  final name = seg['name'] ?? '';
+                  // 去重：同名角色只上传一次
+                  if (!charNames.contains(name)) {
+                    refImages.add(seg['path']!);
+                    charNames.add(name);
+                  }
+                } else {
+                  cleanPrompt += seg['content'] ?? '';
+                }
+              }
+              
+              if (refImages.isNotEmpty) {
+                payload['referenceImages'] = refImages;
+                payload['characterNames'] = charNames;
+                payload['prompt'] = cleanPrompt;
+                _logger.info('即梦全能参考：${refImages.length}张图(去重), 角色=${charNames.join(",")}', module: '视频空间');
+              } else if (widget.task.referenceImages != null && widget.task.referenceImages!.isNotEmpty) {
+                // fallback: 用户通过 UI 添加的参考图片
+                payload['referenceImages'] = widget.task.referenceImages;
+                _logger.info('即梦参考图：${widget.task.referenceImages!.length}张(UI添加)', module: '视频空间');
+              }
+            }
+            
             // ✅ 添加视频参数（比例、分辨率、时长）
             payload['aspectRatio'] = widget.task.ratio;    // e.g. '16:9', '9:16', '1:1'
             payload['resolution'] = widget.task.quality;   // e.g. '1080P', '720P'
@@ -1551,6 +1588,14 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         });
       }
       
+      // ✅ RunningHub 检查：需要配置 WebApp ID
+      if (provider.toLowerCase() == 'runninghub') {
+        final webappId = prefs.getString('runninghub_video_webapp_id');
+        if (webappId == null || webappId.isEmpty) {
+          throw Exception('未配置 RunningHub 视频 WebApp ID\n\n请前往设置页面配置 RunningHub AI 应用 ID');
+        }
+      }
+      
       // 创建配置
       final config = ApiConfig(
         provider: provider,
@@ -1576,9 +1621,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         'seconds': seconds,
       });
       
-      // ✅ ComfyUI 服务的特殊处理（同步生成，不需要轮询）
-      if (provider.toLowerCase() == 'comfyui') {
-        _logger.info('使用 ComfyUI 同步生成模式', module: '视频空间');
+      // ✅ ComfyUI / RunningHub / OpenAI 服务的特殊处理（同步生成，不需要轮询）
+      if (provider.toLowerCase() == 'comfyui' || provider.toLowerCase() == 'runninghub' || provider.toLowerCase() == 'openai') {
+        _logger.info('使用 $provider 同步生成模式', module: '视频空间');
         
         // ComfyUI 直接生成，无需分步骤
         final generateFutures = List.generate(batchCount, (i) async {
@@ -1646,9 +1691,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         
         // 等待所有视频生成完成
         await Future.wait(generateFutures, eagerError: false);
-        _logger.success('所有 ComfyUI 视频已处理完成', module: '视频空间');
+        _logger.success('所有 $provider 视频已处理完成', module: '视频空间');
         
-        return;  // ✅ ComfyUI处理完成，直接返回
+        return;  // ✅ 同步模式处理完成，直接返回
       }
       
       // ✅ Yunwu 服务的异步轮询模式
@@ -2342,7 +2387,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       _logger.error('打开视频失败: $e', module: '视频空间');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开视频失败: $e')),
+          SnackBar(content: Text('打开视频失败：${ErrorTranslator.translate('$e')}')),
         );
       }
     }
@@ -2451,7 +2496,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       _logger.error('定位文件失败: $e', module: '视频空间');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('定位文件失败: $e')),
+          SnackBar(content: Text('定位文件失败：${ErrorTranslator.translate('$e')}')),
         );
       }
     }
@@ -2951,7 +2996,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         }
       }
       // 添加图片段
-      final name = match.group(1)!;
+      final name = match.group(1)!.trim();
       final filePath = nameToPath[name] ?? '';
       if (filePath.isNotEmpty) {
         segments.add({'type': 'image', 'name': name, 'path': filePath});
@@ -3276,12 +3321,24 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             ],
           ),
         ),
+        PopupMenuItem(
+          value: 'image_library',
+          child: Row(
+            children: [
+              Icon(Icons.image, size: 16, color: AppTheme.textColor),
+              const SizedBox(width: 8),
+              Text('图片库', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+            ],
+          ),
+        ),
       ],
     ).then((value) {
       if (value == 'local') {
         _pickLocalImages();
       } else if (value == 'library') {
         _pickFromAssetLibrary();
+      } else if (value == 'image_library') {
+        _showImageLibraryPicker();
       }
     });
   }
@@ -3326,23 +3383,33 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       }
       
       final data = jsonDecode(assetsJson) as Map<String, dynamic>;
-      final allAssets = <Map<String, String>>[];
       
-      data.forEach((key, value) {
-        final stylesList = value as List;
-        for (var styleData in stylesList) {
-          final assets = (styleData['assets'] as List?) ?? [];
-          for (var assetData in assets) {
-            final asset = assetData as Map<String, dynamic>;
-            allAssets.add({
-              'path': asset['path'] as String,
-              'name': asset['name'] as String,
-            });
+      // 按分类整理素材
+      const categoryNames = ['角色素材', '场景素材', '物品素材'];
+      const categoryIcons = [Icons.person_outline, Icons.landscape_outlined, Icons.inventory_2_outlined];
+      final assetsByCategory = <int, List<Map<String, String>>>{};
+      
+      for (int i = 0; i < 3; i++) {
+        final categoryData = data['$i'];
+        final assets = <Map<String, String>>[];
+        if (categoryData != null) {
+          final stylesList = categoryData as List;
+          for (var styleData in stylesList) {
+            final assetsList = (styleData['assets'] as List?) ?? [];
+            for (var assetData in assetsList) {
+              final asset = assetData as Map<String, dynamic>;
+              assets.add({
+                'path': asset['path'] as String,
+                'name': asset['name'] as String,
+              });
+            }
           }
         }
-      });
+        assetsByCategory[i] = assets;
+      }
       
-      if (allAssets.isEmpty) {
+      final totalAssets = assetsByCategory.values.fold<int>(0, (sum, list) => sum + list.length);
+      if (totalAssets == 0) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('素材库中没有图片')),
@@ -3351,104 +3418,187 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         return;
       }
       
-      // 显示素材库选择对话框
+      // 显示带分类标签的素材库对话框
       final selected = await showDialog<List<String>>(
         context: context,
         builder: (ctx) {
+          int selectedCategory = 0;
           final selectedPaths = <String>[];
+          String searchQuery = '';
           return StatefulBuilder(
-            builder: (ctx, setDialogState) => AlertDialog(
-              backgroundColor: AppTheme.surfaceBackground,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              title: Row(
-                children: [
-                  Icon(Icons.photo_library, color: const Color(0xFF667EEA), size: 22),
-                  const SizedBox(width: 8),
-                  Text('选择素材', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
-                  const Spacer(),
-                  if (selectedPaths.isNotEmpty)
-                    Text('已选 ${selectedPaths.length}', style: const TextStyle(color: Color(0xFF667EEA), fontSize: 13)),
-                ],
-              ),
-              content: SizedBox(
-                width: 500,
-                height: 400,
-                child: GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                    childAspectRatio: 0.85,
-                  ),
-                  itemCount: allAssets.length,
-                  itemBuilder: (ctx, index) {
-                    final asset = allAssets[index];
-                    final isSelected = selectedPaths.contains(asset['path']);
-                    return GestureDetector(
-                      onTap: () {
-                        setDialogState(() {
-                          if (isSelected) {
-                            selectedPaths.remove(asset['path']);
-                          } else {
-                            selectedPaths.add(asset['path']!);
-                          }
-                        });
-                      },
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: isSelected ? const Color(0xFF667EEA) : AppTheme.dividerColor,
-                            width: isSelected ? 2 : 1,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-                                child: Image.file(
-                                  File(asset['path']!),
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    color: AppTheme.inputBackground,
-                                    child: Icon(Icons.broken_image, color: AppTheme.subTextColor),
+            builder: (ctx, setDialogState) {
+              final currentAssets = assetsByCategory[selectedCategory] ?? [];
+              final filtered = searchQuery.isEmpty
+                  ? currentAssets
+                  : currentAssets.where((item) {
+                      final name = (item['name'] ?? '').toLowerCase();
+                      return name.contains(searchQuery.toLowerCase());
+                    }).toList();
+              return AlertDialog(
+                backgroundColor: AppTheme.surfaceBackground,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                title: Row(
+                  children: [
+                    Icon(Icons.photo_library, color: Colors.white, size: 22),
+                    const SizedBox(width: 8),
+                    Text('选择素材', style: TextStyle(color: AppTheme.textColor, fontSize: 16)),
+                    const Spacer(),
+                    if (selectedPaths.isNotEmpty)
+                      Text('已选 ${selectedPaths.length}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                  ],
+                ),
+                content: SizedBox(
+                  width: 500,
+                  height: 440,
+                  child: Column(
+                    children: [
+                      // 分类标签栏
+                      Row(
+                        children: List.generate(3, (i) {
+                          final isActive = selectedCategory == i;
+                          final count = assetsByCategory[i]?.length ?? 0;
+                          return Expanded(
+                            child: GestureDetector(
+                              onTap: () => setDialogState(() {
+                                selectedCategory = i;
+                                searchQuery = '';
+                              }),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: isActive ? Colors.white : Colors.transparent,
+                                      width: 2,
+                                    ),
                                   ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(categoryIcons[i], size: 16,
+                                      color: isActive ? Colors.white : AppTheme.subTextColor),
+                                    const SizedBox(width: 4),
+                                    Text('${categoryNames[i]}($count)',
+                                      style: TextStyle(
+                                        color: isActive ? Colors.white : AppTheme.subTextColor,
+                                        fontSize: 12,
+                                        fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                                      )),
+                                  ],
                                 ),
                               ),
                             ),
-                            Padding(
-                              padding: const EdgeInsets.all(4),
-                              child: Text(
-                                asset['name']!,
-                                style: TextStyle(color: AppTheme.textColor, fontSize: 10),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
+                          );
+                        }),
                       ),
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, null),
-                  child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
-                ),
-                ElevatedButton(
-                  onPressed: selectedPaths.isEmpty ? null : () => Navigator.pop(ctx, selectedPaths),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF667EEA),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      const SizedBox(height: 8),
+                      // 搜索栏
+                      TextField(
+                        style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: '搜索素材名称...',
+                          hintStyle: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                          prefixIcon: Icon(Icons.search, color: AppTheme.subTextColor, size: 18),
+                          filled: true,
+                          fillColor: AppTheme.inputBackground,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                          isDense: true,
+                        ),
+                        onChanged: (v) => setDialogState(() => searchQuery = v),
+                      ),
+                      const SizedBox(height: 8),
+                      // 素材网格
+                      Expanded(
+                        child: filtered.isEmpty
+                            ? Center(child: Text(
+                                searchQuery.isEmpty ? '该分类暂无素材' : '无匹配结果',
+                                style: TextStyle(color: AppTheme.subTextColor)))
+                            : GridView.builder(
+                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 4,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                  childAspectRatio: 0.85,
+                                ),
+                                itemCount: filtered.length,
+                                itemBuilder: (ctx, index) {
+                                  final asset = filtered[index];
+                                  final isSelected = selectedPaths.contains(asset['path']);
+                                  return GestureDetector(
+                                    onTap: () {
+                                      setDialogState(() {
+                                        if (isSelected) {
+                                          selectedPaths.remove(asset['path']);
+                                        } else {
+                                          selectedPaths.add(asset['path']!);
+                                        }
+                                      });
+                                    },
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: isSelected ? Colors.white : AppTheme.dividerColor,
+                                          width: isSelected ? 2 : 1,
+                                        ),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Expanded(
+                                            child: ClipRRect(
+                                              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                              child: Image.file(
+                                                File(asset['path']!),
+                                                fit: BoxFit.cover,
+                                                width: double.infinity,
+                                                errorBuilder: (_, __, ___) => Container(
+                                                  color: AppTheme.inputBackground,
+                                                  child: Icon(Icons.broken_image, color: AppTheme.subTextColor),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.all(4),
+                                            child: Text(
+                                              asset['name']!,
+                                              style: TextStyle(color: AppTheme.textColor, fontSize: 10),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
                   ),
-                  child: const Text('确定', style: TextStyle(color: Colors.white)),
                 ),
-              ],
-            ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, null),
+                    child: Text('取消', style: TextStyle(color: AppTheme.subTextColor)),
+                  ),
+                  ElevatedButton(
+                    onPressed: selectedPaths.isEmpty ? null : () => Navigator.pop(ctx, selectedPaths),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black87,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: const Text('确定'),
+                  ),
+                ],
+              );
+            },
           );
         },
       );

@@ -38,3 +38,14 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# 构建后自动复制 api_server.exe 到输出目录（Debug/Release 通用）
+set(API_SERVER_EXE "${CMAKE_SOURCE_DIR}/../python_backend/web_automation/dist/api_server.exe")
+if(EXISTS "${API_SERVER_EXE}")
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${API_SERVER_EXE}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>/api_server.exe"
+    COMMENT "Copying api_server.exe to output directory"
+  )
+endif()

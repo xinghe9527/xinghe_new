@@ -26,7 +26,7 @@ class WebAutomationService {
   /// 返回 Python 脚本的 JSON 响应
   Future<Map<String, dynamic>> testHelloFlutter(String message) async {
     try {
-      _logger.info('开始测试 Python 通信', module: 'WebAutomation', extra: {
+      _logger.info('开始测试 Python 通信', module: '网页自动化', extra: {
         'message': message,
       });
       
@@ -45,14 +45,14 @@ class WebAutomationService {
         arguments: [message],
       );
       
-      _logger.success('Python 通信测试成功', module: 'WebAutomation', extra: {
+      _logger.success('Python 通信测试成功', module: '网页自动化', extra: {
         'result': result,
       });
       
       return result;
       
     } catch (e, stackTrace) {
-      _logger.error('Python 通信测试失败: $e', module: 'WebAutomation', extra: {
+      _logger.error('Python 通信测试失败: $e', module: '网页自动化', extra: {
         'stackTrace': stackTrace.toString(),
       });
       rethrow;
@@ -73,7 +73,7 @@ class WebAutomationService {
       // 构建完整命令
       final fullArguments = [scriptPath, ...arguments];
       
-      _logger.info('执行 Python 脚本', module: 'WebAutomation', extra: {
+      _logger.info('执行 Python 脚本', module: '网页自动化', extra: {
         'python': pythonExecutable,
         'script': scriptPath,
         'arguments': arguments,
@@ -123,7 +123,7 @@ class WebAutomationService {
       final stdout = stdoutBuffer.toString().trim();
       final stderr = stderrBuffer.toString().trim();
       
-      _logger.info('Python 脚本执行完成', module: 'WebAutomation', extra: {
+      _logger.info('Python 脚本执行完成', module: '网页自动化', extra: {
         'exitCode': exitCode,
         'stdout': stdout,
         'stderr': stderr,
@@ -147,7 +147,7 @@ class WebAutomationService {
       }
       
     } catch (e) {
-      _logger.error('运行 Python 脚本失败: $e', module: 'WebAutomation');
+      _logger.error('运行 Python 脚本失败: $e', module: '网页自动化');
       rethrow;
     }
   }
@@ -155,7 +155,7 @@ class WebAutomationService {
   /// 设置自定义 Python 路径（如果用户使用虚拟环境）
   void setPythonPath(String path) {
     pythonExecutable = path;
-    _logger.info('设置 Python 路径', module: 'WebAutomation', extra: {
+    _logger.info('设置 Python 路径', module: '网页自动化', extra: {
       'path': path,
     });
   }
