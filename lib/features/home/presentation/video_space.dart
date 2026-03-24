@@ -2951,7 +2951,17 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     
     // 视频参数
     payload['aspectRatio'] = widget.task.ratio;
-    payload['resolution'] = widget.task.quality;
+    var effectiveResolution = widget.task.quality;
+    if (webModel == 'vidu-q2' || webModel == 'vidu-q2-pro') {
+      if (effectiveResolution != '1080P') {
+        _logger.info(
+          'Vidu Q2/Q2 Pro 当前强制使用 1080P，忽略 $effectiveResolution',
+          module: '视频空间',
+        );
+      }
+      effectiveResolution = '1080P';
+    }
+    payload['resolution'] = effectiveResolution;
     payload['duration'] = _parseSeconds(widget.task.seconds);
 
     // ✅ Vidu 去水印开关

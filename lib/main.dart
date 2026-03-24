@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:window_manager/window_manager.dart';
@@ -63,11 +64,30 @@ class PythonBackendManager {
     try {
       // === 端口健康检查：验证 8123 上是否有活跃的 API 服务 ===
       final healthStatus = await _checkServerHealth();
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final projectRoot = _findProjectRoot(exeDir);
+      final scriptPath = projectRoot == null
+          ? null
+          : '$projectRoot${Platform.pathSeparator}python_backend${Platform.pathSeparator}web_automation${Platform.pathSeparator}api_server.py';
+      final shouldPreferScript =
+          kDebugMode && scriptPath != null && File(scriptPath).existsSync();
+
       if (healthStatus == _ServerHealth.healthy) {
-        debugPrint('✅ Python 后端已在运行且健康，跳过启动');
-        _isRunning = true;
-        _externalProcess = true;
-        return;
+        if (shouldPreferScript) {
+          debugPrint('🔄 Debug 模式检测到旧后端正在运行，先清理再启动源码后端');
+          await _killProcessOnPort(8123);
+          if (Platform.isWindows) {
+            try {
+              await Process.run('taskkill', ['/F', '/IM', 'api_server.exe']);
+            } catch (_) {}
+          }
+          await Future.delayed(const Duration(seconds: 1));
+        } else {
+          debugPrint('✅ Python 后端已在运行且健康，跳过启动');
+          _isRunning = true;
+          _externalProcess = true;
+          return;
+        }
       } else if (healthStatus == _ServerHealth.portOccupied) {
         // 端口被占用但不是我们的服务（僵尸进程），尝试清理
         debugPrint('⚠️ 端口 8123 被非 API 进程占用，尝试清理...');
@@ -76,11 +96,19 @@ class PythonBackendManager {
       }
       // healthStatus == _ServerHealth.free → 正常启动
 
-      // === 策略 1：Release 模式 — 查找同级 api_server.exe ===
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
       final serverExePath = '$exeDir${Platform.pathSeparator}api_server.exe';
 
-      if (File(serverExePath).existsSync()) {
+      if (shouldPreferScript) {
+        final workDir =
+            '$projectRoot${Platform.pathSeparator}python_backend${Platform.pathSeparator}web_automation';
+        debugPrint('🚀 [Debug] 正在启动 Python 后端: python $scriptPath');
+        _process = await Process.start(
+          'python',
+          ['-u', scriptPath!],
+          workingDirectory: workDir,
+          mode: ProcessStartMode.normal,
+        );
+      } else if (File(serverExePath).existsSync()) {
         debugPrint('🚀 [Release] 正在启动 Python 后端: $serverExePath');
         _process = await Process.start(
           serverExePath,
@@ -88,29 +116,19 @@ class PythonBackendManager {
           workingDirectory: exeDir,
           mode: ProcessStartMode.normal,
         );
-      } else {
-        // === 策略 2：Debug 模式 — 用 python 命令启动脚本 ===
-        // 从项目根目录查找 api_server.py
-        final projectRoot = _findProjectRoot(exeDir);
-        if (projectRoot == null) {
-          debugPrint('⚠️ 未找到项目根目录，无法启动 Python 后端（开发模式）');
-          return;
-        }
-        final scriptPath =
-            '$projectRoot${Platform.pathSeparator}python_backend${Platform.pathSeparator}web_automation${Platform.pathSeparator}api_server.py';
-        if (!File(scriptPath).existsSync()) {
-          debugPrint('⚠️ api_server.py 未找到: $scriptPath');
-          return;
-        }
+      } else if (scriptPath != null && File(scriptPath).existsSync()) {
         final workDir =
             '$projectRoot${Platform.pathSeparator}python_backend${Platform.pathSeparator}web_automation';
-        debugPrint('🚀 [Debug] 正在启动 Python 后端: python $scriptPath');
+        debugPrint('🚀 [Fallback] 正在启动 Python 后端: python $scriptPath');
         _process = await Process.start(
           'python',
-          ['-u', scriptPath], // -u: 无缓冲输出，确保 print 实时可见
+          ['-u', scriptPath],
           workingDirectory: workDir,
           mode: ProcessStartMode.normal,
         );
+      } else {
+        debugPrint('⚠️ 未找到可用的 Python 后端');
+        return;
       }
 
       _isRunning = true;

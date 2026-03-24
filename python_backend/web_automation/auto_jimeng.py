@@ -489,14 +489,14 @@ class JimengAutomation:
     def select_model(self, model: str) -> bool:
         """选择视频生成模型
         
-        即梦工具栏上有一个模型名称按钮（如"视频 3.0 Fast"），
+        即梦工具栏上有一个模型名称按钮（如"Seedance 1.0 Fast"），
         点击后展开下拉列表，包含所有可用模型：
         - Seedance 2.0 Fast
         - Seedance 2.0
-        - 视频 3.5 Pro
-        - 视频 3.0 Pro
-        - 视频 3.0 Fast
-        - 视频 3.0
+        - Seedance 1.5 Pro
+        - Seedance 1.0
+        - Seedance 1.0 Fast
+        - Seedance 1.0 mini
         选中的模型右侧有 ✓ 标记。
         """
         print(f"   🤖 选择模型: {model}")
@@ -507,10 +507,10 @@ class JimengAutomation:
             'seedance-2.0-pro': 'Seedance 2.0',
             'seedance-2.0-fast': 'Seedance 2.0 Fast',
             'seedance-2.0-agent': '__AGENT_MODE__',  # 特殊：需要切换创作类型
-            'jimeng-video-3.5-pro': '视频 3.5 Pro',
-            'jimeng-video-3.0-pro': '视频 3.0 Pro',
-            'jimeng-video-3.0-fast': '视频 3.0 Fast',
-            'jimeng-video-3.0': '视频 3.0',
+            'jimeng-video-3.5-pro': 'Seedance 1.5 Pro',
+            'jimeng-video-3.0-pro': 'Seedance 1.0',
+            'jimeng-video-3.0-fast': 'Seedance 1.0 Fast',
+            'jimeng-video-3.0': 'Seedance 1.0 mini',
         }
         
         display_name = model_display_map.get(model, model)
@@ -589,7 +589,7 @@ class JimengAutomation:
         """查找工具栏上的模型选择按钮
         
         工具栏布局：[视频生成 ∧] [模型名称] [自定义 ∨] [16:9] [720P] [5s]
-        模型按钮显示当前模型名（如"视频 3.0 Fast"、"Seedance 2.0"等）
+        模型按钮显示当前模型名（如"Seedance 1.0 Fast"、"Seedance 2.0"等）
         """
         # 已知的模型名称关键词
         model_keywords = ['Seedance', 'seedance', '视频 3', '视频 2', '即梦']

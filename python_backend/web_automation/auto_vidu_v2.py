@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 Vidu 视频生成自动化 V2（并发架构）
@@ -868,8 +868,17 @@ class ViduAutomation:
                             }''')
                             time.sleep(0.3)
                         else:
-                            print(f"   ⚠️ 图片插入失败，跳过: {img_path}")
-            
+                            print(f"   ❌ 图片插入失败: {img_path}")
+                            return False
+
+            expected_image_count = sum(1 for seg in segments if seg.get('type') == 'image')
+            if image_count != expected_image_count:
+                print(
+                    f"   ❌ 交替输入不完整：期望插入 {expected_image_count} 张，实际成功 {image_count} 张",
+                    flush=True,
+                )
+                return False
+
             print(f"   ✅ 交替输入完成：{image_count} 张图片已插入")
             return True
             
@@ -1229,6 +1238,12 @@ class ViduAutomation:
                     'creation_id': creation_id,
                     'initial_video_count': initial_video_count,
                 })
+
+                if use_segments and not creation_id:
+                    return {
+                        'success': False,
+                        'error': '图片库模式未捕获到新的 creation_id，已阻止回退到历史视频匹配',
+                    }
                 
                 if creation_id:
                     print(f"   ✅ {label}提交成功，task_key={task_key}, creation_id={creation_id}", flush=True)
@@ -1775,6 +1790,72 @@ class ViduAutomation:
     # 投稿 & 无水印视频下载
     # ============================================================
     
+    def _publish_creation_via_api(self, creation_id: str) -> dict:
+        """优先通过 API 投稿，避免 UI 滚动误点历史视频。"""
+        try:
+            creation_id_value = int(creation_id) if str(creation_id).isdigit() else creation_id
+            candidate_bodies = [
+                {
+                    "share": {
+                        "category": ["others"],
+                        "creations": [{"id": creation_id_value}],
+                        "introduce": "",
+                        "series": "",
+                    }
+                },
+                {
+                    "share": {
+                        "category": ["others"],
+                        "creations": [creation_id_value],
+                        "introduce": "",
+                        "series": "",
+                    }
+                },
+                {
+                    "element": {
+                        "creation_id": creation_id_value,
+                    },
+                    "share": {
+                        "category": ["others"],
+                        "creations": [{"id": creation_id_value}],
+                        "introduce": "",
+                        "series": "",
+                    }
+                },
+            ]
+
+            for idx, body in enumerate(candidate_bodies, start=1):
+                result = self.page.evaluate("""async (body) => {
+                    try {
+                        const r = await fetch('https://service.vidu.cn/vidu/v1/material/share_elements/submit', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            credentials: 'include',
+                            body: JSON.stringify(body)
+                        });
+                        const text = await r.text();
+                        return {status: r.status, body: text};
+                    } catch (e) {
+                        return {error: String(e)};
+                    }
+                }""", body)
+
+                status = result.get('status', 0)
+                body_text = result.get('body', '')
+                print(f'   📤 投稿 API 尝试 {idx}: status={status}', flush=True)
+
+                if status in (200, 201):
+                    print('   ✅ 投稿 API 调用成功', flush=True)
+                    return {'success': True, 'published_count': 1, 'via': 'api'}
+
+                if '已投稿' in body_text or 'already' in body_text.lower():
+                    print('   ℹ️ 投稿 API 返回已投稿', flush=True)
+                    return {'success': True, 'already_posted': True, 'published_count': 0, 'via': 'api'}
+
+            return {'success': False, 'error': '投稿 API 未成功'}
+        except Exception as e:
+            return {'success': False, 'error': f'投稿 API 异常: {e}'}
+
     def publish_creation(self, creation_id: str, task_id: str = '', video_url: str = '') -> dict:
         """
         通过 UI 自动化点击页面上的"投稿"按钮，完成投稿流程。
@@ -1790,6 +1871,11 @@ class ViduAutomation:
         
         with self._page_lock:
             try:
+                api_result = self._publish_creation_via_api(creation_id)
+                if api_result.get('success'):
+                    return api_result
+                print(f"   ⚠️  投稿 API 失败，回退到 UI: {api_result.get('error')}", flush=True)
+
                 # 关闭可能的付费弹窗/遮罩
                 self._dismiss_popups()
                 time.sleep(1)

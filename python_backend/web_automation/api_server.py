@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 Vidu 自动化 API 服务器
@@ -378,8 +378,8 @@ async def execute_vidu_batch_automation(
             if result.get('success'):
                 final_video_url = result.get('video_url', '')
                 
-                # ✅ 无水印下载（审核中的视频跳过，直接用带水印版本）
-                if watermark_free and cid and not result.get('review'):
+                # ✅ 无水印下载：只要拿到了 creation_id 就尝试投稿并获取无水印版本
+                if watermark_free and cid:
                     print(f"   🎯 [{tid}] 开始无水印下载流程...", flush=True)
                     def _run_wf(c_id=cid, s_path=sp, v_url=final_video_url):
                         global _vidu_auto_instance
@@ -632,8 +632,8 @@ async def execute_vidu_automation(
             final_video_url = result.get('video_url', '')
             final_video_path = save_path
             
-            # 无水印下载：投稿 → 获取 craftify URL → 下载覆盖（审核中的视频跳过）
-            if watermark_free and creation_id and not result.get('review'):
+            # 无水印下载：只要拿到了 creation_id 就尝试投稿并获取无水印版本
+            if watermark_free and creation_id:
                 print(f"   🎯 [{task_id}] 开始无水印下载流程...", flush=True)
                 
                 def _run_watermark_free():

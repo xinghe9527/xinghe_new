@@ -202,10 +202,10 @@ class _SettingsPageState extends State<SettingsPage> {
       'video_gen': [
         {'id': 'seedance-2.0-fast', 'name': 'Seedance 2.0 Fast', 'desc': '高性价比，音视文图均可参考'},
         {'id': 'seedance-2.0', 'name': 'Seedance 2.0', 'desc': '全能王者，音视文图均可参考'},
-        {'id': 'jimeng-video-3.5-pro', 'name': '视频 3.5 Pro', 'desc': '音画同出，全新体验'},
-        {'id': 'jimeng-video-3.0-pro', 'name': '视频 3.0 Pro', 'desc': '效果最佳，画质超清'},
-        {'id': 'jimeng-video-3.0-fast', 'name': '视频 3.0 Fast', 'desc': 'Pro级表现，加量不加价'},
-        {'id': 'jimeng-video-3.0', 'name': '视频 3.0', 'desc': '精准响应，支持多镜头和运镜'},
+        {'id': 'jimeng-video-3.5-pro', 'name': 'Seedance 1.5 Pro', 'desc': '音画同出，全新体验'},
+        {'id': 'jimeng-video-3.0-pro', 'name': 'Seedance 1.0', 'desc': '效果最佳，画质超清'},
+        {'id': 'jimeng-video-3.0-fast', 'name': 'Seedance 1.0 Fast', 'desc': 'Pro级表现，加量不加价'},
+        {'id': 'jimeng-video-3.0', 'name': 'Seedance 1.0 mini', 'desc': '精准响应，支持多镜头和运镜'},
       ],
     },
     'modes': {

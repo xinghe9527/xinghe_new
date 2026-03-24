@@ -523,10 +523,10 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   List<Map<String, String>> _getJimengVideoModels() => const [
     {'id': 'seedance-2.0-fast', 'name': 'Seedance 2.0 Fast'},
     {'id': 'seedance-2.0', 'name': 'Seedance 2.0'},
-    {'id': 'jimeng-video-3.5-pro', 'name': '视频 3.5 Pro'},
-    {'id': 'jimeng-video-3.0-pro', 'name': '视频 3.0 Pro'},
-    {'id': 'jimeng-video-3.0-fast', 'name': '视频 3.0 Fast'},
-    {'id': 'jimeng-video-3.0', 'name': '视频 3.0'},
+    {'id': 'jimeng-video-3.5-pro', 'name': 'Seedance 1.5 Pro'},
+    {'id': 'jimeng-video-3.0-pro', 'name': 'Seedance 1.0'},
+    {'id': 'jimeng-video-3.0-fast', 'name': 'Seedance 1.0 Fast'},
+    {'id': 'jimeng-video-3.0', 'name': 'Seedance 1.0 mini'},
   ];
 
   /// 即梦各模型对应的生成方式
