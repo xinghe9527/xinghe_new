@@ -10,6 +10,7 @@ import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';  // ✅ 导入 API 工厂
+import 'package:xinghe_new/services/api/provider_preference_helper.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
@@ -908,7 +909,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         );
       }
 
-      final webTool = prefs.getString('video_web_tool') ?? '';
+      final webTool =
+          ProviderPreferenceHelper.getVideoWebTool(prefs, provider) ?? '';
 
       if (mounted) {
         setState(() {
@@ -1129,8 +1131,14 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         _logger.info('使用网页服务商生成视频', module: '视频空间', extra: {'provider': provider});
         
         // 读取网页服务商配置
-        final webTool = prefs.getString('video_web_tool');
-        final webModel = prefs.getString('video_web_model');
+        final webTool = ProviderPreferenceHelper.getVideoWebTool(
+          prefs,
+          provider,
+        );
+        final webModel = ProviderPreferenceHelper.getVideoWebModel(
+          prefs,
+          provider,
+        );
         
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
@@ -1377,7 +1385,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             
             // ✅ 即梦：始终传递模式（默认全能参考）
             if (provider == 'jimeng') {
-              payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+              payload['mode'] = ProviderPreferenceHelper.getVideoWebMode(
+                    prefs,
+                    provider,
+                  ) ??
+                  'all_ref';
               
               // 解析 prompt 中的 [📷X] 占位符，提取图片路径和角色名
               final segments = await _parsePromptToSegments(widget.task.prompt, prefs);
@@ -2965,7 +2977,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     payload['duration'] = _parseSeconds(widget.task.seconds);
 
     // ✅ Vidu 去水印开关
-    final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+    final viduWmFree = ProviderPreferenceHelper.getVideoWatermarkFree(
+      prefs,
+      'vidu',
+    );
     if (viduWmFree) {
       payload['watermarkFree'] = true;
     }

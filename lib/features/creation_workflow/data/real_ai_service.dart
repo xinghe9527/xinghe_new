@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/api/api_repository.dart';
+import '../../../services/api/provider_preference_helper.dart';
 import '../../../services/api/secure_storage_manager.dart';
 import '../../../services/api/providers/yunwu_service.dart';
 import '../../../services/api/base/api_config.dart';
@@ -599,8 +600,8 @@ $scriptContent
     required List<String> referenceImages,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final webTool = prefs.getString('video_web_tool');
-    final webModel = prefs.getString('video_web_model');
+    final webTool = ProviderPreferenceHelper.getVideoWebTool(prefs, 'vidu');
+    final webModel = ProviderPreferenceHelper.getVideoWebModel(prefs, 'vidu');
 
     if (webTool == null || webTool.isEmpty) {
       throw Exception('未配置网页服务商工具，请前往设置页面选择工具类型（如：文生视频）');
@@ -643,7 +644,10 @@ $scriptContent
       }
 
       // ✅ Vidu 去水印开关
-      final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+      final viduWmFree = ProviderPreferenceHelper.getVideoWatermarkFree(
+        prefs,
+        'vidu',
+      );
       if (viduWmFree) {
         payload['watermarkFree'] = true;
       }

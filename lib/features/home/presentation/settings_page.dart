@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:xinghe_new/main.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:xinghe_new/services/api/provider_preference_helper.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:http/http.dart' as http;
@@ -25,16 +26,16 @@ class _SettingsPageState extends State<SettingsPage> {
   int _apiSubTabIndex = 0;
   bool _isPickingImagePath = false;
   bool _isPickingVideoPath = false;
-  bool _isPickingWorkPath = false;  // ✅ 作品路径选择状态
-  bool _isPickingCanvasPath = false;  // ✅ 画布空间路径选择状态
-  bool _isPickingComfyUIWorkflowPath = false;  // ✅ ComfyUI 工作流路径选择状态
-  bool _isLoadingWorkflows = false;  // ✅ 正在读取工作流状态
-  
-  String _comfyUIWorkflowFolder = '未设置';  // ✅ ComfyUI 工作流文件夹路径
-  List<Map<String, dynamic>> _loadedWorkflows = [];  // ✅ 已读取的工作流列表
-  String? _selectedImageWorkflow;  // ✅ 图片模型选中的工作流ID
-  String? _selectedVideoWorkflow;  // ✅ 视频模型选中的工作流ID
-  
+  bool _isPickingWorkPath = false; // ✅ 作品路径选择状态
+  bool _isPickingCanvasPath = false; // ✅ 画布空间路径选择状态
+  bool _isPickingComfyUIWorkflowPath = false; // ✅ ComfyUI 工作流路径选择状态
+  bool _isLoadingWorkflows = false; // ✅ 正在读取工作流状态
+
+  String _comfyUIWorkflowFolder = '未设置'; // ✅ ComfyUI 工作流文件夹路径
+  List<Map<String, dynamic>> _loadedWorkflows = []; // ✅ 已读取的工作流列表
+  String? _selectedImageWorkflow; // ✅ 图片模型选中的工作流ID
+  String? _selectedVideoWorkflow; // ✅ 视频模型选中的工作流ID
+
   // 密码可见性状态
   bool _llmApiKeyVisible = false;
   bool _imageApiKeyVisible = false;
@@ -47,10 +48,10 @@ class _SettingsPageState extends State<SettingsPage> {
   // API配置状态
   final SecureStorageManager _storage = SecureStorageManager();
   final LogManager _logger = LogManager();
-  
+
   // ✅ 防抖定时器 - 避免频繁保存
   Timer? _saveDebounceTimer;
-  
+
   // LLM API 配置
   String _llmProvider = 'openai';
   final TextEditingController _llmApiKeyController = TextEditingController();
@@ -72,27 +73,31 @@ class _SettingsPageState extends State<SettingsPage> {
   // 上传 API 配置
   String _uploadProvider = 'openai';
   final TextEditingController _uploadApiKeyController = TextEditingController();
-  final TextEditingController _uploadBaseUrlController = TextEditingController();
+  final TextEditingController _uploadBaseUrlController =
+      TextEditingController();
 
   // ✅ 网页服务商配置（图片）
-  String? _imageWebTool;  // 选择的工具类型（text2image, img2video等）
-  String? _imageWebModel;  // 选择的模型（Vidu Q3等）
-  
+  String? _imageWebTool; // 选择的工具类型（text2image, img2video等）
+  String? _imageWebModel; // 选择的模型（Vidu Q3等）
+
   // ✅ 网页服务商配置（视频）
-  String? _videoWebTool;  // 选择的工具类型
-  String? _videoWebModel;  // 选择的模型
-  String? _videoWebMode;  // 选择的方式（即梦视频生成的自定义下拉：全能参考/首尾帧等）
-  bool _viduWatermarkFree = false;  // ✅ Vidu 去水印开关
+  String? _videoWebTool; // 选择的工具类型
+  String? _videoWebModel; // 选择的模型
+  String? _videoWebMode; // 选择的方式（即梦视频生成的自定义下拉：全能参考/首尾帧等）
+  bool _viduWatermarkFree = false; // ✅ Vidu 去水印开关
 
   // ✅ RunningHub 配置
-  final TextEditingController _runninghubImageWebappIdController = TextEditingController();
-  final TextEditingController _runninghubVideoWebappIdController = TextEditingController();
+  final TextEditingController _runninghubImageWebappIdController =
+      TextEditingController();
+  final TextEditingController _runninghubVideoWebappIdController =
+      TextEditingController();
 
   // 语音合成 配置
-  bool _voiceEnabled = false;  // 是否启用语音合成
-  final TextEditingController _voiceServiceUrlController = TextEditingController();
+  bool _voiceEnabled = false; // 是否启用语音合成
+  final TextEditingController _voiceServiceUrlController =
+      TextEditingController();
   String _audioSavePath = '未设置';
-  String _indexttsPath = 'D:\\Index-TTS2_XH';  // IndexTTS 安装路径
+  String _indexttsPath = 'D:\\Index-TTS2_XH'; // IndexTTS 安装路径
   double _defaultEmotionAlpha = 0.6;
   bool _isPickingAudioPath = false;
   bool _isPickingIndexTTSPath = false;
@@ -124,8 +129,8 @@ class _SettingsPageState extends State<SettingsPage> {
   // DeepSeek 模型列表
   final Map<String, List<String>> _deepseekModels = {
     'llm': [
-      'deepseek-chat',      // DeepSeek-V3.2 非思考模式
-      'deepseek-reasoner',  // DeepSeek-V3.2 思考模式
+      'deepseek-chat', // DeepSeek-V3.2 非思考模式
+      'deepseek-reasoner', // DeepSeek-V3.2 思考模式
     ],
     // DeepSeek 不支持图片、视频
   };
@@ -200,12 +205,32 @@ class _SettingsPageState extends State<SettingsPage> {
     },
     'models': {
       'video_gen': [
-        {'id': 'seedance-2.0-fast', 'name': 'Seedance 2.0 Fast', 'desc': '高性价比，音视文图均可参考'},
+        {
+          'id': 'seedance-2.0-fast',
+          'name': 'Seedance 2.0 Fast',
+          'desc': '高性价比，音视文图均可参考',
+        },
         {'id': 'seedance-2.0', 'name': 'Seedance 2.0', 'desc': '全能王者，音视文图均可参考'},
-        {'id': 'jimeng-video-3.5-pro', 'name': 'Seedance 1.5 Pro', 'desc': '音画同出，全新体验'},
-        {'id': 'jimeng-video-3.0-pro', 'name': 'Seedance 1.0', 'desc': '效果最佳，画质超清'},
-        {'id': 'jimeng-video-3.0-fast', 'name': 'Seedance 1.0 Fast', 'desc': 'Pro级表现，加量不加价'},
-        {'id': 'jimeng-video-3.0', 'name': 'Seedance 1.0 mini', 'desc': '精准响应，支持多镜头和运镜'},
+        {
+          'id': 'jimeng-video-3.5-pro',
+          'name': 'Seedance 1.5 Pro',
+          'desc': '音画同出，全新体验',
+        },
+        {
+          'id': 'jimeng-video-3.0-pro',
+          'name': 'Seedance 1.0',
+          'desc': '效果最佳，画质超清',
+        },
+        {
+          'id': 'jimeng-video-3.0-fast',
+          'name': 'Seedance 1.0 Fast',
+          'desc': 'Pro级表现，加量不加价',
+        },
+        {
+          'id': 'jimeng-video-3.0',
+          'name': 'Seedance 1.0 mini',
+          'desc': '精准响应，支持多镜头和运镜',
+        },
       ],
     },
     'modes': {
@@ -320,7 +345,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _videoModelController.dispose();
     _uploadApiKeyController.dispose();
     _uploadBaseUrlController.dispose();
-    _voiceServiceUrlController.dispose();  // ✅ 释放语音服务URL控制器
+    _voiceServiceUrlController.dispose(); // ✅ 释放语音服务URL控制器
     super.dispose();
   }
 
@@ -329,16 +354,16 @@ class _SettingsPageState extends State<SettingsPage> {
     await _loadImageConfig();
     await _loadVideoConfig();
     await _loadUploadConfig();
-    await _loadVoiceConfig();  // ✅ 加载语音合成配置
+    await _loadVoiceConfig(); // ✅ 加载语音合成配置
     await _loadSavePathsConfig();
-    await _loadComfyUIConfig();  // ✅ 加载 ComfyUI 配置
+    await _loadComfyUIConfig(); // ✅ 加载 ComfyUI 配置
   }
-  
+
   /// 加载 ComfyUI 配置
   Future<void> _loadComfyUIConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // 加载工作流文件夹路径
       final folder = prefs.getString('comfyui_workflow_folder');
       if (folder != null && folder.isNotEmpty && mounted) {
@@ -347,12 +372,14 @@ class _SettingsPageState extends State<SettingsPage> {
         });
         debugPrint('✅ 加载 ComfyUI 工作流文件夹: $folder');
       }
-      
+
       // 加载已读取的工作流列表
       final workflowsJson = prefs.getString('comfyui_workflows');
       if (workflowsJson != null && workflowsJson.isNotEmpty) {
         final workflows = List<Map<String, dynamic>>.from(
-          (jsonDecode(workflowsJson) as List).map((w) => Map<String, dynamic>.from(w as Map))
+          (jsonDecode(workflowsJson) as List).map(
+            (w) => Map<String, dynamic>.from(w as Map),
+          ),
         );
         if (mounted) {
           setState(() {
@@ -361,17 +388,21 @@ class _SettingsPageState extends State<SettingsPage> {
         }
         debugPrint('✅ 加载 ${workflows.length} 个 ComfyUI 工作流');
       }
-      
+
       // 加载选中的工作流
-      final selectedImageWorkflow = prefs.getString('comfyui_selected_image_workflow');
+      final selectedImageWorkflow = prefs.getString(
+        'comfyui_selected_image_workflow',
+      );
       if (selectedImageWorkflow != null && mounted) {
         setState(() {
           _selectedImageWorkflow = selectedImageWorkflow;
         });
         debugPrint('✅ 加载选中的图片工作流: $selectedImageWorkflow');
       }
-      
-      final selectedVideoWorkflow = prefs.getString('comfyui_selected_video_workflow');
+
+      final selectedVideoWorkflow = prefs.getString(
+        'comfyui_selected_video_workflow',
+      );
       if (selectedVideoWorkflow != null && mounted) {
         setState(() {
           _selectedVideoWorkflow = selectedVideoWorkflow;
@@ -416,18 +447,7 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('llm_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'llm');
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'llm');
-      final model = await _storage.getModel(provider: provider, modelType: 'llm');
-
-      if (mounted) {
-        setState(() {
-          _llmProvider = provider;
-          _llmApiKeyController.text = apiKey ?? '';
-          _llmBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
-          _llmModelController.text = model ?? '';
-        });
-      }
+      await _loadLLMConfigForProvider(provider);
     } catch (e) {
       _logger.error('加载LLM配置失败: $e', module: '设置');
     }
@@ -438,14 +458,31 @@ class _SettingsPageState extends State<SettingsPage> {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
       // vidu/jimeng 已从图片模型移除，旧配置自动回退到 openai
-      final validProvider = (provider == 'vidu' || provider == 'jimeng') ? 'openai' : provider;
-      final apiKey = await _storage.getApiKey(provider: validProvider, modelType: 'image');
-      final baseUrl = await _storage.getBaseUrl(provider: validProvider, modelType: 'image');
-      final model = await _storage.getModel(provider: validProvider, modelType: 'image');
+      final validProvider = (provider == 'vidu' || provider == 'jimeng')
+          ? 'openai'
+          : provider;
+      final apiKey = await _storage.getApiKey(
+        provider: validProvider,
+        modelType: 'image',
+      );
+      final baseUrl = await _storage.getBaseUrl(
+        provider: validProvider,
+        modelType: 'image',
+      );
+      final model = await _storage.getModel(
+        provider: validProvider,
+        modelType: 'image',
+      );
 
       // ✅ 加载网页服务商配置
-      final webTool = prefs.getString('image_web_tool');
-      final webModel = prefs.getString('image_web_model');
+      final webTool = ProviderPreferenceHelper.getImageWebTool(
+        prefs,
+        validProvider,
+      );
+      final webModel = ProviderPreferenceHelper.getImageWebModel(
+        prefs,
+        validProvider,
+      );
 
       // ✅ 加载 RunningHub 配置
       final rhImageWebappId = prefs.getString('runninghub_image_webapp_id');
@@ -454,7 +491,8 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() {
           _imageProvider = validProvider;
           _imageApiKeyController.text = apiKey ?? '';
-          _imageBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(validProvider);
+          _imageBaseUrlController.text =
+              baseUrl ?? _getDefaultBaseUrl(validProvider);
           _imageModelController.text = model ?? '';
           _imageWebTool = webTool;
           _imageWebModel = webModel;
@@ -470,15 +508,30 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('video_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'video');
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'video');
-      final model = await _storage.getModel(provider: provider, modelType: 'video');
+      final apiKey = await _storage.getApiKey(
+        provider: provider,
+        modelType: 'video',
+      );
+      final baseUrl = await _storage.getBaseUrl(
+        provider: provider,
+        modelType: 'video',
+      );
+      final model = await _storage.getModel(
+        provider: provider,
+        modelType: 'video',
+      );
 
       // ✅ 加载网页服务商配置
-      final webTool = prefs.getString('video_web_tool');
-      final webModel = prefs.getString('video_web_model');
-      final webMode = prefs.getString('video_web_mode');
-      final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+      final webTool = ProviderPreferenceHelper.getVideoWebTool(prefs, provider);
+      final webModel = ProviderPreferenceHelper.getVideoWebModel(
+        prefs,
+        provider,
+      );
+      final webMode = ProviderPreferenceHelper.getVideoWebMode(prefs, provider);
+      final viduWmFree = ProviderPreferenceHelper.getVideoWatermarkFree(
+        prefs,
+        provider,
+      );
 
       // ✅ 加载 RunningHub 配置
       final rhVideoWebappId = prefs.getString('runninghub_video_webapp_id');
@@ -487,7 +540,8 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() {
           _videoProvider = provider;
           _videoApiKeyController.text = apiKey ?? '';
-          _videoBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+          _videoBaseUrlController.text =
+              baseUrl ?? _getDefaultBaseUrl(provider);
           _videoModelController.text = model ?? '';
           _videoWebTool = webTool;
           _videoWebModel = webModel;
@@ -505,14 +559,21 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('upload_provider') ?? 'openai';
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'upload');
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'upload');
+      final apiKey = await _storage.getApiKey(
+        provider: provider,
+        modelType: 'upload',
+      );
+      final baseUrl = await _storage.getBaseUrl(
+        provider: provider,
+        modelType: 'upload',
+      );
 
       if (mounted) {
         setState(() {
           _uploadProvider = provider;
           _uploadApiKeyController.text = apiKey ?? '';
-          _uploadBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+          _uploadBaseUrlController.text =
+              baseUrl ?? _getDefaultBaseUrl(provider);
         });
       }
     } catch (e) {
@@ -520,13 +581,135 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  String _normalizeImageProvider(String provider) {
+    if (provider == 'vidu' || provider == 'jimeng') {
+      return 'openai';
+    }
+    return provider;
+  }
+
+  Future<void> _loadLLMConfigForProvider(String provider) async {
+    final apiKey = await _storage.getApiKey(
+      provider: provider,
+      modelType: 'llm',
+    );
+    final baseUrl = await _storage.getBaseUrl(
+      provider: provider,
+      modelType: 'llm',
+    );
+    final model = await _storage.getModel(provider: provider, modelType: 'llm');
+
+    if (!mounted) return;
+    setState(() {
+      _llmProvider = provider;
+      _llmApiKeyController.text = apiKey ?? '';
+      _llmBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+      _llmModelController.text = model ?? '';
+    });
+  }
+
+  Future<void> _loadImageConfigForProvider(String provider) async {
+    final prefs = await SharedPreferences.getInstance();
+    final validProvider = _normalizeImageProvider(provider);
+    final apiKey = await _storage.getApiKey(
+      provider: validProvider,
+      modelType: 'image',
+    );
+    final baseUrl = await _storage.getBaseUrl(
+      provider: validProvider,
+      modelType: 'image',
+    );
+    final model = await _storage.getModel(
+      provider: validProvider,
+      modelType: 'image',
+    );
+    final webTool = ProviderPreferenceHelper.getImageWebTool(
+      prefs,
+      validProvider,
+    );
+    final webModel = ProviderPreferenceHelper.getImageWebModel(
+      prefs,
+      validProvider,
+    );
+    final rhImageWebappId = prefs.getString('runninghub_image_webapp_id');
+
+    if (!mounted) return;
+    setState(() {
+      _imageProvider = validProvider;
+      _imageApiKeyController.text = apiKey ?? '';
+      _imageBaseUrlController.text =
+          baseUrl ?? _getDefaultBaseUrl(validProvider);
+      _imageModelController.text = model ?? '';
+      _imageWebTool = webTool;
+      _imageWebModel = webModel;
+      _runninghubImageWebappIdController.text = rhImageWebappId ?? '';
+    });
+  }
+
+  Future<void> _loadVideoConfigForProvider(String provider) async {
+    final prefs = await SharedPreferences.getInstance();
+    final apiKey = await _storage.getApiKey(
+      provider: provider,
+      modelType: 'video',
+    );
+    final baseUrl = await _storage.getBaseUrl(
+      provider: provider,
+      modelType: 'video',
+    );
+    final model = await _storage.getModel(
+      provider: provider,
+      modelType: 'video',
+    );
+    final webTool = ProviderPreferenceHelper.getVideoWebTool(prefs, provider);
+    final webModel = ProviderPreferenceHelper.getVideoWebModel(prefs, provider);
+    final webMode = ProviderPreferenceHelper.getVideoWebMode(prefs, provider);
+    final viduWmFree = ProviderPreferenceHelper.getVideoWatermarkFree(
+      prefs,
+      provider,
+    );
+    final rhVideoWebappId = prefs.getString('runninghub_video_webapp_id');
+
+    if (!mounted) return;
+    setState(() {
+      _videoProvider = provider;
+      _videoApiKeyController.text = apiKey ?? '';
+      _videoBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+      _videoModelController.text = model ?? '';
+      _videoWebTool = webTool;
+      _videoWebModel = webModel;
+      _videoWebMode = webMode;
+      _viduWatermarkFree = viduWmFree;
+      _runninghubVideoWebappIdController.text = rhVideoWebappId ?? '';
+    });
+  }
+
+  Future<void> _loadUploadConfigForProvider(String provider) async {
+    final apiKey = await _storage.getApiKey(
+      provider: provider,
+      modelType: 'upload',
+    );
+    final baseUrl = await _storage.getBaseUrl(
+      provider: provider,
+      modelType: 'upload',
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _uploadProvider = provider;
+      _uploadApiKeyController.text = apiKey ?? '';
+      _uploadBaseUrlController.text = baseUrl ?? _getDefaultBaseUrl(provider);
+    });
+  }
+
   Future<void> _loadVoiceConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final enabled = prefs.getBool('voice_enabled') ?? false;
-      final serviceUrl = prefs.getString('voice_service_url') ?? 'http://127.0.0.1:7860';
+      final serviceUrl =
+          prefs.getString('voice_service_url') ?? 'http://127.0.0.1:7860';
       final audioPath = prefs.getString('audio_save_path');
-      final indexttsPath = prefs.getString('indextts_path') ?? 'D:\\Index-TTS2_XH';
+      final indexttsPath =
+          prefs.getString('indextts_path') ?? 'D:\\Index-TTS2_XH';
       final emotionAlpha = prefs.getDouble('default_emotion_alpha') ?? 0.6;
 
       if (mounted) {
@@ -548,16 +731,23 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('voice_enabled', _voiceEnabled);
-      await prefs.setString('voice_service_url', _voiceServiceUrlController.text);
+      await prefs.setString(
+        'voice_service_url',
+        _voiceServiceUrlController.text,
+      );
       await prefs.setString('audio_save_path', _audioSavePath);
       await prefs.setString('indextts_path', _indexttsPath);
       await prefs.setDouble('default_emotion_alpha', _defaultEmotionAlpha);
 
-      _logger.success('保存语音合成配置成功', module: '设置', extra: {
-        'enabled': _voiceEnabled,
-        'serviceUrl': _voiceServiceUrlController.text,
-        'indexttsPath': _indexttsPath,
-      });
+      _logger.success(
+        '保存语音合成配置成功',
+        module: '设置',
+        extra: {
+          'enabled': _voiceEnabled,
+          'serviceUrl': _voiceServiceUrlController.text,
+          'indexttsPath': _indexttsPath,
+        },
+      );
       _showMessage('语音合成配置已保存');
     } catch (e) {
       _logger.error('保存语音合成配置失败: $e', module: '设置');
@@ -570,12 +760,12 @@ class _SettingsPageState extends State<SettingsPage> {
       case 'openai':
         return 'https://api.openai.com/v1';
       case 'geeknow':
-        return 'https://www.geeknow.top/v1';  // ✅ 用户的标准配置（包含 /v1）
+        return 'https://www.geeknow.top/v1'; // ✅ 用户的标准配置（包含 /v1）
       case 'yunwu':
         return 'https://yunwu.ai';
       case 'deepseek':
         return 'https://api.deepseek.com';
-      case 'aliyun':  // ✅ 添加阿里云默认地址
+      case 'aliyun': // ✅ 添加阿里云默认地址
       case 'qwen':
       case 'tongyi':
         return 'https://dashscope.aliyuncs.com/compatible-mode/v1';
@@ -583,9 +773,9 @@ class _SettingsPageState extends State<SettingsPage> {
         return 'https://your-resource.openai.azure.com';
       case 'anthropic':
         return 'https://api.anthropic.com/v1';
-      case 'comfyui':  // ✅ ComfyUI 本地服务
+      case 'comfyui': // ✅ ComfyUI 本地服务
         return 'http://127.0.0.1:8188/';
-      case 'runninghub':  // ✅ RunningHub 云端
+      case 'runninghub': // ✅ RunningHub 云端
         return 'https://www.runninghub.cn';
       default:
         return 'https://api.openai.com/v1';
@@ -600,22 +790,110 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  void _togglePasswordVisibility(VoidCallback toggle) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (!mounted) return;
+    setState(toggle);
+  }
+
+  void _toggleLlmApiKeyVisibility() {
+    _togglePasswordVisibility(() {
+      _llmApiKeyVisible = !_llmApiKeyVisible;
+    });
+  }
+
+  void _toggleImageApiKeyVisibility() {
+    _togglePasswordVisibility(() {
+      _imageApiKeyVisible = !_imageApiKeyVisible;
+    });
+  }
+
+  void _toggleVideoApiKeyVisibility() {
+    _togglePasswordVisibility(() {
+      _videoApiKeyVisible = !_videoApiKeyVisible;
+    });
+  }
+
+  void _toggleUploadApiKeyVisibility() {
+    _togglePasswordVisibility(() {
+      _uploadApiKeyVisible = !_uploadApiKeyVisible;
+    });
+  }
+
+  Future<void> _saveOrDeleteApiKey({
+    required String provider,
+    required String modelType,
+    required String value,
+  }) async {
+    if (value.isNotEmpty) {
+      await _storage.saveApiKey(
+        provider: provider,
+        apiKey: value,
+        modelType: modelType,
+      );
+      return;
+    }
+    await _storage.deleteApiKey(provider: provider, modelType: modelType);
+  }
+
+  Future<void> _saveOrDeleteBaseUrl({
+    required String provider,
+    required String modelType,
+    required String value,
+  }) async {
+    if (value.isNotEmpty) {
+      await _storage.saveBaseUrl(
+        provider: provider,
+        baseUrl: value,
+        modelType: modelType,
+      );
+      return;
+    }
+    await _storage.deleteBaseUrl(provider: provider, modelType: modelType);
+  }
+
+  Future<void> _saveOrDeleteModel({
+    required String provider,
+    required String modelType,
+    required String value,
+  }) async {
+    if (value.isNotEmpty) {
+      await _storage.saveModel(
+        provider: provider,
+        modelType: modelType,
+        model: value,
+      );
+      return;
+    }
+    await _storage.deleteModel(provider: provider, modelType: modelType);
+  }
+
   Future<void> _saveLLMConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('llm_provider', _llmProvider);
-      
-      if (_llmApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _llmProvider, apiKey: _llmApiKeyController.text, modelType: 'llm');
-      }
-      if (_llmBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _llmProvider, baseUrl: _llmBaseUrlController.text, modelType: 'llm');
-      }
-      if (_llmModelController.text.isNotEmpty) {
-        await _storage.saveModel(provider: _llmProvider, modelType: 'llm', model: _llmModelController.text);
-      }
 
-      _logger.success('保存LLM配置成功', module: '设置', extra: {'provider': _llmProvider});
+      await _saveOrDeleteApiKey(
+        provider: _llmProvider,
+        modelType: 'llm',
+        value: _llmApiKeyController.text,
+      );
+      await _saveOrDeleteBaseUrl(
+        provider: _llmProvider,
+        modelType: 'llm',
+        value: _llmBaseUrlController.text,
+      );
+      await _saveOrDeleteModel(
+        provider: _llmProvider,
+        modelType: 'llm',
+        value: _llmModelController.text,
+      );
+
+      _logger.success(
+        '保存LLM配置成功',
+        module: '设置',
+        extra: {'provider': _llmProvider},
+      );
       _showMessage('LLM配置已保存');
     } catch (e) {
       _logger.error('保存LLM配置失败: $e', module: '设置');
@@ -627,36 +905,73 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('image_provider', _imageProvider);
-      
+
       // ✅ 判断是否为网页服务商
-      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(_imageProvider);
-      
+      final isWebProvider = [
+        'vidu',
+        'jimeng',
+        'keling',
+        'hailuo',
+        'google_flow',
+      ].contains(_imageProvider);
+
       if (isWebProvider) {
         // 保存网页服务商配置
-        if (_imageWebTool != null) {
-          await prefs.setString('image_web_tool', _imageWebTool!);
+        if (_imageWebTool != null && _imageWebTool!.isNotEmpty) {
+          await ProviderPreferenceHelper.setImageWebTool(
+            prefs,
+            _imageProvider,
+            _imageWebTool!,
+          );
+        } else {
+          await ProviderPreferenceHelper.deleteImageWebTool(
+            prefs,
+            _imageProvider,
+          );
         }
-        if (_imageWebModel != null) {
-          await prefs.setString('image_web_model', _imageWebModel!);
+        if (_imageWebModel != null && _imageWebModel!.isNotEmpty) {
+          await ProviderPreferenceHelper.setImageWebModel(
+            prefs,
+            _imageProvider,
+            _imageWebModel!,
+          );
+        } else {
+          await ProviderPreferenceHelper.deleteImageWebModel(
+            prefs,
+            _imageProvider,
+          );
         }
       } else {
         // 保存 API 服务商配置
-        if (_imageApiKeyController.text.isNotEmpty) {
-          await _storage.saveApiKey(provider: _imageProvider, apiKey: _imageApiKeyController.text, modelType: 'image');
-        }
-        if (_imageBaseUrlController.text.isNotEmpty) {
-          await _storage.saveBaseUrl(provider: _imageProvider, baseUrl: _imageBaseUrlController.text, modelType: 'image');
-        }
-        if (_imageModelController.text.isNotEmpty) {
-          await _storage.saveModel(provider: _imageProvider, modelType: 'image', model: _imageModelController.text);
-        }
+        await _saveOrDeleteApiKey(
+          provider: _imageProvider,
+          modelType: 'image',
+          value: _imageApiKeyController.text,
+        );
+        await _saveOrDeleteBaseUrl(
+          provider: _imageProvider,
+          modelType: 'image',
+          value: _imageBaseUrlController.text,
+        );
+        await _saveOrDeleteModel(
+          provider: _imageProvider,
+          modelType: 'image',
+          value: _imageModelController.text,
+        );
         // ✅ 保存 RunningHub WebApp ID
         if (_imageProvider == 'runninghub') {
-          await prefs.setString('runninghub_image_webapp_id', _runninghubImageWebappIdController.text.trim());
+          await prefs.setString(
+            'runninghub_image_webapp_id',
+            _runninghubImageWebappIdController.text.trim(),
+          );
         }
       }
 
-      _logger.success('保存图片API配置成功', module: '设置', extra: {'provider': _imageProvider});
+      _logger.success(
+        '保存图片API配置成功',
+        module: '设置',
+        extra: {'provider': _imageProvider},
+      );
       _showMessage('图片API配置已保存');
     } catch (e) {
       _logger.error('保存图片配置失败: $e', module: '设置');
@@ -668,41 +983,97 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('video_provider', _videoProvider);
-      
+
       // ✅ 判断是否为网页服务商
-      final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_videoProvider);
-      
+      final isWebProvider = [
+        'vidu',
+        'jimeng',
+        'keling',
+        'hailuo',
+      ].contains(_videoProvider);
+
       if (isWebProvider) {
         // 保存网页服务商配置
-        if (_videoWebTool != null) {
-          await prefs.setString('video_web_tool', _videoWebTool!);
+        if (_videoWebTool != null && _videoWebTool!.isNotEmpty) {
+          await ProviderPreferenceHelper.setVideoWebTool(
+            prefs,
+            _videoProvider,
+            _videoWebTool!,
+          );
+        } else {
+          await ProviderPreferenceHelper.deleteVideoWebTool(
+            prefs,
+            _videoProvider,
+          );
         }
-        if (_videoWebModel != null) {
-          await prefs.setString('video_web_model', _videoWebModel!);
+        if (_videoWebModel != null && _videoWebModel!.isNotEmpty) {
+          await ProviderPreferenceHelper.setVideoWebModel(
+            prefs,
+            _videoProvider,
+            _videoWebModel!,
+          );
+        } else {
+          await ProviderPreferenceHelper.deleteVideoWebModel(
+            prefs,
+            _videoProvider,
+          );
         }
-        if (_videoWebMode != null) {
-          await prefs.setString('video_web_mode', _videoWebMode!);
+        if (_videoWebMode != null && _videoWebMode!.isNotEmpty) {
+          await ProviderPreferenceHelper.setVideoWebMode(
+            prefs,
+            _videoProvider,
+            _videoWebMode!,
+          );
+        } else {
+          await ProviderPreferenceHelper.deleteVideoWebMode(
+            prefs,
+            _videoProvider,
+          );
         }
         // ✅ 保存 Vidu 去水印开关
-        await prefs.setBool('vidu_watermark_free', _viduWatermarkFree);
+        await ProviderPreferenceHelper.setVideoWatermarkFree(
+          prefs,
+          _videoProvider,
+          _viduWatermarkFree,
+        );
       } else {
         // 保存 API 服务商配置
-        if (_videoApiKeyController.text.isNotEmpty) {
-          await _storage.saveApiKey(provider: _videoProvider, apiKey: _videoApiKeyController.text, modelType: 'video');
-        }
-        if (_videoBaseUrlController.text.isNotEmpty) {
-          await _storage.saveBaseUrl(provider: _videoProvider, baseUrl: _videoBaseUrlController.text, modelType: 'video');
-        }
-        if (_videoModelController.text.isNotEmpty) {
-          await _storage.saveModel(provider: _videoProvider, modelType: 'video', model: _videoModelController.text);
-        }
+        await _saveOrDeleteApiKey(
+          provider: _videoProvider,
+          modelType: 'video',
+          value: _videoApiKeyController.text,
+        );
+        await _saveOrDeleteBaseUrl(
+          provider: _videoProvider,
+          modelType: 'video',
+          value: _videoBaseUrlController.text,
+        );
+        await _saveOrDeleteModel(
+          provider: _videoProvider,
+          modelType: 'video',
+          value: _videoModelController.text,
+        );
         // ✅ 保存 RunningHub WebApp ID
         if (_videoProvider == 'runninghub') {
-          await prefs.setString('runninghub_video_webapp_id', _runninghubVideoWebappIdController.text.trim());
+          await prefs.setString(
+            'runninghub_video_webapp_id',
+            _runninghubVideoWebappIdController.text.trim(),
+          );
+        } else if (_videoProvider == 'comfyui' &&
+            _selectedVideoWorkflow != null &&
+            _selectedVideoWorkflow!.isNotEmpty) {
+          await prefs.setString(
+            'comfyui_selected_video_workflow',
+            _selectedVideoWorkflow!,
+          );
         }
       }
 
-      _logger.success('保存视频API配置成功', module: '设置', extra: {'provider': _videoProvider});
+      _logger.success(
+        '保存视频API配置成功',
+        module: '设置',
+        extra: {'provider': _videoProvider},
+      );
       _showMessage('视频API配置已保存');
     } catch (e) {
       _logger.error('保存视频配置失败: $e', module: '设置');
@@ -714,15 +1085,23 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('upload_provider', _uploadProvider);
-      
-      if (_uploadApiKeyController.text.isNotEmpty) {
-        await _storage.saveApiKey(provider: _uploadProvider, apiKey: _uploadApiKeyController.text, modelType: 'upload');
-      }
-      if (_uploadBaseUrlController.text.isNotEmpty) {
-        await _storage.saveBaseUrl(provider: _uploadProvider, baseUrl: _uploadBaseUrlController.text, modelType: 'upload');
-      }
 
-      _logger.success('保存上传API配置成功', module: '设置', extra: {'provider': _uploadProvider});
+      await _saveOrDeleteApiKey(
+        provider: _uploadProvider,
+        modelType: 'upload',
+        value: _uploadApiKeyController.text,
+      );
+      await _saveOrDeleteBaseUrl(
+        provider: _uploadProvider,
+        modelType: 'upload',
+        value: _uploadBaseUrlController.text,
+      );
+
+      _logger.success(
+        '保存上传API配置成功',
+        module: '设置',
+        extra: {'provider': _uploadProvider},
+      );
       _showMessage('上传API配置已保存');
     } catch (e) {
       _logger.error('保存上传配置失败: $e', module: '设置');
@@ -743,24 +1122,26 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _pickImageDirectory() async {
     if (_isPickingImagePath) return;
-    
+
     setState(() => _isPickingImagePath = true);
-    
+
     try {
-      final String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '选择图片保存文件夹',
-        lockParentWindow: true,
-      );
-      
+      final String? selectedDirectory = await FilePicker.platform
+          .getDirectoryPath(dialogTitle: '选择图片保存文件夹', lockParentWindow: true);
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         // 更新内存中的值
         imageSavePathNotifier.value = selectedDirectory;
-        
+
         // 持久化保存到 SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('image_save_path', selectedDirectory);
-        
-        _logger.success('设置图片保存路径', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置图片保存路径',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         if (mounted) {
           _showMessage('图片保存路径已更新: $selectedDirectory');
         }
@@ -779,24 +1160,26 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _pickVideoDirectory() async {
     if (_isPickingVideoPath) return;
-    
+
     setState(() => _isPickingVideoPath = true);
-    
+
     try {
-      final String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '选择视频保存文件夹',
-        lockParentWindow: true,
-      );
-      
+      final String? selectedDirectory = await FilePicker.platform
+          .getDirectoryPath(dialogTitle: '选择视频保存文件夹', lockParentWindow: true);
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         // 更新内存中的值
         videoSavePathNotifier.value = selectedDirectory;
-        
+
         // 持久化保存到 SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('video_save_path', selectedDirectory);
-        
-        _logger.success('设置视频保存路径', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置视频保存路径',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         if (mounted) {
           _showMessage('视频保存路径已更新: $selectedDirectory');
         }
@@ -838,7 +1221,7 @@ class _SettingsPageState extends State<SettingsPage> {
           style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
         ),
         const SizedBox(height: 24),
-        
+
         // 工作流文件夹路径
         _buildFieldLabel('工作流文件夹'),
         const SizedBox(height: 6),
@@ -851,17 +1234,22 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Expanded(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.surfaceBackground,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                  border: Border.all(
+                    color: AppTheme.textColor.withOpacity(0.05),
+                  ),
                 ),
                 child: Text(
                   _comfyUIWorkflowFolder,
                   style: TextStyle(
-                    color: _comfyUIWorkflowFolder == '未设置' 
-                        ? AppTheme.subTextColor 
+                    color: _comfyUIWorkflowFolder == '未设置'
+                        ? AppTheme.subTextColor
                         : AppTheme.textColor,
                     fontSize: 14,
                     overflow: TextOverflow.ellipsis,
@@ -880,12 +1268,14 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildActionButton(
               icon: Icons.refresh,
               label: '读取',
-              onTap: _comfyUIWorkflowFolder != '未设置' ? _loadComfyUIWorkflows : null,
+              onTap: _comfyUIWorkflowFolder != '未设置'
+                  ? _loadComfyUIWorkflows
+                  : null,
               isLoading: _isLoadingWorkflows,
             ),
           ],
         ),
-        
+
         // 已读取的工作流列表
         if (_loadedWorkflows.isNotEmpty) ...[
           const SizedBox(height: 24),
@@ -904,9 +1294,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 final type = workflow['type'] ?? 'image';
                 final typeIcon = type == 'video' ? Icons.videocam : Icons.image;
                 final typeColor = type == 'video' ? Colors.purple : Colors.blue;
-                
+
                 return Padding(
-                  padding: EdgeInsets.only(bottom: entry.key < _loadedWorkflows.length - 1 ? 12 : 0),
+                  padding: EdgeInsets.only(
+                    bottom: entry.key < _loadedWorkflows.length - 1 ? 12 : 0,
+                  ),
                   child: Row(
                     children: [
                       Icon(typeIcon, color: typeColor, size: 16),
@@ -937,7 +1329,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: typeColor.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(4),
@@ -965,22 +1360,26 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 选择作品保存路径
   Future<void> _pickWorkDirectory() async {
     if (_isPickingWorkPath) return;
-    
+
     setState(() => _isPickingWorkPath = true);
-    
+
     try {
       final selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择作品保存根目录',
         lockParentWindow: true,
       );
-      
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         workSavePathNotifier.value = selectedDirectory;
-        
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('work_save_path', selectedDirectory);
-        
-        _logger.success('设置作品保存路径', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置作品保存路径',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         if (mounted) {
           _showMessage('作品保存路径已更新\n每个作品将在此路径下创建独立文件夹');
         }
@@ -1000,22 +1399,26 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 选择画布空间保存路径
   Future<void> _pickCanvasDirectory() async {
     if (_isPickingCanvasPath) return;
-    
+
     setState(() => _isPickingCanvasPath = true);
-    
+
     try {
       final selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择画布空间保存文件夹',
         lockParentWindow: true,
       );
-      
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         canvasSavePathNotifier.value = selectedDirectory;
-        
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('canvas_save_path', selectedDirectory);
-        
-        _logger.success('设置画布空间保存路径', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置画布空间保存路径',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         if (mounted) {
           _showMessage('画布空间保存路径已更新');
         }
@@ -1035,24 +1438,28 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 选择音频保存路径
   Future<void> _pickAudioDirectory() async {
     if (_isPickingAudioPath) return;
-    
+
     setState(() => _isPickingAudioPath = true);
-    
+
     try {
       final selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择音频保存文件夹',
         lockParentWindow: true,
       );
-      
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         setState(() {
           _audioSavePath = selectedDirectory;
         });
-        
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('audio_save_path', selectedDirectory);
-        
-        _logger.success('设置音频保存路径', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置音频保存路径',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         if (mounted) {
           _showMessage('音频保存路径已更新: $selectedDirectory');
         }
@@ -1072,24 +1479,28 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 选择 IndexTTS 安装路径
   Future<void> _pickIndexTTSDirectory() async {
     if (_isPickingIndexTTSPath) return;
-    
+
     setState(() => _isPickingIndexTTSPath = true);
-    
+
     try {
       final selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择 IndexTTS 安装目录',
         lockParentWindow: true,
       );
-      
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         setState(() {
           _indexttsPath = selectedDirectory;
         });
-        
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('indextts_path', selectedDirectory);
-        
-        _logger.success('设置 IndexTTS 路径', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置 IndexTTS 路径',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         if (mounted) {
           _showMessage('IndexTTS 路径已更新: $selectedDirectory');
         }
@@ -1109,25 +1520,29 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 选择 ComfyUI 工作流文件夹
   Future<void> _pickComfyUIWorkflowDirectory() async {
     if (_isPickingComfyUIWorkflowPath) return;
-    
+
     setState(() => _isPickingComfyUIWorkflowPath = true);
-    
+
     try {
       final selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择 ComfyUI 工作流文件夹',
         lockParentWindow: true,
       );
-      
+
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         setState(() {
           _comfyUIWorkflowFolder = selectedDirectory;
         });
-        
+
         // 保存到 SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('comfyui_workflow_folder', selectedDirectory);
-        
-        _logger.success('设置 ComfyUI 工作流文件夹', module: '设置', extra: {'path': selectedDirectory});
+
+        _logger.success(
+          '设置 ComfyUI 工作流文件夹',
+          module: '设置',
+          extra: {'path': selectedDirectory},
+        );
         _showMessage('工作流文件夹已设置\n点击"读取工作流"按钮加载工作流文件');
       }
     } catch (e) {
@@ -1145,92 +1560,95 @@ class _SettingsPageState extends State<SettingsPage> {
       _showMessage('请先选择工作流文件夹', isError: true);
       return;
     }
-    
+
     setState(() => _isLoadingWorkflows = true);
-    
+
     try {
       final dir = Directory(_comfyUIWorkflowFolder);
       if (!await dir.exists()) {
         throw Exception('文件夹不存在');
       }
-      
+
       // 读取所有 .json 文件
-      final files = dir.listSync()
+      final files = dir
+          .listSync()
           .where((f) => f.path.endsWith('.json'))
           .toList();
-      
+
       if (files.isEmpty) {
         _showMessage('文件夹中没有找到 JSON 工作流文件', isError: true);
         return;
       }
-      
+
       final workflows = <Map<String, dynamic>>[];
       int skippedCount = 0;
-      
+
       for (final file in files) {
         try {
           final content = await File(file.path).readAsString();
           final json = jsonDecode(content);
-          
+
           // 提取工作流信息
-          String workflowType = 'image';  // 默认图片
-          
+          String workflowType = 'image'; // 默认图片
+
           // 方法1：检查 metadata.type
           if (json['metadata']?['type'] != null) {
             workflowType = json['metadata']['type'];
           } else {
             // 方法2：检查文件名前缀（✅ 支持横杠和下划线）
             final filename = file.uri.pathSegments.last.toLowerCase();
-            if (filename.startsWith('video_') || filename.startsWith('video-')) {
+            if (filename.startsWith('video_') ||
+                filename.startsWith('video-')) {
               workflowType = 'video';
-            } else if (filename.startsWith('image_') || filename.startsWith('image-')) {
+            } else if (filename.startsWith('image_') ||
+                filename.startsWith('image-')) {
               workflowType = 'image';
             }
           }
-          
+
           workflows.add({
             'id': file.uri.pathSegments.last.replaceAll('.json', ''),
             'name': json['metadata']?['name'] ?? file.uri.pathSegments.last,
             'description': json['metadata']?['description'] ?? '',
             'type': workflowType,
-            'workflow': json['workflow'] ?? json,  // 兼容不同格式
+            'workflow': json['workflow'] ?? json, // 兼容不同格式
             'filePath': file.path,
           });
-          
+
           debugPrint('✅ 读取工作流: ${file.uri.pathSegments.last} ($workflowType)');
         } catch (e) {
           debugPrint('⚠️ 跳过无效文件: ${file.path} - $e');
           skippedCount++;
         }
       }
-      
+
       // 保存到 SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('comfyui_workflows', jsonEncode(workflows));
-      
+
       setState(() {
         _loadedWorkflows = workflows;
       });
-      
+
       final imageCount = workflows.where((w) => w['type'] == 'image').length;
       final videoCount = workflows.where((w) => w['type'] == 'video').length;
-      
+
       _logger.success(
-        '读取 ComfyUI 工作流成功', 
+        '读取 ComfyUI 工作流成功',
         module: '设置',
         extra: {
           '总数': workflows.length,
           '图片': imageCount,
           '视频': videoCount,
           '跳过': skippedCount,
-        }
+        },
       );
-      
+
       _showMessage(
         '✅ 成功读取 ${workflows.length} 个工作流\n'
         '图片工作流: $imageCount 个\n'
         '视频工作流: $videoCount 个'
-        '${skippedCount > 0 ? '\n跳过无效文件: $skippedCount 个' : ''}'
+        '${skippedCount > 0 ? '\n跳过无效文件: $skippedCount 个' : ''}',
       );
     } catch (e) {
       _logger.error('读取工作流失败: $e', module: '设置');
@@ -1255,7 +1673,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Row(
                   children: [
-                    _buildIconButton(Icons.arrow_back_ios_new_rounded, '返回工作台', widget.onBack),
+                    _buildIconButton(
+                      Icons.arrow_back_ios_new_rounded,
+                      '返回工作台',
+                      widget.onBack,
+                    ),
                     const SizedBox(width: 20),
                     Text(
                       '设置',
@@ -1269,7 +1691,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               Divider(height: 1, color: AppTheme.dividerColor),
-              
+
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1278,19 +1700,22 @@ class _SettingsPageState extends State<SettingsPage> {
                     Container(
                       width: 200,
                       decoration: BoxDecoration(
-                        border: Border(right: BorderSide(color: AppTheme.dividerColor)),
+                        border: Border(
+                          right: BorderSide(color: AppTheme.dividerColor),
+                        ),
                       ),
                       child: Column(
                         children: List.generate(_mainTabs.length, (index) {
-                          return _buildLeftNavItem(index, _mainTabIndex == index);
+                          return _buildLeftNavItem(
+                            index,
+                            _mainTabIndex == index,
+                          );
                         }),
                       ),
                     ),
-                    
+
                     // 右侧内容区域
-                    Expanded(
-                      child: _buildContentArea(currentThemeIndex),
-                    ),
+                    Expanded(child: _buildContentArea(currentThemeIndex)),
                   ],
                 ),
               ),
@@ -1325,7 +1750,11 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Row(
             children: [
               Icon(
-                index == 0 ? Icons.api : index == 1 ? Icons.palette : Icons.save,
+                index == 0
+                    ? Icons.api
+                    : index == 1
+                    ? Icons.palette
+                    : Icons.save,
                 size: 18,
                 color: isSelected ? AppTheme.textColor : AppTheme.subTextColor,
               ),
@@ -1333,7 +1762,9 @@ class _SettingsPageState extends State<SettingsPage> {
               Text(
                 _mainTabs[index],
                 style: TextStyle(
-                  color: isSelected ? AppTheme.textColor : AppTheme.subTextColor,
+                  color: isSelected
+                      ? AppTheme.textColor
+                      : AppTheme.subTextColor,
                   fontSize: 14,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
@@ -1421,7 +1852,10 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           _buildFormHeader('本地保存路径设置', icon: Icons.save_rounded),
           const SizedBox(height: 12),
-          Text('配置生成后的图片与视频存放路径，系统将自动进行分类保存', style: TextStyle(color: AppTheme.subTextColor, fontSize: 13)),
+          Text(
+            '配置生成后的图片与视频存放路径，系统将自动进行分类保存',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
+          ),
           const SizedBox(height: 40),
 
           _buildPathSelector(
@@ -1461,10 +1895,10 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
 
           const SizedBox(height: 60),
-          
+
           // ✅ ComfyUI 工作流管理
           _buildComfyUIWorkflowSection(),
-          
+
           const SizedBox(height: 60),
           Container(
             padding: const EdgeInsets.all(20),
@@ -1475,12 +1909,19 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             child: Row(
               children: [
-                Icon(Icons.check_circle_outline_rounded, color: const Color(0xFF2AF598).withOpacity(0.7), size: 20),
+                Icon(
+                  Icons.check_circle_outline_rounded,
+                  color: const Color(0xFF2AF598).withOpacity(0.7),
+                  size: 20,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     '设置已实时自动保存。生成内容时，系统将直接导出至上述文件夹。',
-                    style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                    style: TextStyle(
+                      color: AppTheme.subTextColor,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ],
@@ -1490,11 +1931,10 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
-  
 
   Widget _buildPathSelector({
     required String title,
-    String? subtitle,  // ✅ 可选的副标题
+    String? subtitle, // ✅ 可选的副标题
     required ValueNotifier<String> notifier,
     required VoidCallback onPick,
     bool isLoading = false,
@@ -1507,10 +1947,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 6),
           Text(
             subtitle,
-            style: TextStyle(
-              color: AppTheme.subTextColor,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
           ),
         ],
         const SizedBox(height: 10),
@@ -1521,16 +1958,23 @@ class _SettingsPageState extends State<SettingsPage> {
                 valueListenable: notifier,
                 builder: (context, path, _) {
                   return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
                     decoration: BoxDecoration(
                       color: AppTheme.surfaceBackground,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                      border: Border.all(
+                        color: AppTheme.textColor.withOpacity(0.05),
+                      ),
                     ),
                     child: Text(
                       path,
                       style: TextStyle(
-                        color: path == '未设置' ? AppTheme.subTextColor : AppTheme.textColor,
+                        color: path == '未设置'
+                            ? AppTheme.subTextColor
+                            : AppTheme.textColor,
                         fontSize: 14,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1541,13 +1985,18 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(width: 12),
             MouseRegion(
-              cursor: isLoading ? SystemMouseCursors.wait : SystemMouseCursors.click,
+              cursor: isLoading
+                  ? SystemMouseCursors.wait
+                  : SystemMouseCursors.click,
               child: GestureDetector(
                 onTap: isLoading ? null : onPick,
                 child: Opacity(
                   opacity: isLoading ? 0.6 : 1.0,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
                       gradient: const LinearGradient(
@@ -1562,15 +2011,25 @@ class _SettingsPageState extends State<SettingsPage> {
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
                             ),
                           )
                         else
-                          const Icon(Icons.folder_open_rounded, color: Colors.white, size: 18),
+                          const Icon(
+                            Icons.folder_open_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
                         const SizedBox(width: 8),
                         Text(
                           isLoading ? '选择中...' : '更改目录',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -1592,9 +2051,12 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           _buildFormHeader('视觉风格设置', icon: Icons.palette_rounded),
           const SizedBox(height: 12),
-          Text('选择后立即自动应用全局风格。系统将自动调整全局色彩规则', style: TextStyle(color: AppTheme.subTextColor, fontSize: 13)),
+          Text(
+            '选择后立即自动应用全局风格。系统将自动调整全局色彩规则',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 13),
+          ),
           const SizedBox(height: 40),
-          
+
           Wrap(
             spacing: 24,
             runSpacing: 24,
@@ -1606,7 +2068,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: GestureDetector(
                   onTap: () {
                     themeNotifier.value = index;
-                    _logger.info('切换主题', module: '设置', extra: {'theme': style['name']});
+                    _logger.info(
+                      '切换主题',
+                      module: '设置',
+                      extra: {'theme': style['name']},
+                    );
                   },
                   child: Container(
                     width: 260,
@@ -1614,12 +2080,20 @@ class _SettingsPageState extends State<SettingsPage> {
                       color: AppTheme.surfaceBackground,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: isSelected ? AppTheme.accentColor : AppTheme.textColor.withOpacity(0.05),
+                        color: isSelected
+                            ? AppTheme.accentColor
+                            : AppTheme.textColor.withOpacity(0.05),
                         width: isSelected ? 2 : 1,
                       ),
-                      boxShadow: isSelected ? [
-                        BoxShadow(color: AppTheme.accentColor.withOpacity(0.1), blurRadius: 15, spreadRadius: 2)
-                      ] : null,
+                      boxShadow: isSelected
+                          ? [
+                              BoxShadow(
+                                color: AppTheme.accentColor.withOpacity(0.1),
+                                blurRadius: 15,
+                                spreadRadius: 2,
+                              ),
+                            ]
+                          : null,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1627,7 +2101,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         Container(
                           height: 120,
                           decoration: BoxDecoration(
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(14),
+                            ),
                             gradient: LinearGradient(
                               colors: style['colors'],
                               begin: Alignment.topLeft,
@@ -1645,13 +2121,20 @@ class _SettingsPageState extends State<SettingsPage> {
                                   decoration: BoxDecoration(
                                     color: style['accent'],
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white, width: 2),
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
                                   ),
                                 ),
                               ),
                               if (isSelected)
                                 const Center(
-                                  child: Icon(Icons.check_circle, color: Colors.white, size: 40),
+                                  child: Icon(
+                                    Icons.check_circle,
+                                    color: Colors.white,
+                                    size: 40,
+                                  ),
                                 ),
                             ],
                           ),
@@ -1661,9 +2144,22 @@ class _SettingsPageState extends State<SettingsPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(style['name'], style: TextStyle(color: AppTheme.textColor, fontSize: 15, fontWeight: FontWeight.bold)),
+                              Text(
+                                style['name'],
+                                style: TextStyle(
+                                  color: AppTheme.textColor,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               const SizedBox(height: 6),
-                              Text(style['desc'], style: TextStyle(color: AppTheme.subTextColor, fontSize: 12)),
+                              Text(
+                                style['desc'],
+                                style: TextStyle(
+                                  color: AppTheme.subTextColor,
+                                  fontSize: 12,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -1674,7 +2170,7 @@ class _SettingsPageState extends State<SettingsPage> {
               );
             }),
           ),
-          
+
           const SizedBox(height: 60),
           Container(
             padding: const EdgeInsets.all(20),
@@ -1685,12 +2181,19 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline_rounded, color: AppTheme.accentColor.withOpacity(0.5), size: 20),
+                Icon(
+                  Icons.info_outline_rounded,
+                  color: AppTheme.accentColor.withOpacity(0.5),
+                  size: 20,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     '配置已实时自动保存。自定义皮肤功能正在内测中，敬请期待。',
-                    style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                    style: TextStyle(
+                      color: AppTheme.subTextColor,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ],
@@ -1745,20 +2248,31 @@ class _SettingsPageState extends State<SettingsPage> {
                       setState(() => _apiSubTabIndex = index);
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
-                        color: isSelected ? AppTheme.sideBarItemHover : Colors.transparent,
+                        color: isSelected
+                            ? AppTheme.sideBarItemHover
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: isSelected ? AppTheme.accentColor.withValues(alpha: 0.5) : Colors.transparent,
+                          color: isSelected
+                              ? AppTheme.accentColor.withValues(alpha: 0.5)
+                              : Colors.transparent,
                         ),
                       ),
                       child: Text(
                         _apiSubTabs[index],
                         style: TextStyle(
-                          color: isSelected ? AppTheme.textColor : AppTheme.subTextColor,
+                          color: isSelected
+                              ? AppTheme.textColor
+                              : AppTheme.subTextColor,
                           fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -1787,39 +2301,39 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _buildProviderDropdown(
           value: _llmProvider,
-          onChanged: (v) {
-            setState(() => _llmProvider = v);
-            _llmBaseUrlController.text = _getDefaultBaseUrl(v);
-            _saveLLMConfig();
+          onChanged: (v) async {
+            await _loadLLMConfigForProvider(v);
           },
-          modelType: 'llm',  // ✅ 传递模型类型
+          modelType: 'llm', // ✅ 传递模型类型
         ),
-        
+
         const SizedBox(height: 30),
         _buildFieldLabel('API Key'),
         const SizedBox(height: 10),
         _buildEditableTextField(
-          _llmApiKeyController, 
-          '请输入您的 API 密钥...', 
+          _llmApiKeyController,
+          '请输入您的 API 密钥...',
           isPassword: true,
           isVisible: _llmApiKeyVisible,
-          onToggleVisibility: () => setState(() => _llmApiKeyVisible = !_llmApiKeyVisible),
+          onToggleVisibility: _toggleLlmApiKeyVisibility,
           onCopy: () async {
-            await Clipboard.setData(ClipboardData(text: _llmApiKeyController.text));
+            await Clipboard.setData(
+              ClipboardData(text: _llmApiKeyController.text),
+            );
             _showMessage('API Key 已复制', isError: false);
           },
           onSave: () => _debouncedSave(_saveLLMConfig), // ✅ 自动保存（带防抖）
         ),
-        
+
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
         const SizedBox(height: 10),
         _buildEditableTextField(
-          _llmBaseUrlController, 
+          _llmBaseUrlController,
           'https://api.openai.com/v1',
           onSave: () => _debouncedSave(_saveLLMConfig), // ✅ 自动保存（带防抖）
         ),
-        
+
         const SizedBox(height: 30),
         _buildFieldLabel('选择推理模型'),
         const SizedBox(height: 10),
@@ -1829,7 +2343,7 @@ class _SettingsPageState extends State<SettingsPage> {
           controller: _llmModelController,
           hint: '例如: gpt-4-turbo',
         ),
-        
+
         const SizedBox(height: 40),
         // 测试和保存按钮
         Row(
@@ -1839,7 +2353,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Expanded(child: _buildTestButton(() => _testLLMConnection())),
           ],
         ),
-        
+
         const SizedBox(height: 20),
         Text(
           '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
@@ -1851,8 +2365,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildImageForm() {
     // ✅ 判断是否为网页服务商
-    final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(_imageProvider);
-    
+    final isWebProvider = [
+      'vidu',
+      'jimeng',
+      'keling',
+      'hailuo',
+      'google_flow',
+    ].contains(_imageProvider);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1860,23 +2380,14 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _buildProviderDropdown(
           value: _imageProvider,
-          onChanged: (v) {
-            setState(() {
-              _imageProvider = v;
-              // 切换服务商时重置配置
-              if (['vidu', 'jimeng', 'keling', 'hailuo', 'google_flow'].contains(v)) {
-                _imageWebTool = null;
-                _imageWebModel = null;
-              } else {
-                _imageBaseUrlController.text = _getDefaultBaseUrl(v);
-              }
-            });
+          onChanged: (v) async {
+            await _loadImageConfigForProvider(v);
           },
-          modelType: 'image',  // ✅ 传递模型类型
+          modelType: 'image', // ✅ 传递模型类型
         ),
-        
+
         const SizedBox(height: 30),
-        
+
         // ✅ 根据服务商类型显示不同的配置界面
         if (isWebProvider) ...[
           // 网页服务商配置界面
@@ -1888,33 +2399,39 @@ class _SettingsPageState extends State<SettingsPage> {
             onToolChanged: (tool) {
               setState(() {
                 _imageWebTool = tool;
-                _imageWebModel = null;  // 切换工具时重置模型
+                _imageWebModel = null; // 切换工具时重置模型
               });
+              _debouncedSave(_saveImageConfig);
             },
             onModelChanged: (model) {
               setState(() => _imageWebModel = model);
+              _debouncedSave(_saveImageConfig);
             },
           ),
         ] else ...[
           // API 服务商配置界面（原有逻辑）
-          if (_imageProvider != 'comfyui' && _imageProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要推理模型相关配置
+          if (_imageProvider != 'comfyui' &&
+              _imageProvider != 'runninghub') ...[
+            // ComfyUI/RunningHub 不需要推理模型相关配置
             _buildFieldLabel('API Key'),
             const SizedBox(height: 10),
             _buildEditableTextField(
-              _imageApiKeyController, 
-              '请输入您的 API 密钥...', 
+              _imageApiKeyController,
+              '请输入您的 API 密钥...',
               isPassword: true,
               isVisible: _imageApiKeyVisible,
-              onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
+              onToggleVisibility: _toggleImageApiKeyVisibility,
               onCopy: () async {
-                await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
+                await Clipboard.setData(
+                  ClipboardData(text: _imageApiKeyController.text),
+                );
                 _showMessage('API Key 已复制', isError: false);
               },
               onSave: () => _debouncedSave(_saveImageConfig),
             ),
             const SizedBox(height: 30),
           ],
-          
+
           // ✅ RunningHub 专属配置
           if (_imageProvider == 'runninghub') ...[
             _buildFieldLabel('API Key'),
@@ -1924,9 +2441,11 @@ class _SettingsPageState extends State<SettingsPage> {
               '请输入 RunningHub API Key（32位）',
               isPassword: true,
               isVisible: _imageApiKeyVisible,
-              onToggleVisibility: () => setState(() => _imageApiKeyVisible = !_imageApiKeyVisible),
+              onToggleVisibility: _toggleImageApiKeyVisibility,
               onCopy: () async {
-                await Clipboard.setData(ClipboardData(text: _imageApiKeyController.text));
+                await Clipboard.setData(
+                  ClipboardData(text: _imageApiKeyController.text),
+                );
                 _showMessage('API Key 已复制', isError: false);
               },
               onSave: () => _debouncedSave(_saveImageConfig),
@@ -1948,13 +2467,15 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildFieldLabel('Base URL (API 地址)'),
             const SizedBox(height: 10),
             _buildEditableTextField(
-              _imageBaseUrlController, 
+              _imageBaseUrlController,
               'https://api.openai.com/v1',
               onSave: () => _debouncedSave(_saveImageConfig),
             ),
           ],
-          
-          if (_imageProvider != 'comfyui' && _imageProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要推理模型
+
+          if (_imageProvider != 'comfyui' &&
+              _imageProvider != 'runninghub') ...[
+            // ComfyUI/RunningHub 不需要推理模型
             const SizedBox(height: 30),
             _buildFieldLabel('选择推理模型'),
             const SizedBox(height: 10),
@@ -1965,7 +2486,7 @@ class _SettingsPageState extends State<SettingsPage> {
               hint: '例如: dall-e-3',
             ),
           ],
-          
+
           // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
           if (_imageProvider == 'comfyui') ...[
             const SizedBox(height: 30),
@@ -1976,15 +2497,22 @@ class _SettingsPageState extends State<SettingsPage> {
               selectedWorkflow: _selectedImageWorkflow,
               onChanged: (workflowId) async {
                 setState(() => _selectedImageWorkflow = workflowId);
-                
+
                 final prefs = await SharedPreferences.getInstance();
-                await prefs.setString('comfyui_selected_image_workflow', workflowId);
-                
-                _logger.success('选择图片工作流', module: '设置', extra: {'workflow': workflowId});
+                await prefs.setString(
+                  'comfyui_selected_image_workflow',
+                  workflowId,
+                );
+
+                _logger.success(
+                  '选择图片工作流',
+                  module: '设置',
+                  extra: {'workflow': workflowId},
+                );
               },
             ),
           ],
-          
+
           const SizedBox(height: 40),
           Row(
             children: [
@@ -1994,12 +2522,12 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ],
-        
+
         const SizedBox(height: 20),
         Text(
-          isWebProvider 
-            ? '* 提示：网页服务商通过浏览器自动化实现，无需 API Key。'
-            : '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          isWebProvider
+              ? '* 提示：网页服务商通过浏览器自动化实现，无需 API Key。'
+              : '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
           style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
         ),
       ],
@@ -2008,8 +2536,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildVideoForm() {
     // ✅ 判断是否为网页服务商
-    final isWebProvider = ['vidu', 'jimeng', 'keling', 'hailuo'].contains(_videoProvider);
-    
+    final isWebProvider = [
+      'vidu',
+      'jimeng',
+      'keling',
+      'hailuo',
+    ].contains(_videoProvider);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2017,23 +2550,14 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _buildProviderDropdown(
           value: _videoProvider,
-          onChanged: (v) {
-            setState(() {
-              _videoProvider = v;
-              // 切换服务商时重置配置
-              if (['vidu', 'jimeng', 'keling', 'hailuo'].contains(v)) {
-                _videoWebTool = null;
-                _videoWebModel = null;
-              } else {
-                _videoBaseUrlController.text = _getDefaultBaseUrl(v);
-              }
-            });
+          onChanged: (v) async {
+            await _loadVideoConfigForProvider(v);
           },
-          modelType: 'video',  // ✅ 传递模型类型
+          modelType: 'video', // ✅ 传递模型类型
         ),
-        
+
         const SizedBox(height: 30),
-        
+
         // ✅ 根据服务商类型显示不同的配置界面
         if (isWebProvider) ...[
           // 网页服务商配置界面
@@ -2046,8 +2570,8 @@ class _SettingsPageState extends State<SettingsPage> {
             onToolChanged: (tool) {
               setState(() {
                 _videoWebTool = tool;
-                _videoWebModel = null;  // 切换工具时重置模型
-                _videoWebMode = null;   // 切换工具时重置方式
+                _videoWebModel = null; // 切换工具时重置模型
+                _videoWebMode = null; // 切换工具时重置方式
               });
             },
             onModelChanged: (model) {
@@ -2062,24 +2586,27 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ] else ...[
           // API 服务商配置界面（原有逻辑）
-          if (_videoProvider != 'comfyui' && _videoProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要通用 API Key
+          if (_videoProvider != 'comfyui' &&
+              _videoProvider != 'runninghub') ...[
+            // ComfyUI/RunningHub 不需要通用 API Key
             _buildFieldLabel('API Key'),
             const SizedBox(height: 10),
             _buildEditableTextField(
-              _videoApiKeyController, 
-              '请输入您的 API 密钥...', 
+              _videoApiKeyController,
+              '请输入您的 API 密钥...',
               isPassword: true,
               isVisible: _videoApiKeyVisible,
-              onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
+              onToggleVisibility: _toggleVideoApiKeyVisibility,
               onCopy: () async {
-                await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
+                await Clipboard.setData(
+                  ClipboardData(text: _videoApiKeyController.text),
+                );
                 _showMessage('API Key 已复制', isError: false);
               },
-              onSave: () => _debouncedSave(_saveVideoConfig),
             ),
             const SizedBox(height: 30),
           ],
-          
+
           // ✅ RunningHub 专属配置
           if (_videoProvider == 'runninghub') ...[
             _buildFieldLabel('API Key'),
@@ -2089,12 +2616,13 @@ class _SettingsPageState extends State<SettingsPage> {
               '请输入 RunningHub API Key（32位）',
               isPassword: true,
               isVisible: _videoApiKeyVisible,
-              onToggleVisibility: () => setState(() => _videoApiKeyVisible = !_videoApiKeyVisible),
+              onToggleVisibility: _toggleVideoApiKeyVisibility,
               onCopy: () async {
-                await Clipboard.setData(ClipboardData(text: _videoApiKeyController.text));
+                await Clipboard.setData(
+                  ClipboardData(text: _videoApiKeyController.text),
+                );
                 _showMessage('API Key 已复制', isError: false);
               },
-              onSave: () => _debouncedSave(_saveVideoConfig),
             ),
             const SizedBox(height: 30),
             _buildFieldLabel('AI 应用 ID（WebApp ID）'),
@@ -2102,7 +2630,6 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildEditableTextField(
               _runninghubVideoWebappIdController,
               '从 RunningHub 应用链接末尾获取',
-              onSave: () => _debouncedSave(_saveVideoConfig),
             ),
             const SizedBox(height: 10),
             Text(
@@ -2113,13 +2640,14 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildFieldLabel('Base URL (API 地址)'),
             const SizedBox(height: 10),
             _buildEditableTextField(
-              _videoBaseUrlController, 
+              _videoBaseUrlController,
               'https://api.openai.com/v1',
-              onSave: () => _debouncedSave(_saveVideoConfig),
             ),
           ],
-          
-          if (_videoProvider != 'comfyui' && _videoProvider != 'runninghub') ...[  // ComfyUI/RunningHub 不需要推理模型
+
+          if (_videoProvider != 'comfyui' &&
+              _videoProvider != 'runninghub') ...[
+            // ComfyUI/RunningHub 不需要推理模型
             const SizedBox(height: 30),
             _buildFieldLabel('选择推理模型'),
             const SizedBox(height: 10),
@@ -2130,7 +2658,7 @@ class _SettingsPageState extends State<SettingsPage> {
               hint: '例如: veo_3_1 或 sora-2',
             ),
           ],
-          
+
           // ✅ ComfyUI 工作流选择（只在选择 ComfyUI 时显示）
           if (_videoProvider == 'comfyui') ...[
             const SizedBox(height: 30),
@@ -2139,17 +2667,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildWorkflowSelector(
               type: 'video',
               selectedWorkflow: _selectedVideoWorkflow,
-              onChanged: (workflowId) async {
+              onChanged: (workflowId) {
                 setState(() => _selectedVideoWorkflow = workflowId);
-                
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setString('comfyui_selected_video_workflow', workflowId);
-                
-                _logger.success('选择视频工作流', module: '设置', extra: {'workflow': workflowId});
               },
             ),
           ],
-          
+
           const SizedBox(height: 40),
           Row(
             children: [
@@ -2159,12 +2682,12 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ],
-        
+
         const SizedBox(height: 20),
         Text(
-          isWebProvider 
-            ? '* 提示：网页服务商通过浏览器自动化实现，无需 API Key。'
-            : '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
+          isWebProvider
+              ? '* 提示：网页服务商通过浏览器自动化实现，无需 API Key。'
+              : '* 提示：填写的 API 信息将加密自动保存在本地，仅用于模型推理。',
           style: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
         ),
       ],
@@ -2179,38 +2702,38 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _buildProviderDropdown(
           value: _uploadProvider,
-          onChanged: (v) {
-            setState(() => _uploadProvider = v);
-            _uploadBaseUrlController.text = _getDefaultBaseUrl(v);
-            _saveUploadConfig();
+          onChanged: (v) async {
+            await _loadUploadConfigForProvider(v);
           },
         ),
-        
+
         const SizedBox(height: 30),
         _buildFieldLabel('API Key'),
         const SizedBox(height: 10),
         _buildEditableTextField(
-          _uploadApiKeyController, 
-          '请输入您的 API 密钥...', 
+          _uploadApiKeyController,
+          '请输入您的 API 密钥...',
           isPassword: true,
           isVisible: _uploadApiKeyVisible,
-          onToggleVisibility: () => setState(() => _uploadApiKeyVisible = !_uploadApiKeyVisible),
+          onToggleVisibility: _toggleUploadApiKeyVisibility,
           onCopy: () async {
-            await Clipboard.setData(ClipboardData(text: _uploadApiKeyController.text));
+            await Clipboard.setData(
+              ClipboardData(text: _uploadApiKeyController.text),
+            );
             _showMessage('API Key 已复制', isError: false);
           },
           onSave: () => _debouncedSave(_saveUploadConfig), // ✅ 自动保存（带防抖）
         ),
-        
+
         const SizedBox(height: 30),
         _buildFieldLabel('Base URL (API 地址)'),
         const SizedBox(height: 10),
         _buildEditableTextField(
-          _uploadBaseUrlController, 
+          _uploadBaseUrlController,
           'https://api.openai.com/v1',
           onSave: () => _debouncedSave(_saveUploadConfig), // ✅ 自动保存（带防抖）
         ),
-        
+
         const SizedBox(height: 40),
         // 测试和保存按钮
         Row(
@@ -2254,7 +2777,9 @@ class _SettingsPageState extends State<SettingsPage> {
             Text(
               _voiceEnabled ? '已启用' : '已禁用',
               style: TextStyle(
-                color: _voiceEnabled ? AppTheme.accentColor : AppTheme.subTextColor,
+                color: _voiceEnabled
+                    ? AppTheme.accentColor
+                    : AppTheme.subTextColor,
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
               ),
@@ -2283,7 +2808,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
 
         const SizedBox(height: 30),
-        
+
         // IndexTTS 安装路径
         _buildFieldLabel('IndexTTS 安装路径'),
         const SizedBox(height: 6),
@@ -2296,11 +2821,16 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Expanded(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.surfaceBackground,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                  border: Border.all(
+                    color: AppTheme.textColor.withOpacity(0.05),
+                  ),
                 ),
                 child: Text(
                   _indexttsPath,
@@ -2314,13 +2844,18 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(width: 12),
             MouseRegion(
-              cursor: _isPickingIndexTTSPath ? SystemMouseCursors.wait : SystemMouseCursors.click,
+              cursor: _isPickingIndexTTSPath
+                  ? SystemMouseCursors.wait
+                  : SystemMouseCursors.click,
               child: GestureDetector(
                 onTap: _isPickingIndexTTSPath ? null : _pickIndexTTSDirectory,
                 child: Opacity(
                   opacity: _isPickingIndexTTSPath ? 0.6 : 1.0,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
                       gradient: const LinearGradient(
@@ -2335,15 +2870,25 @@ class _SettingsPageState extends State<SettingsPage> {
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
                             ),
                           )
                         else
-                          const Icon(Icons.folder_open_rounded, color: Colors.white, size: 18),
+                          const Icon(
+                            Icons.folder_open_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
                         const SizedBox(width: 8),
                         Text(
                           _isPickingIndexTTSPath ? '选择中...' : '更改目录',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -2355,7 +2900,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
 
         const SizedBox(height: 30),
-        
+
         // 音频保存路径
         _buildFieldLabel('音频保存路径'),
         const SizedBox(height: 6),
@@ -2368,17 +2913,22 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Expanded(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.surfaceBackground,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
+                  border: Border.all(
+                    color: AppTheme.textColor.withOpacity(0.05),
+                  ),
                 ),
                 child: Text(
                   _audioSavePath,
                   style: TextStyle(
-                    color: _audioSavePath == '未设置' 
-                        ? AppTheme.subTextColor 
+                    color: _audioSavePath == '未设置'
+                        ? AppTheme.subTextColor
                         : AppTheme.textColor,
                     fontSize: 14,
                     overflow: TextOverflow.ellipsis,
@@ -2388,13 +2938,18 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(width: 12),
             MouseRegion(
-              cursor: _isPickingAudioPath ? SystemMouseCursors.wait : SystemMouseCursors.click,
+              cursor: _isPickingAudioPath
+                  ? SystemMouseCursors.wait
+                  : SystemMouseCursors.click,
               child: GestureDetector(
                 onTap: _isPickingAudioPath ? null : _pickAudioDirectory,
                 child: Opacity(
                   opacity: _isPickingAudioPath ? 0.6 : 1.0,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
                       gradient: const LinearGradient(
@@ -2409,15 +2964,25 @@ class _SettingsPageState extends State<SettingsPage> {
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
                             ),
                           )
                         else
-                          const Icon(Icons.folder_open_rounded, color: Colors.white, size: 18),
+                          const Icon(
+                            Icons.folder_open_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
                         const SizedBox(width: 8),
                         Text(
                           _isPickingAudioPath ? '选择中...' : '更改目录',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -2429,7 +2994,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
 
         const SizedBox(height: 30),
-        
+
         // 默认情感强度
         _buildFieldLabel('默认情感强度'),
         const SizedBox(height: 6),
@@ -2479,7 +3044,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
 
         const SizedBox(height: 40),
-        
+
         // 测试和保存按钮
         Row(
           children: [
@@ -2488,16 +3053,14 @@ class _SettingsPageState extends State<SettingsPage> {
             Expanded(child: _buildTestButton(() => _testVoiceConnection())),
           ],
         ),
-
       ],
     );
   }
 
-
   Widget _buildProviderDropdown({
     required String value,
     required Function(String) onChanged,
-    String? modelType,  // ✅ 新增：根据模型类型显示不同的服务商
+    String? modelType, // ✅ 新增：根据模型类型显示不同的服务商
   }) {
     // ✅ 根据模型类型选择服务商列表
     List<String> providers;
@@ -2506,23 +3069,38 @@ class _SettingsPageState extends State<SettingsPage> {
       providers = ['openai', 'geeknow', 'yunwu', 'deepseek', 'aliyun'];
     } else if (modelType == 'image') {
       // 图片模型：API服务商 + ComfyUI + RunningHub + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'runninghub', 'google_flow'];
+      providers = [
+        'openai',
+        'geeknow',
+        'yunwu',
+        'comfyui',
+        'runninghub',
+        'google_flow',
+      ];
     } else if (modelType == 'video') {
       // 视频模型：API服务商 + ComfyUI + RunningHub + 网页服务商
-      providers = ['openai', 'geeknow', 'yunwu', 'comfyui', 'runninghub', 'vidu', 'jimeng'];
+      providers = [
+        'openai',
+        'geeknow',
+        'yunwu',
+        'comfyui',
+        'runninghub',
+        'vidu',
+        'jimeng',
+      ];
     } else {
       // 其他（上传等）：只有 API 服务商
       providers = ['openai', 'geeknow', 'yunwu'];
     }
-    
+
     final displayNames = {
       'openai': 'OpenAI',
       'geeknow': 'GeekNow',
       'yunwu': 'Yunwu（云雾）',
       'deepseek': 'DeepSeek',
-      'aliyun': '阿里云',  // ✅ 添加阿里云
-      'comfyui': 'ComfyUI（本地）',  // ✅ ComfyUI
-      'runninghub': 'RunningHub（云端）',  // ✅ RunningHub
+      'aliyun': '阿里云', // ✅ 添加阿里云
+      'comfyui': 'ComfyUI（本地）', // ✅ ComfyUI
+      'runninghub': 'RunningHub（云端）', // ✅ RunningHub
       'azure': 'Azure',
       'anthropic': 'Anthropic',
       // ✅ 网页服务商
@@ -2548,11 +3126,22 @@ class _SettingsPageState extends State<SettingsPage> {
           value: safeValue,
           isExpanded: true,
           dropdownColor: AppTheme.surfaceBackground,
-          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
-          items: providers.map((e) => DropdownMenuItem(
-            value: e, 
-            child: Text(displayNames[e] ?? e, style: TextStyle(color: AppTheme.textColor, fontSize: 14))
-          )).toList(),
+          icon: Icon(
+            Icons.unfold_more_rounded,
+            color: AppTheme.subTextColor,
+            size: 20,
+          ),
+          items: providers
+              .map(
+                (e) => DropdownMenuItem(
+                  value: e,
+                  child: Text(
+                    displayNames[e] ?? e,
+                    style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+                  ),
+                ),
+              )
+              .toList(),
           onChanged: (v) {
             if (v != null) {
               onChanged(v);
@@ -2564,16 +3153,21 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildEditableTextField(
-    TextEditingController controller, 
+    TextEditingController controller,
     String hint, {
-    bool isPassword = false, 
+    bool isPassword = false,
     bool? isVisible,
     VoidCallback? onToggleVisibility,
     VoidCallback? onCopy,
     VoidCallback? onSave,
   }) {
-    final shouldObscure = isPassword && (isVisible == null || !isVisible);
-    
+    final isPasswordVisible = isVisible ?? false;
+    final shouldObscure = isPassword && !isPasswordVisible;
+    final shouldAutoSave =
+        onSave != null &&
+        controller != _llmApiKeyController &&
+        controller != _llmBaseUrlController;
+
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surfaceBackground,
@@ -2581,93 +3175,95 @@ class _SettingsPageState extends State<SettingsPage> {
         border: Border.all(color: AppTheme.textColor.withOpacity(0.05)),
       ),
       child: TextField(
+        key: ValueKey(
+          'editable_${controller.hashCode}_${isPassword ? 'pwd' : 'plain'}_${shouldObscure ? 'hidden' : 'visible'}',
+        ),
         controller: controller,
         obscureText: shouldObscure,
         enabled: true,
         enableInteractiveSelection: true,
-        enableSuggestions: true,
+        enableSuggestions: !shouldObscure,
         autocorrect: false,
-        keyboardType: TextInputType.url, // 🔧 使用 url 类型以获得更好的输入支持
+        keyboardType: isPassword ? TextInputType.text : TextInputType.url,
         textInputAction: TextInputAction.done,
         style: TextStyle(color: AppTheme.textColor, fontSize: 14),
         // 🔧 添加自定义右键菜单，确保复制粘贴可用
-        contextMenuBuilder: (context, editableTextState) {
-          return AdaptiveTextSelectionToolbar.editableText(
-            editableTextState: editableTextState,
-          );
-        },
+        contextMenuBuilder: isPassword
+            ? null
+            : (context, editableTextState) {
+                return AdaptiveTextSelectionToolbar.editableText(
+                  editableTextState: editableTextState,
+                );
+              },
         decoration: InputDecoration(
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 16,
+          ),
           hintText: hint,
           hintStyle: TextStyle(color: AppTheme.subTextColor),
+          suffixIconConstraints: const BoxConstraints(
+            minWidth: 48,
+            minHeight: 48,
+          ),
           suffixIcon: isPassword
               ? Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 粘贴按钮（密码字段）
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: () async {
-                          try {
-                            final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-                            if (clipboardData?.text != null && clipboardData!.text!.isNotEmpty) {
-                              controller.text = clipboardData.text!;
-                              controller.selection = TextSelection.collapsed(
-                                offset: controller.text.length,
-                              );
-                              // 触发自动保存
+                    IconButton(
+                      tooltip: '粘贴',
+                      splashRadius: 18,
+                      onPressed: () async {
+                        try {
+                          final clipboardData = await Clipboard.getData(
+                            Clipboard.kTextPlain,
+                          );
+                          if (clipboardData?.text != null &&
+                              clipboardData!.text!.isNotEmpty) {
+                            controller.text = clipboardData.text!;
+                            controller.selection = TextSelection.collapsed(
+                              offset: controller.text.length,
+                            );
+                            if (shouldAutoSave) {
                               onSave?.call();
-                              _showMessage('已粘贴', isError: false);
-                            } else {
-                              _showMessage('剪贴板为空', isError: true);
                             }
-                          } catch (e) {
-                            _showMessage('粘贴失败: $e', isError: true);
+                            _showMessage('已粘贴', isError: false);
+                          } else {
+                            _showMessage('剪贴板为空', isError: true);
                           }
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Tooltip(
-                            message: '粘贴',
-                            child: Icon(Icons.content_paste, color: AppTheme.subTextColor, size: 18),
-                          ),
-                        ),
+                        } catch (e) {
+                          _showMessage('粘贴失败: $e', isError: true);
+                        }
+                      },
+                      icon: Icon(
+                        Icons.content_paste,
+                        color: AppTheme.subTextColor,
+                        size: 18,
                       ),
                     ),
-                    // 复制按钮
                     if (onCopy != null)
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: onCopy,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Tooltip(
-                              message: '复制',
-                              child: Icon(Icons.copy, color: AppTheme.subTextColor, size: 18),
-                            ),
-                          ),
+                      IconButton(
+                        tooltip: '复制',
+                        splashRadius: 18,
+                        onPressed: onCopy,
+                        icon: Icon(
+                          Icons.copy,
+                          color: AppTheme.subTextColor,
+                          size: 18,
                         ),
                       ),
-                    // 查看/隐藏按钮
                     if (onToggleVisibility != null)
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: onToggleVisibility,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Tooltip(
-                              message: (isVisible ?? false) ? '隐藏' : '显示',
-                              child: Icon(
-                                (isVisible ?? false) ? Icons.visibility_rounded : Icons.visibility_off_rounded,
-                                color: AppTheme.subTextColor,
-                                size: 18,
-                              ),
-                            ),
-                          ),
+                      IconButton(
+                        tooltip: isPasswordVisible ? '隐藏' : '显示',
+                        splashRadius: 18,
+                        onPressed: onToggleVisibility,
+                        icon: Icon(
+                          isPasswordVisible
+                              ? Icons.visibility_rounded
+                              : Icons.visibility_off_rounded,
+                          color: AppTheme.subTextColor,
+                          size: 18,
                         ),
                       ),
                   ],
@@ -2681,8 +3277,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       child: GestureDetector(
                         onTap: () async {
                           try {
-                            final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-                            if (clipboardData?.text != null && clipboardData!.text!.isNotEmpty) {
+                            final clipboardData = await Clipboard.getData(
+                              Clipboard.kTextPlain,
+                            );
+                            if (clipboardData?.text != null &&
+                                clipboardData!.text!.isNotEmpty) {
                               final selection = controller.selection;
                               final text = controller.text;
                               final newText = text.replaceRange(
@@ -2692,10 +3291,14 @@ class _SettingsPageState extends State<SettingsPage> {
                               );
                               controller.text = newText;
                               controller.selection = TextSelection.collapsed(
-                                offset: selection.start + clipboardData.text!.length,
+                                offset:
+                                    selection.start +
+                                    clipboardData.text!.length,
                               );
                               // 触发自动保存
-                              onSave?.call();
+                              if (shouldAutoSave) {
+                                onSave?.call();
+                              }
                             } else {
                               _showMessage('剪贴板为空', isError: true);
                             }
@@ -2707,7 +3310,11 @@ class _SettingsPageState extends State<SettingsPage> {
                           padding: const EdgeInsets.all(8),
                           child: Tooltip(
                             message: '粘贴',
-                            child: Icon(Icons.content_paste, color: AppTheme.subTextColor, size: 18),
+                            child: Icon(
+                              Icons.content_paste,
+                              color: AppTheme.subTextColor,
+                              size: 18,
+                            ),
                           ),
                         ),
                       ),
@@ -2717,7 +3324,9 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         onChanged: (v) {
           // ✅ 触发自动保存（已在外部使用防抖包装）
-          onSave?.call();
+          if (shouldAutoSave) {
+            onSave?.call();
+          }
         },
       ),
     );
@@ -2733,7 +3342,6 @@ class _SettingsPageState extends State<SettingsPage> {
         _debouncedSave(_saveImageConfig);
         break;
       case 'video':
-        _debouncedSave(_saveVideoConfig);
         break;
       case 'upload':
         _debouncedSave(_saveUploadConfig);
@@ -2750,19 +3358,25 @@ class _SettingsPageState extends State<SettingsPage> {
   }) {
     // 根据服务商选择对应的模型列表
     List<String> models = [];
-    
+
     if (provider == 'geeknow') {
       models = _geekNowModels[modelType] ?? [];
     } else if (provider == 'yunwu') {
       models = _yunwuModels[modelType] ?? [];
     } else if (provider == 'deepseek') {
       models = _deepseekModels[modelType] ?? [];
-    } else if (provider == 'aliyun' || provider == 'qwen' || provider == 'tongyi') {
+    } else if (provider == 'aliyun' ||
+        provider == 'qwen' ||
+        provider == 'tongyi') {
       // ✅ 阿里云使用文本输入框（允许手动输入模型名称）
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildEditableTextField(controller, hint),
+          _buildEditableTextField(
+            controller,
+            hint,
+            onSave: () => _saveModelByType(modelType),
+          ),
           const SizedBox(height: 8),
           Text(
             '常用模型: qwen-plus, qwen-max, qwen-turbo, qwen-long',
@@ -2772,7 +3386,11 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     } else {
       // 其他服务商使用普通文本输入
-      return _buildEditableTextField(controller, hint);
+      return _buildEditableTextField(
+        controller,
+        hint,
+        onSave: () => _saveModelByType(modelType),
+      );
     }
 
     // GeekNow 和 Yunwu 使用下拉选择器
@@ -2791,11 +3409,18 @@ class _SettingsPageState extends State<SettingsPage> {
           hint: Text(hint, style: TextStyle(color: AppTheme.subTextColor)),
           isExpanded: true,
           dropdownColor: AppTheme.surfaceBackground,
-          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+          icon: Icon(
+            Icons.unfold_more_rounded,
+            color: AppTheme.subTextColor,
+            size: 20,
+          ),
           items: models.map((model) {
             return DropdownMenuItem(
               value: model,
-              child: Text(model, style: TextStyle(color: AppTheme.textColor, fontSize: 14)),
+              child: Text(
+                model,
+                style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+              ),
             );
           }).toList(),
           onChanged: (v) {
@@ -2803,6 +3428,7 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() {
                 controller.text = v;
               });
+              _saveModelByType(modelType);
             }
           },
         ),
@@ -2812,13 +3438,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// ComfyUI 工作流选择器
   Widget _buildWorkflowSelector({
-    required String type,  // 'image' 或 'video'（仅用于提示，不过滤）
+    required String type, // 'image' 或 'video'（仅用于提示，不过滤）
     required String? selectedWorkflow,
     required Function(String) onChanged,
   }) {
     // ✅ 不过滤类型，显示所有工作流，让用户自己选择
     final workflows = _loadedWorkflows;
-    
+
     if (workflows.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(16),
@@ -2841,7 +3467,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       );
     }
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(
@@ -2851,26 +3477,32 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: workflows.any((w) => w['id'] == selectedWorkflow) ? selectedWorkflow : null,
+          value: workflows.any((w) => w['id'] == selectedWorkflow)
+              ? selectedWorkflow
+              : null,
           hint: Text('请选择工作流', style: TextStyle(color: AppTheme.subTextColor)),
           isExpanded: true,
           dropdownColor: AppTheme.surfaceBackground,
-          icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+          icon: Icon(
+            Icons.unfold_more_rounded,
+            color: AppTheme.subTextColor,
+            size: 20,
+          ),
           items: workflows.map((workflow) {
             // ✅ 显示工作流的实际类型标签
             final workflowType = workflow['type'] ?? 'image';
-            final typeIcon = workflowType == 'video' ? Icons.videocam : Icons.image;
-            final typeColor = workflowType == 'video' ? Colors.purple : Colors.blue;
-            
+            final typeIcon = workflowType == 'video'
+                ? Icons.videocam
+                : Icons.image;
+            final typeColor = workflowType == 'video'
+                ? Colors.purple
+                : Colors.blue;
+
             return DropdownMenuItem<String>(
               value: workflow['id'],
               child: Row(
                 children: [
-                  Icon(
-                    typeIcon,
-                    size: 16,
-                    color: typeColor,
-                  ),
+                  Icon(typeIcon, size: 16, color: typeColor),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -2879,13 +3511,20 @@ class _SettingsPageState extends State<SettingsPage> {
                       children: [
                         Text(
                           workflow['name'] ?? workflow['id'],
-                          style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+                          style: TextStyle(
+                            color: AppTheme.textColor,
+                            fontSize: 13,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
-                        if (workflow['description'] != null && workflow['description'].toString().isNotEmpty)
+                        if (workflow['description'] != null &&
+                            workflow['description'].toString().isNotEmpty)
                           Text(
                             workflow['description'],
-                            style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+                            style: TextStyle(
+                              color: AppTheme.subTextColor,
+                              fontSize: 11,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                       ],
@@ -2893,7 +3532,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   // ✅ 显示类型标签
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: typeColor.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(4),
@@ -2929,7 +3571,7 @@ class _SettingsPageState extends State<SettingsPage> {
     bool isLoading = false,
   }) {
     final isEnabled = onTap != null && !isLoading;
-    
+
     return MouseRegion(
       cursor: isEnabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: GestureDetector(
@@ -3015,7 +3657,14 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               Icon(Icons.save_rounded, color: Colors.white, size: 18),
               SizedBox(width: 8),
-              Text('保存', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+              Text(
+                '保存',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
         ),
@@ -3033,14 +3682,24 @@ class _SettingsPageState extends State<SettingsPage> {
           decoration: BoxDecoration(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.accentColor.withOpacity(0.5), width: 2),
+            border: Border.all(
+              color: AppTheme.accentColor.withOpacity(0.5),
+              width: 2,
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.wifi_find, color: AppTheme.textColor, size: 18),
               const SizedBox(width: 8),
-              Text('测试', style: TextStyle(color: AppTheme.textColor, fontSize: 14, fontWeight: FontWeight.bold)),
+              Text(
+                '测试',
+                style: TextStyle(
+                  color: AppTheme.textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
         ),
@@ -3071,7 +3730,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _showTestResultDialog(
       title: 'LLM连接测试',
       success: null,
-      message: '正在测试连接...\n\n服务商: $_llmProvider\nBase URL: ${_llmBaseUrlController.text}\nModel: ${_llmModelController.text}',
+      message:
+          '正在测试连接...\n\n服务商: $_llmProvider\nBase URL: ${_llmBaseUrlController.text}\nModel: ${_llmModelController.text}',
     );
 
     final startTime = DateTime.now();
@@ -3080,41 +3740,54 @@ class _SettingsPageState extends State<SettingsPage> {
       // 真实API测试
       final baseUrl = _llmBaseUrlController.text.trim();
       final apiKey = _llmApiKeyController.text.trim();
-      final model = _llmModelController.text.trim().isEmpty ? 'gpt-3.5-turbo' : _llmModelController.text.trim();
+      final model = _llmModelController.text.trim().isEmpty
+          ? 'gpt-3.5-turbo'
+          : _llmModelController.text.trim();
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/chat/completions'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $apiKey',
-        },
-        body: jsonEncode({
-          'model': model,
-          'messages': [
-            {'role': 'user', 'content': '测试连接'}
-          ],
-          'max_tokens': 10,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {'role': 'user', 'content': '测试连接'},
+              ],
+              'max_tokens': 10,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       final elapsed = DateTime.now().difference(startTime);
-      
+
       if (mounted) {
         Navigator.pop(context);
-        
+
         if (response.statusCode == 200) {
           // 连接成功，解析响应（不需要使用 data）
           _showTestResultDialog(
             title: 'LLM连接测试',
             success: true,
-            message: '✅ 连接成功！\n\n服务商: $_llmProvider\nBase URL: $baseUrl\nModel: $model\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+            message:
+                '✅ 连接成功！\n\n服务商: $_llmProvider\nBase URL: $baseUrl\nModel: $model\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
           );
-          _logger.success('LLM连接测试成功', module: '设置', extra: {'provider': _llmProvider, 'elapsed': elapsed.inMilliseconds});
+          _logger.success(
+            'LLM连接测试成功',
+            module: '设置',
+            extra: {
+              'provider': _llmProvider,
+              'elapsed': elapsed.inMilliseconds,
+            },
+          );
         } else {
           _showTestResultDialog(
             title: 'LLM连接测试',
             success: false,
-            message: '❌ 连接失败\n\n状态码: ${response.statusCode}\n错误: ${response.body}',
+            message:
+                '❌ 连接失败\n\n状态码: ${response.statusCode}\n错误: ${response.body}',
           );
         }
       }
@@ -3124,7 +3797,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _showTestResultDialog(
           title: 'LLM连接测试',
           success: false,
-          message: '❌ 测试失败\n\n错误类型: ${e.runtimeType}\n错误信息: $e\n\n请检查：\n1. API Key是否正确\n2. Base URL是否正确\n3. 网络连接是否正常',
+          message:
+              '❌ 测试失败\n\n错误类型: ${e.runtimeType}\n错误信息: $e\n\n请检查：\n1. API Key是否正确\n2. Base URL是否正确\n3. 网络连接是否正常',
         );
       }
       _logger.error('LLM连接测试失败: $e', module: '设置');
@@ -3163,23 +3837,22 @@ class _SettingsPageState extends State<SettingsPage> {
       final apiKey = _imageApiKeyController.text.trim();
 
       // 测试端点可访问性
-      final response = await http.get(
-        Uri.parse(baseUrl),
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(Uri.parse(baseUrl), headers: {'Authorization': 'Bearer $apiKey'})
+          .timeout(const Duration(seconds: 10));
 
       final elapsed = DateTime.now().difference(startTime);
-      
+
       if (mounted) {
         Navigator.pop(context);
-        
-        if (response.statusCode < 500) {  // 任何非服务器错误都算连接成功
+
+        if (response.statusCode < 500) {
+          // 任何非服务器错误都算连接成功
           _showTestResultDialog(
             title: '图片API连接测试',
             success: true,
-            message: '✅ 连接成功！\n\n服务商: $_imageProvider\nBase URL: $baseUrl\nModel: ${_imageModelController.text}\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+            message:
+                '✅ 连接成功！\n\n服务商: $_imageProvider\nBase URL: $baseUrl\nModel: ${_imageModelController.text}\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
           );
           _logger.success('图片API连接测试成功', module: '设置');
         } else {
@@ -3233,23 +3906,21 @@ class _SettingsPageState extends State<SettingsPage> {
       final baseUrl = _videoBaseUrlController.text.trim();
       final apiKey = _videoApiKeyController.text.trim();
 
-      final response = await http.get(
-        Uri.parse(baseUrl),
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(Uri.parse(baseUrl), headers: {'Authorization': 'Bearer $apiKey'})
+          .timeout(const Duration(seconds: 10));
 
       final elapsed = DateTime.now().difference(startTime);
-      
+
       if (mounted) {
         Navigator.pop(context);
-        
+
         if (response.statusCode < 500) {
           _showTestResultDialog(
             title: '视频API连接测试',
             success: true,
-            message: '✅ 连接成功！\n\n服务商: $_videoProvider\nBase URL: $baseUrl\nModel: ${_videoModelController.text}\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+            message:
+                '✅ 连接成功！\n\n服务商: $_videoProvider\nBase URL: $baseUrl\nModel: ${_videoModelController.text}\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
           );
           _logger.success('视频API连接测试成功', module: '设置');
         } else {
@@ -3303,23 +3974,21 @@ class _SettingsPageState extends State<SettingsPage> {
       final baseUrl = _uploadBaseUrlController.text.trim();
       final apiKey = _uploadApiKeyController.text.trim();
 
-      final response = await http.get(
-        Uri.parse(baseUrl),
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(Uri.parse(baseUrl), headers: {'Authorization': 'Bearer $apiKey'})
+          .timeout(const Duration(seconds: 10));
 
       final elapsed = DateTime.now().difference(startTime);
-      
+
       if (mounted) {
         Navigator.pop(context);
-        
+
         if (response.statusCode < 500) {
           _showTestResultDialog(
             title: '上传API连接测试',
             success: true,
-            message: '✅ 连接成功！\n\n服务商: $_uploadProvider\nBase URL: $baseUrl\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+            message:
+                '✅ 连接成功！\n\n服务商: $_uploadProvider\nBase URL: $baseUrl\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
           );
           _logger.success('上传API连接测试成功', module: '设置');
         } else {
@@ -3362,32 +4031,38 @@ class _SettingsPageState extends State<SettingsPage> {
 
     try {
       final serviceUrl = _voiceServiceUrlController.text.trim();
-      
+
       // 测试 IndexTTS 健康检查端点
-      final response = await http.get(
-        Uri.parse('$serviceUrl/'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(Uri.parse('$serviceUrl/'))
+          .timeout(const Duration(seconds: 10));
 
       final elapsed = DateTime.now().difference(startTime);
-      
+
       if (mounted) {
         Navigator.pop(context);
-        
+
         if (response.statusCode == 200) {
           _showTestResultDialog(
             title: 'IndexTTS 连接测试',
             success: true,
-            message: '✅ 连接成功！\n\nIndexTTS 服务运行正常\n服务地址: $serviceUrl\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
+            message:
+                '✅ 连接成功！\n\nIndexTTS 服务运行正常\n服务地址: $serviceUrl\n\n响应时间: ${elapsed.inMilliseconds}ms\n状态码: ${response.statusCode}',
           );
-          _logger.success('IndexTTS 连接测试成功', module: '设置', extra: {
-            'serviceUrl': serviceUrl,
-            'elapsed': elapsed.inMilliseconds,
-          });
+          _logger.success(
+            'IndexTTS 连接测试成功',
+            module: '设置',
+            extra: {
+              'serviceUrl': serviceUrl,
+              'elapsed': elapsed.inMilliseconds,
+            },
+          );
         } else {
           _showTestResultDialog(
             title: 'IndexTTS 连接测试',
             success: false,
-            message: '❌ 服务响应异常\n\n状态码: ${response.statusCode}\n\n请检查 IndexTTS 是否正常运行',
+            message:
+                '❌ 服务响应异常\n\n状态码: ${response.statusCode}\n\n请检查 IndexTTS 是否正常运行',
           );
         }
       }
@@ -3397,7 +4072,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _showTestResultDialog(
           title: 'IndexTTS 连接测试',
           success: false,
-          message: '❌ 连接失败\n\n错误: $e\n\n请检查：\n1. IndexTTS 服务是否已启动\n2. 服务地址是否正确\n3. 防火墙是否阻止连接',
+          message:
+              '❌ 连接失败\n\n错误: $e\n\n请检查：\n1. IndexTTS 服务是否已启动\n2. 服务地址是否正确\n3. 防火墙是否阻止连接',
         );
       }
       _logger.error('IndexTTS 连接测试失败: $e', module: '设置');
@@ -3406,12 +4082,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _showTestResultDialog({
     required String title,
-    required bool? success,  // null表示测试中
+    required bool? success, // null表示测试中
     required String message,
   }) {
     showDialog(
       context: context,
-      barrierDismissible: success != null,  // 测试中不可关闭
+      barrierDismissible: success != null, // 测试中不可关闭
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E20),
         title: Text(title, style: const TextStyle(color: Colors.white)),
@@ -3430,11 +4106,11 @@ class _SettingsPageState extends State<SettingsPage> {
             Text(
               message,
               style: TextStyle(
-                color: success == null 
+                color: success == null
                     ? const Color(0xFF888888)
-                    : success 
-                        ? Colors.green 
-                        : Colors.red,
+                    : success
+                    ? Colors.green
+                    : Colors.red,
                 fontSize: 14,
               ),
             ),
@@ -3444,7 +4120,10 @@ class _SettingsPageState extends State<SettingsPage> {
             ? [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('关闭', style: TextStyle(color: Color(0xFF888888))),
+                  child: const Text(
+                    '关闭',
+                    style: TextStyle(color: Color(0xFF888888)),
+                  ),
                 ),
               ]
             : null,
@@ -3452,7 +4131,10 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildFormHeader(String title, {IconData icon = Icons.settings_input_component_rounded}) {
+  Widget _buildFormHeader(
+    String title, {
+    IconData icon = Icons.settings_input_component_rounded,
+  }) {
     return Row(
       children: [
         Container(
@@ -3466,7 +4148,11 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(width: 16),
         Text(
           title.contains('设置') ? title : '$title配置中心',
-          style: TextStyle(color: AppTheme.textColor, fontSize: 20, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: AppTheme.textColor,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ],
     );
@@ -3491,7 +4177,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'hailuo': 'https://hailuoai.com',
       'google_flow': 'https://labs.google/fx/zh/tools/flow',
     };
-    
+
     // ✅ 网页服务商显示名称
     final Map<String, String> providerDisplayNames = {
       'vidu': 'Vidu - AI 视频创作',
@@ -3500,10 +4186,10 @@ class _SettingsPageState extends State<SettingsPage> {
       'hailuo': '海螺AI - 视频创作',
       'google_flow': 'Google Flow - AI 图片生成',
     };
-    
+
     final websiteUrl = providerUrls[provider];
     final displayName = providerDisplayNames[provider];
-    
+
     // 获取对应服务商的配置
     Map<String, dynamic>? config;
     switch (provider) {
@@ -3533,7 +4219,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     // 获取工具列表
     final tools = (config['tools']?[modelType] as List<dynamic>?) ?? [];
-    
+
     // ✅ 只有一个工具时，自动选中并通知外部
     final bool singleTool = tools.length == 1;
     String? effectiveTool = selectedTool;
@@ -3545,7 +4231,7 @@ class _SettingsPageState extends State<SettingsPage> {
         onToolChanged(autoTool);
       });
     }
-    
+
     // 获取当前选择工具的模型列表
     List<dynamic> models = [];
     if (effectiveTool != null) {
@@ -3620,15 +4306,26 @@ class _SettingsPageState extends State<SettingsPage> {
                             ),
                           );
                         }
-                        
+
                         // ✅ 直接启动系统 Edge/Chrome 浏览器
                         // 使用独立 profile 目录，登录态自动保存
                         // ✅ 使用 %APPDATA% 路径，与 Python 后端共享同一个 profile
-                        final appData = Platform.environment['APPDATA'] ?? 
-                            path.join(Platform.environment['USERPROFILE'] ?? '', 'AppData', 'Roaming');
-                        final profileDir = path.join(appData, 'com.example', 'xinghe_new', 'user_data', '${provider}_cdp_profile');
+                        final appData =
+                            Platform.environment['APPDATA'] ??
+                            path.join(
+                              Platform.environment['USERPROFILE'] ?? '',
+                              'AppData',
+                              'Roaming',
+                            );
+                        final profileDir = path.join(
+                          appData,
+                          'com.example',
+                          'xinghe_new',
+                          'user_data',
+                          '${provider}_cdp_profile',
+                        );
                         print('📁 浏览器 profile 目录: $profileDir');
-                        
+
                         // CDP 端口映射（不同平台不同端口，避免冲突）
                         final Map<String, String> portMap = {
                           'jimeng': '9222',
@@ -3638,7 +4335,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           'google_flow': '9226',
                         };
                         final cdpPort = portMap[provider] ?? '9222';
-                        
+
                         // 检测系统浏览器路径（Edge 优先）
                         String? browserExe;
                         final edgePaths = [
@@ -3649,39 +4346,35 @@ class _SettingsPageState extends State<SettingsPage> {
                           r'C:\Program Files\Google\Chrome\Application\chrome.exe',
                           r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
                         ];
-                        
+
                         for (final path in [...edgePaths, ...chromePaths]) {
                           if (await File(path).exists()) {
                             browserExe = path;
                             break;
                           }
                         }
-                        
+
                         if (browserExe == null) {
                           throw Exception('未找到 Edge 或 Chrome 浏览器');
                         }
-                        
+
                         // 确保 profile 目录存在
                         final profileDirObj = Directory(profileDir);
                         if (!await profileDirObj.exists()) {
                           await profileDirObj.create(recursive: true);
                         }
-                        
+
                         // 直接启动浏览器，带 CDP 端口和独立 profile
-                        await Process.start(
-                          browserExe,
-                          [
-                            '--remote-debugging-port=$cdpPort',
-                            '--user-data-dir=$profileDir',
-                            '--no-first-run',
-                            '--no-default-browser-check',
-                            websiteUrl,  // 直接打开目标网址
-                          ],
-                          mode: ProcessStartMode.detached,
-                        );
-                        
+                        await Process.start(browserExe, [
+                          '--remote-debugging-port=$cdpPort',
+                          '--user-data-dir=$profileDir',
+                          '--no-first-run',
+                          '--no-default-browser-check',
+                          websiteUrl, // 直接打开目标网址
+                        ], mode: ProcessStartMode.detached);
+
                         print('✅ 浏览器已启动: $browserExe → $websiteUrl');
-                        
+
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -3705,7 +4398,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       }
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
                           colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
@@ -3746,7 +4442,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 24),
         ],
-        
+
         // 工具选择（只有多个工具时才显示下拉）
         if (!singleTool) ...[
           _buildFieldLabel('选择工具'),
@@ -3765,21 +4461,37 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: tools.any((t) => t['id'] == selectedTool) ? selectedTool : null,
-                hint: Text('请选择工具', style: TextStyle(color: AppTheme.subTextColor)),
+                value: tools.any((t) => t['id'] == selectedTool)
+                    ? selectedTool
+                    : null,
+                hint: Text(
+                  '请选择工具',
+                  style: TextStyle(color: AppTheme.subTextColor),
+                ),
                 isExpanded: true,
                 dropdownColor: AppTheme.surfaceBackground,
-                icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+                icon: Icon(
+                  Icons.unfold_more_rounded,
+                  color: AppTheme.subTextColor,
+                  size: 20,
+                ),
                 items: tools.map<DropdownMenuItem<String>>((tool) {
                   return DropdownMenuItem<String>(
                     value: tool['id'],
                     child: Row(
                       children: [
-                        Icon(tool['icon'] as IconData, size: 16, color: AppTheme.accentColor),
+                        Icon(
+                          tool['icon'] as IconData,
+                          size: 16,
+                          color: AppTheme.accentColor,
+                        ),
                         const SizedBox(width: 12),
                         Text(
                           tool['name'],
-                          style: TextStyle(color: AppTheme.textColor, fontSize: 14),
+                          style: TextStyle(
+                            color: AppTheme.textColor,
+                            fontSize: 14,
+                          ),
                         ),
                       ],
                     ),
@@ -3809,7 +4521,9 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 Icon(
                   Icons.water_drop_outlined,
-                  color: _viduWatermarkFree ? const Color(0xFF2AF598) : AppTheme.subTextColor,
+                  color: _viduWatermarkFree
+                      ? const Color(0xFF2AF598)
+                      : AppTheme.subTextColor,
                   size: 20,
                 ),
                 const SizedBox(width: 12),
@@ -3867,11 +4581,20 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: models.any((m) => m['id'] == selectedModel) ? selectedModel : null,
-                hint: Text('请选择模型', style: TextStyle(color: AppTheme.subTextColor)),
+                value: models.any((m) => m['id'] == selectedModel)
+                    ? selectedModel
+                    : null,
+                hint: Text(
+                  '请选择模型',
+                  style: TextStyle(color: AppTheme.subTextColor),
+                ),
                 isExpanded: true,
                 dropdownColor: AppTheme.surfaceBackground,
-                icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+                icon: Icon(
+                  Icons.unfold_more_rounded,
+                  color: AppTheme.subTextColor,
+                  size: 20,
+                ),
                 items: models.map<DropdownMenuItem<String>>((model) {
                   return DropdownMenuItem<String>(
                     value: model['id'],
@@ -3887,7 +4610,8 @@ class _SettingsPageState extends State<SettingsPage> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (model['desc'] != null && model['desc'].toString().isNotEmpty)
+                        if (model['desc'] != null &&
+                            model['desc'].toString().isNotEmpty)
                           Text(
                             model['desc'],
                             style: TextStyle(
@@ -3928,11 +4652,20 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: modes.any((m) => m['id'] == selectedMode) ? selectedMode : null,
-                hint: Text('请选择方式', style: TextStyle(color: AppTheme.subTextColor)),
+                value: modes.any((m) => m['id'] == selectedMode)
+                    ? selectedMode
+                    : null,
+                hint: Text(
+                  '请选择方式',
+                  style: TextStyle(color: AppTheme.subTextColor),
+                ),
                 isExpanded: true,
                 dropdownColor: AppTheme.surfaceBackground,
-                icon: Icon(Icons.unfold_more_rounded, color: AppTheme.subTextColor, size: 20),
+                icon: Icon(
+                  Icons.unfold_more_rounded,
+                  color: AppTheme.subTextColor,
+                  size: 20,
+                ),
                 items: modes.map<DropdownMenuItem<String>>((mode) {
                   return DropdownMenuItem<String>(
                     value: mode['id'],
@@ -3948,7 +4681,8 @@ class _SettingsPageState extends State<SettingsPage> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (mode['desc'] != null && mode['desc'].toString().isNotEmpty)
+                        if (mode['desc'] != null &&
+                            mode['desc'].toString().isNotEmpty)
                           Text(
                             mode['desc'],
                             style: TextStyle(
@@ -3984,7 +4718,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildFieldLabel(String label) {
-    return Text(label, style: TextStyle(color: AppTheme.textColor.withOpacity(0.7), fontSize: 14, fontWeight: FontWeight.w500));
+    return Text(
+      label,
+      style: TextStyle(
+        color: AppTheme.textColor.withOpacity(0.7),
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+      ),
+    );
   }
 
   Widget _buildIconButton(IconData icon, String label, VoidCallback onTap) {
@@ -3996,7 +4737,10 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Icon(icon, color: AppTheme.subTextColor, size: 18),
             const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: AppTheme.subTextColor, fontSize: 14)),
+            Text(
+              label,
+              style: TextStyle(color: AppTheme.subTextColor, fontSize: 14),
+            ),
           ],
         ),
       ),
@@ -4008,7 +4752,11 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.construction_rounded, color: AppTheme.subTextColor, size: 64),
+          Icon(
+            Icons.construction_rounded,
+            color: AppTheme.subTextColor,
+            size: 64,
+          ),
           const SizedBox(height: 16),
           Text(
             '${_mainTabs[_mainTabIndex]} 正在深度构建中...',

@@ -4,16 +4,26 @@ import 'canvas_agent_service.dart';
 /// Agent 聊天面板 — 嵌入画布右侧的设计助手对话界面
 class AgentChatPanel extends StatefulWidget {
   final Function(DesignPlan plan) onPlanReady;
+  final Future<String> Function(AgentActionBundle bundle) onActionBundleReady;
+  final void Function(AgentActionBundle bundle)? onActionBundlePreview;
+  final String? currentImageProvider;
   final String? currentImageModel;
+  final String? currentVideoProvider;
   final String? currentVideoModel;
+  final String? canvasContextSummary;
   final VoidCallback onClose;
 
   const AgentChatPanel({
     super.key,
     required this.onPlanReady,
+    required this.onActionBundleReady,
+    this.onActionBundlePreview,
     required this.onClose,
+    this.currentImageProvider,
     this.currentImageModel,
+    this.currentVideoProvider,
     this.currentVideoModel,
+    this.canvasContextSummary,
   });
 
   @override
@@ -39,18 +49,36 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
 
   // Skills 模板
   static const List<_SkillTemplate> _skills = [
-    _SkillTemplate('社媒轮播图', Icons.view_carousel_outlined,
-        '帮我设计一组社交媒体轮播图，主题自由发挥，包含封面和3-4页内容'),
-    _SkillTemplate('社交媒体', Icons.phone_android_outlined,
-        '帮我设计一张社交媒体宣传图，适合 Instagram/小红书 的竖版比例'),
-    _SkillTemplate('Logo与品牌', Icons.palette_outlined,
-        '帮我设计一套品牌视觉素材，包含 Logo 文字和品牌配色展示'),
-    _SkillTemplate('分镜故事板', Icons.movie_creation_outlined,
-        '帮我设计一组分镜故事板，4-6 个画面，用于短视频脚本可视化'),
-    _SkillTemplate('营销宣传册', Icons.menu_book_outlined,
-        '帮我设计一份产品营销宣传册，包含封面、卖点展示和产品细节'),
-    _SkillTemplate('产品套图', Icons.inventory_2_outlined,
-        '帮我设计一组电商产品展示套图，包含主图、细节图和场景图'),
+    _SkillTemplate(
+      '社媒轮播图',
+      Icons.view_carousel_outlined,
+      '帮我设计一组社交媒体轮播图，主题自由发挥，包含封面和3-4页内容',
+    ),
+    _SkillTemplate(
+      '社交媒体',
+      Icons.phone_android_outlined,
+      '帮我设计一张社交媒体宣传图，适合 Instagram/小红书 的竖版比例',
+    ),
+    _SkillTemplate(
+      'Logo与品牌',
+      Icons.palette_outlined,
+      '帮我设计一套品牌视觉素材，包含 Logo 文字和品牌配色展示',
+    ),
+    _SkillTemplate(
+      '分镜故事板',
+      Icons.movie_creation_outlined,
+      '帮我设计一组分镜故事板，4-6 个画面，用于短视频脚本可视化',
+    ),
+    _SkillTemplate(
+      '营销宣传册',
+      Icons.menu_book_outlined,
+      '帮我设计一份产品营销宣传册，包含封面、卖点展示和产品细节',
+    ),
+    _SkillTemplate(
+      '产品套图',
+      Icons.inventory_2_outlined,
+      '帮我设计一组电商产品展示套图，包含主图、细节图和场景图',
+    ),
   ];
 
   @override
@@ -61,7 +89,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
       AgentMessage(
         role: 'assistant',
         content:
-            '你好！我是 AI 设计助手。\n\n你可以和我聊天讨论设计想法，也可以让我直接生成设计方案。\n\n试试：\n• "帮我设计一组咖啡店品牌素材"\n• "你觉得科技产品海报用什么配色好"\n• "做一个运动鞋品牌展示页"',
+            '你好！我是 AI 设计助手。\n\n你可以和我聊天讨论设计想法，也可以直接让我在画布里生成图片、视频和文本。\n\n试试：\n• "帮我在右侧补一张室内氛围图"\n• "把这个画面的标题改得更高级一点"\n• "你觉得科技产品海报用什么配色好"',
       ),
     );
   }
@@ -90,14 +118,60 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     final response = await _agentService.chat(
       _messages,
       text,
+      imageProvider: widget.currentImageProvider,
       imageModel: widget.currentImageModel,
+      videoProvider: widget.currentVideoProvider,
       videoModel: widget.currentVideoModel,
+      canvasContext: widget.canvasContextSummary,
     );
 
     setState(() {
       _messages.add(response);
       _isLoading = false;
     });
+
+    if (response.actionBundle != null) {
+      widget.onActionBundlePreview?.call(response.actionBundle!);
+    }
+
+    _scrollToBottom();
+
+    if (response.actionBundle != null &&
+        response.actionBundle!.hasExecutableActions &&
+        !response.actionBundle!.requiresConfirmation) {
+      await _applyActionsForMessage(response);
+    }
+  }
+
+  Future<void> _applyActionsForMessage(AgentMessage message) async {
+    final bundle = message.actionBundle;
+    if (bundle == null || !bundle.hasExecutableActions) return;
+
+    final index = _messages.indexOf(message);
+    if (index == -1) return;
+
+    setState(() {
+      _messages[index] = _messages[index].copyWith(actionStatus: '正在应用到画布...');
+    });
+
+    try {
+      final summary = await widget.onActionBundleReady(bundle);
+      if (!mounted) return;
+      setState(() {
+        _messages[index] = _messages[index].copyWith(
+          actionApplied: true,
+          actionStatus: summary,
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages[index] = _messages[index].copyWith(
+          actionApplied: false,
+          actionStatus: '执行失败：$e',
+        );
+      });
+    }
 
     _scrollToBottom();
   }
@@ -227,7 +301,10 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
   }
 
   Widget _buildMessageList() {
-    final showSkills = _messages.length == 1 && _messages.first.role == 'assistant' && !_isLoading;
+    final showSkills =
+        _messages.length == 1 &&
+        _messages.first.role == 'assistant' &&
+        !_isLoading;
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -386,8 +463,11 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
                     ),
                   ),
                 ),
-                // 如果有设计方案，显示"应用方案"按钮
-                if (message.plan != null) ...[
+                if (message.actionBundle != null &&
+                    message.actionBundle!.actions.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _buildActionBundleCard(message),
+                ] else if (message.plan != null) ...[
                   const SizedBox(height: 8),
                   _buildPlanActions(message.plan!),
                 ],
@@ -479,6 +559,141 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionBundleCard(AgentMessage message) {
+    final bundle = message.actionBundle!;
+    final generateImageCount = bundle.actions
+        .where((a) => a.type == 'generate_image')
+        .length;
+    final generateVideoCount = bundle.actions
+        .where((a) => a.type == 'generate_video')
+        .length;
+    final textCount = bundle.actions
+        .where(
+          (a) => a.type == 'create_text_node' || a.type == 'create_note_node',
+        )
+        .length;
+    final editCount = bundle.actions
+        .where((a) => a.type == 'update_node' || a.type == 'move_node')
+        .length;
+    final deleteCount = bundle.actions
+        .where((a) => a.type == 'delete_node')
+        .length;
+    final suggestionCount = bundle.actions
+        .where((a) => a.type == 'layout_suggestion' || a.type == 'suggestion')
+        .length;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _accentBlue.withValues(alpha: 0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: _accentBlue.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              if (generateImageCount > 0)
+                _buildTag(Icons.image_outlined, '$generateImageCount 张图片'),
+              if (generateVideoCount > 0)
+                _buildTag(Icons.videocam_outlined, '$generateVideoCount 个视频'),
+              if (textCount > 0) _buildTag(Icons.text_fields, '$textCount 个文本'),
+              if (editCount > 0)
+                _buildTag(Icons.open_with_rounded, '$editCount 个调整'),
+              if (deleteCount > 0)
+                _buildTag(Icons.delete_outline, '$deleteCount 个删除'),
+              if (suggestionCount > 0)
+                _buildTag(
+                  Icons.tips_and_updates_outlined,
+                  '$suggestionCount 条建议',
+                ),
+            ],
+          ),
+          if (message.actionStatus != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              message.actionStatus!,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+          ],
+          if (bundle.meta.reason?.isNotEmpty == true) ...[
+            const SizedBox(height: 6),
+            Text(
+              '说明：${bundle.meta.reason}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+          ],
+          if (bundle.hasExecutableActions) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: bundle.requiresConfirmation
+                      ? null
+                      : const LinearGradient(
+                          colors: [_accentCyan, _accentBlue],
+                        ),
+                  color: bundle.requiresConfirmation
+                      ? const Color(0xFF334155)
+                      : null,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _accentBlue.withValues(alpha: 0.24),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: ElevatedButton.icon(
+                  onPressed: () => _applyActionsForMessage(message),
+                  icon: Icon(
+                    message.actionApplied
+                        ? Icons.refresh_rounded
+                        : Icons.auto_fix_high,
+                    size: 16,
+                  ),
+                  label: Text(
+                    message.actionApplied
+                        ? '再次执行'
+                        : bundle.requiresConfirmation
+                        ? '确认并应用'
+                        : '应用到画布',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

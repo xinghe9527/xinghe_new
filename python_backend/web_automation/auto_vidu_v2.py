@@ -818,18 +818,55 @@ class ViduAutomation:
                 'div[contenteditable="true"]:visible',
             ]
             editor = None
-            for selector in editor_selectors:
-                try:
-                    el = self.page.locator(selector).first
-                    if el.is_visible(timeout=3000):
-                        editor = el
-                        break
-                except:
-                    continue
+            # 多次重试查找编辑器（Debug 模式下页面加载较慢）
+            for attempt in range(3):
+                for selector in editor_selectors:
+                    try:
+                        el = self.page.locator(selector).first
+                        if el.is_visible(timeout=5000):
+                            editor = el
+                            print(f"   ✅ 找到编辑器 (selector={selector}, attempt={attempt+1})")
+                            break
+                    except:
+                        continue
+                if editor:
+                    break
+                print(f"   ⚠️  第 {attempt+1} 次未找到编辑器，等待 2s 后重试...", flush=True)
+                time.sleep(2)
             
             if not editor:
-                print("   ❌ 未找到 ProseMirror 编辑器")
-                return False
+                # 最后尝试：用 JS 直接查找任何 contenteditable 元素
+                print("   ⚠️  Playwright locator 未找到编辑器，尝试 JS 查找...", flush=True)
+                js_found = self.page.evaluate("""() => {
+                    const selectors = [
+                        'div.ProseMirror[contenteditable="true"]',
+                        'div.tiptap[contenteditable="true"]',
+                        'div[contenteditable="true"]',
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const rect = el.getBoundingClientRect();
+                            return { found: true, selector: sel, width: rect.width, height: rect.height };
+                        }
+                    }
+                    return { found: false };
+                }""")
+                if js_found and js_found.get('found'):
+                    matched_sel = js_found['selector']
+                    print(f"   ✅ JS 找到编辑器: {matched_sel} ({js_found.get('width')}x{js_found.get('height')})", flush=True)
+                    # 用不带 :visible 的选择器重新获取
+                    editor = self.page.locator(matched_sel).first
+                else:
+                    print("   ❌ 未找到 ProseMirror 编辑器（所有方法均失败）")
+                    # 保存调试截图
+                    try:
+                        debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'debug_no_editor_{int(time.time())}.png')
+                        self.page.screenshot(path=debug_path)
+                        print(f"   📸 调试截图已保存: {debug_path}", flush=True)
+                    except:
+                        pass
+                    return False
             
             editor.click(force=True)
             time.sleep(0.5)

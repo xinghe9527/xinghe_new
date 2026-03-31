@@ -63,19 +63,214 @@ class DesignPlan {
   }
 }
 
+/// 画布助手动作元信息
+class AgentActionMeta {
+  final bool needConfirm;
+  final double? confidence;
+  final String? reason;
+
+  const AgentActionMeta({
+    this.needConfirm = false,
+    this.confidence,
+    this.reason,
+  });
+
+  factory AgentActionMeta.fromJson(Map<String, dynamic> json) {
+    final confidence = json['confidence'];
+    return AgentActionMeta(
+      needConfirm: json['need_confirm'] as bool? ?? false,
+      confidence: confidence is num ? confidence.toDouble() : null,
+      reason: json['reason'] as String?,
+    );
+  }
+}
+
+/// 单个画布动作
+class AgentAction {
+  final String type;
+  final String target;
+  final String? nodeId;
+  final Map<String, dynamic> payload;
+  final Map<String, dynamic> position;
+  final Map<String, dynamic> options;
+
+  const AgentAction({
+    required this.type,
+    this.target = 'canvas',
+    this.nodeId,
+    this.payload = const {},
+    this.position = const {},
+    this.options = const {},
+  });
+
+  factory AgentAction.fromJson(Map<String, dynamic> json) {
+    return AgentAction(
+      type: json['type'] as String? ?? 'suggestion',
+      target: json['target'] as String? ?? 'canvas',
+      nodeId: json['nodeId'] as String?,
+      payload: Map<String, dynamic>.from(json['payload'] as Map? ?? {}),
+      position: Map<String, dynamic>.from(json['position'] as Map? ?? {}),
+      options: Map<String, dynamic>.from(json['options'] as Map? ?? {}),
+    );
+  }
+
+  bool get isDangerous => const {
+    'delete_node',
+    'clear_canvas',
+    'replace_node_content',
+  }.contains(type);
+
+  bool get isExecutable => const {
+    'generate_image',
+    'generate_video',
+    'create_text_node',
+    'create_note_node',
+    'update_node',
+    'move_node',
+    'delete_node',
+  }.contains(type);
+}
+
+/// 画布助手的结构化返回
+class AgentActionBundle {
+  final String reply;
+  final String intent;
+  final List<AgentAction> actions;
+  final AgentActionMeta meta;
+
+  const AgentActionBundle({
+    required this.reply,
+    required this.intent,
+    this.actions = const [],
+    this.meta = const AgentActionMeta(),
+  });
+
+  factory AgentActionBundle.fromJson(Map<String, dynamic> json) {
+    final actionsJson = json['actions'] as List? ?? const [];
+    return AgentActionBundle(
+      reply: (json['reply'] as String?)?.trim().isNotEmpty == true
+          ? (json['reply'] as String).trim()
+          : ((json['summary'] as String?)?.trim().isNotEmpty == true
+                ? (json['summary'] as String).trim()
+                : '我已经整理好了下一步操作。'),
+      intent: json['intent'] as String? ?? 'chat',
+      actions: actionsJson
+          .map((e) => AgentAction.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+      meta: AgentActionMeta.fromJson(
+        Map<String, dynamic>.from(json['meta'] as Map? ?? {}),
+      ),
+    );
+  }
+
+  factory AgentActionBundle.fromDesignPlan(
+    DesignPlan plan, {
+    String? imageProvider,
+    String? imageModel,
+    String? videoProvider,
+    String? videoModel,
+  }) {
+    final actions = plan.elements.map((element) {
+      switch (element.type) {
+        case 'video':
+          return AgentAction(
+            type: 'generate_video',
+            payload: {
+              'prompt': element.prompt,
+              if (videoProvider != null) 'provider': videoProvider,
+              if (videoModel != null) 'model': videoModel,
+              if (element.ratio != null) 'ratio': element.ratio,
+              if (element.duration != null) 'duration': element.duration,
+            },
+            position: {'x': element.x, 'y': element.y},
+            options: {'width': element.width, 'height': element.height},
+          );
+        case 'text':
+          return AgentAction(
+            type: 'create_text_node',
+            payload: {'text': element.prompt},
+            position: {'x': element.x, 'y': element.y},
+            options: {'width': element.width, 'height': element.height},
+          );
+        default:
+          return AgentAction(
+            type: 'generate_image',
+            payload: {
+              'prompt': element.prompt,
+              if (imageProvider != null) 'provider': imageProvider,
+              if (imageModel != null) 'model': imageModel,
+              if (element.ratio != null) 'ratio': element.ratio,
+            },
+            position: {'x': element.x, 'y': element.y},
+            options: {'width': element.width, 'height': element.height},
+          );
+      }
+    }).toList();
+
+    return AgentActionBundle(
+      reply: plan.summary.isNotEmpty ? plan.summary : '我整理了一套画布方案。',
+      intent: 'mixed',
+      actions: actions,
+      meta: AgentActionMeta(needConfirm: actions.length > 4, confidence: 0.8),
+    );
+  }
+
+  bool get hasActions => actions.isNotEmpty;
+
+  bool get hasExecutableActions => actions.any((action) => action.isExecutable);
+
+  bool get requiresConfirmation =>
+      meta.needConfirm ||
+      actions.any((action) => action.isDangerous) ||
+      actions.length > 4;
+}
+
 /// 聊天消息
 class AgentMessage {
   final String role; // 'user' | 'assistant' | 'system'
   final String content;
   final DesignPlan? plan; // 如果是设计方案回复，附带方案数据
+  final AgentActionBundle? actionBundle; // 如果有结构化动作，附带动作数据
+  final bool actionApplied; // 动作是否已执行
+  final String? actionStatus; // 动作执行状态
   final DateTime timestamp;
 
   AgentMessage({
     required this.role,
     required this.content,
     this.plan,
+    this.actionBundle,
+    this.actionApplied = false,
+    this.actionStatus,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
+
+  AgentMessage copyWith({
+    String? role,
+    String? content,
+    DesignPlan? plan,
+    AgentActionBundle? actionBundle,
+    bool? actionApplied,
+    String? actionStatus,
+    DateTime? timestamp,
+  }) {
+    return AgentMessage(
+      role: role ?? this.role,
+      content: content ?? this.content,
+      plan: plan ?? this.plan,
+      actionBundle: actionBundle ?? this.actionBundle,
+      actionApplied: actionApplied ?? this.actionApplied,
+      actionStatus: actionStatus ?? this.actionStatus,
+      timestamp: timestamp ?? this.timestamp,
+    );
+  }
+}
+
+class _ParsedAgentResponse {
+  final DesignPlan? plan;
+  final AgentActionBundle? actionBundle;
+
+  const _ParsedAgentResponse({this.plan, this.actionBundle});
 }
 
 /// 画布 Agent 服务 — 通过 LLM 分析用户意图并生成设计方案
@@ -84,57 +279,65 @@ class CanvasAgentService {
   final SecureStorageManager _storage = SecureStorageManager();
 
   /// 系统提示词 — 定义 Agent 的角色和输出格式
-  static const String _systemPrompt = '''你是一个专业的 AI 设计助手，嵌入在一个创意画布工具中。你有两种工作模式：
+  static const String _systemPrompt = '''你是一个嵌入在创意画布工具中的 AI 设计助手。你的目标有两个：
+1. 像正常助手一样和用户自然聊天、讨论创意、分析画面。
+2. 当用户明确要求执行画布操作时，返回结构化动作，让系统自动在画布上执行。
 
-【对话模式】当用户在讨论设计思路、询问建议、聊天或提出非设计执行类的问题时，用自然的中文对话回复。你可以：
-- 讨论设计理念、配色方案、排版思路
-- 回答关于设计原则、品牌策略的问题
-- 提供创意灵感和建议
-- 帮用户细化和完善设计想法
-- 回复日常对话和问题
+你应该优先理解用户意图，而不是生硬地只返回指令。无论是否执行动作，都要给用户一段自然中文回复。
 
-【设计模式】当用户明确要求你「设计」「生成」「创建」「做一个」等执行类操作时，生成 JSON 设计方案。方案格式如下：
+请优先返回一个 JSON 对象，格式如下：
 {
-  "summary": "方案描述（中文）",
-  "style": "整体风格描述（中文）",
-  "elements": [
+  "reply": "给用户看的自然中文回复",
+  "intent": "chat | generate_image | generate_video | edit_canvas | mixed",
+  "actions": [
     {
-      "type": "image",
-      "prompt": "一张专业的跑鞋产品照片，纯白背景，影棚灯光，4K画质，超写实风格，细节清晰可见",
-      "x": 100, "y": 100, "width": 400, "height": 400, "ratio": "1:1"
-    },
-    {
-      "type": "text",
-      "prompt": "产品标题文字内容",
-      "x": 550, "y": 100, "width": 300, "height": 60
-    },
-    {
-      "type": "video",
-      "prompt": "电影感慢动作视频，一个跑步者穿着这双鞋在运动，动态光影效果，运动场景，充满力量感",
-      "x": 100, "y": 550, "width": 640, "height": 360, "ratio": "16:9", "duration": "5s"
+      "type": "generate_image | generate_video | create_text_node | create_note_node | update_node | move_node | delete_node | layout_suggestion | suggestion",
+      "target": "canvas | node",
+      "nodeId": "可选，修改或删除已有节点时填写",
+      "payload": {},
+      "position": {"x": 0, "y": 0},
+      "options": {}
     }
-  ]
+  ],
+  "meta": {
+    "need_confirm": false,
+    "confidence": 0.0,
+    "reason": "可选，说明为什么这样做"
+  }
 }
 
-设计模式规则：
-- 图片和视频的 prompt 必须是中文，高质量、详细的 AI 生成提示词
-- 文本节点的 prompt 是要显示的中文文字内容
-- 坐标系：左上角为(0,0)，x轴向右，y轴向下
-- 合理安排元素位置，避免重叠，保持美观的间距(至少30px间隔)
-- 图片建议尺寸：300-600px，视频建议尺寸：480-800px
-- 支持的比例：1:1, 16:9, 9:16, 4:3, 3:4
-- 视频时长：5s, 8s, 10s, 15s
-- 每个方案最多生成8个元素
-- 生成设计方案时只回复 JSON，不要添加任何其他文字
+动作规则：
+- 如果只是聊天、分析、建议、讨论，不需要执行动作，actions 必须返回 []。
+- generate_image：payload 至少包含 prompt，可选 provider/model/ratio/count/referenceImages。
+- generate_video：payload 至少包含 prompt，可选 provider/model/ratio/duration/referenceImages。
+- create_text_node：payload 至少包含 text，可选 fontSize/color/bold/italic/underline。
+- create_note_node：用于备注、便签、说明。
+- update_node：必须提供 nodeId；payload 可包含 text/prompt/provider/model/ratio/duration/referenceImages/changes 等。
+- move_node：必须提供 nodeId；position 必须包含 x/y。
+- delete_node：必须提供 nodeId，并且 meta.need_confirm 必须为 true。
+- layout_suggestion / suggestion：只作为建议，不自动执行。
 
-如何判断模式：用户说"帮我设计一个海报"→设计模式；用户说"你觉得蓝色和绿色哪个更适合科技感"→对话模式；用户说"做一组咖啡店宣传素材"→设计模式；用户说"这个方案能不能加点视频"→对话模式（讨论修改方向）。''';
+提示词与内容规则：
+- 图片和视频的 prompt 必须写成高质量、详细、适合 AI 生成的中文提示词。
+- 文本节点的 text 必须是最终要显示在画布上的中文内容。
+- 如果用户没有指定 provider/model，优先使用当前系统提供的配置，不要随意编造不存在的模型。
+- 如果用户想修改或删除现有元素，优先根据提供的 nodeId 和画布上下文来操作。
+- 如果无法确定应该操作哪个节点，就不要伪造 nodeId，改为给出建议，并把 need_confirm 设为 true。
+
+容错规则：
+- 如果你无法可靠地生成结构化动作，也至少返回自然中文回复。
+- 不要输出 markdown，不要输出代码块，不要在 JSON 外再包任何额外说明。
+- 如果只是普通闲聊，reply 正常聊天即可，actions 返回 []。''';
 
   /// 发送消息给 Agent，获取设计方案
   Future<AgentMessage> chat(
     List<AgentMessage> history,
     String userMessage, {
+    String? imageProvider,
     String? imageModel,
+    String? videoProvider,
     String? videoModel,
+    String? canvasContext,
   }) async {
     try {
       // 获取 LLM 服务商配置
@@ -164,9 +367,24 @@ class CanvasAgentService {
 
       // 添加当前用户消息，附带可用模型信息
       String enhancedMessage = userMessage;
-      if (imageModel != null || videoModel != null) {
-        enhancedMessage +=
-            '\n\n[可用模型信息] 图片模型: ${imageModel ?? "默认"}, 视频模型: ${videoModel ?? "默认"}';
+      final contextBlocks = <String>[];
+      if (imageProvider != null ||
+          imageModel != null ||
+          videoProvider != null ||
+          videoModel != null) {
+        contextBlocks.add(
+          '[当前系统配置]\n'
+          '图片服务商: ${imageProvider ?? "默认"}\n'
+          '图片模型: ${imageModel ?? "默认"}\n'
+          '视频服务商: ${videoProvider ?? "默认"}\n'
+          '视频模型: ${videoModel ?? "默认"}',
+        );
+      }
+      if (canvasContext != null && canvasContext.isNotEmpty) {
+        contextBlocks.add('[当前画布上下文]\n$canvasContext');
+      }
+      if (contextBlocks.isNotEmpty) {
+        enhancedMessage += '\n\n${contextBlocks.join('\n\n')}';
       }
       messages.add({'role': 'user', 'content': enhancedMessage});
 
@@ -189,17 +407,31 @@ class CanvasAgentService {
         );
       }
 
-      final text = response.data!.text.trim();
+      final rawText = response.data!.text.trim();
+      final text = _normalizeResponseText(rawText);
       debugPrint('🤖 [CanvasAgent] 收到回复 (${text.length} 字符)');
 
-      // 尝试解析为设计方案
-      final plan = _tryParsePlan(text);
+      // 优先解析结构化响应；失败则退回普通聊天
+      final parsed = _tryParseStructuredResponse(
+        text,
+        imageProvider: imageProvider,
+        imageModel: imageModel,
+        videoProvider: videoProvider,
+        videoModel: videoModel,
+      );
 
-      if (plan != null) {
+      if (parsed != null) {
+        final bundle = parsed.actionBundle;
+        final plan = parsed.plan;
         return AgentMessage(
           role: 'assistant',
-          content: plan.summary,
+          content: bundle?.reply.isNotEmpty == true
+              ? bundle!.reply
+              : plan?.summary.isNotEmpty == true
+              ? plan!.summary
+              : text,
           plan: plan,
+          actionBundle: bundle,
         );
       }
 
@@ -211,10 +443,34 @@ class CanvasAgentService {
     }
   }
 
-  /// 尝试将文本解析为设计方案
-  DesignPlan? _tryParsePlan(String text) {
+  String _normalizeResponseText(String text) {
+    final repaired = _repairMojibake(text);
+    return repaired.trim();
+  }
+
+  String _repairMojibake(String text) {
     try {
-      // 去掉可能的 ```json 代码块标记
+      final repaired = utf8.decode(latin1.encode(text));
+      if (repaired != text && _containsCjk(repaired)) {
+        return repaired;
+      }
+    } catch (_) {}
+    return text;
+  }
+
+  bool _containsCjk(String text) {
+    return RegExp(r'[\u4E00-\u9FFF]').hasMatch(text);
+  }
+
+  /// 尝试将文本解析为结构化响应；失败时返回 null，前端退化成普通聊天
+  _ParsedAgentResponse? _tryParseStructuredResponse(
+    String text, {
+    String? imageProvider,
+    String? imageModel,
+    String? videoProvider,
+    String? videoModel,
+  }) {
+    try {
       String cleaned = text;
       if (cleaned.contains('```')) {
         final jsonMatch = RegExp(
@@ -233,8 +489,20 @@ class CanvasAgentService {
       }
 
       final json = jsonDecode(cleaned) as Map<String, dynamic>;
+      if (json.containsKey('reply') || json.containsKey('actions')) {
+        final bundle = AgentActionBundle.fromJson(json);
+        return _ParsedAgentResponse(actionBundle: bundle);
+      }
       if (json.containsKey('elements')) {
-        return DesignPlan.fromJson(json);
+        final plan = DesignPlan.fromJson(json);
+        final bundle = AgentActionBundle.fromDesignPlan(
+          plan,
+          imageProvider: imageProvider,
+          imageModel: imageModel,
+          videoProvider: videoProvider,
+          videoModel: videoModel,
+        );
+        return _ParsedAgentResponse(plan: plan, actionBundle: bundle);
       }
     } catch (e) {
       debugPrint('⚠️ [CanvasAgent] JSON解析失败: $e');

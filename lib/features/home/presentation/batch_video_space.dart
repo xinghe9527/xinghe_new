@@ -9,6 +9,7 @@ import 'package:xinghe_new/services/api/base/api_response.dart';
 import 'package:xinghe_new/services/api/providers/yunwu_service.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';
+import 'package:xinghe_new/services/api/provider_preference_helper.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/services/ffmpeg_service.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
@@ -786,7 +787,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     required String webTool,
     required int index,
     required SharedPreferences prefs,
-    String? provider,
+    required String provider,
   }) async {
     final payload = <String, dynamic>{'prompt': task.prompt, 'model': webModel};
 
@@ -864,14 +865,21 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
     payload['duration'] = task.seconds;
 
     // ✅ Vidu 去水印开关
-    final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+    final viduWmFree = ProviderPreferenceHelper.getVideoWatermarkFree(
+      prefs,
+      provider,
+    );
     if (viduWmFree) {
       payload['watermarkFree'] = true;
     }
 
     // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
     if (provider == 'jimeng') {
-      payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+      payload['mode'] = ProviderPreferenceHelper.getVideoWebMode(
+            prefs,
+            provider,
+          ) ??
+          'all_ref';
       
       // 如果 segments 未设置（webTool 不是 ref2video），但 prompt 中有 [📷xxx]，直接解析
       var segments = payload['segments'] as List<Map<String, String>>?;
@@ -984,21 +992,27 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
         );
 
         // 读取网页服务商配置
-        final webTool = prefs.getString('video_web_tool');
-        final webModel = prefs.getString('video_web_model');
+        final resolvedWebTool =
+            ProviderPreferenceHelper.getVideoWebTool(prefs, provider) ?? '';
+        final resolvedWebModel =
+            ProviderPreferenceHelper.getVideoWebModel(prefs, provider) ?? '';
 
-        if (webTool == null || webTool.isEmpty) {
+        if (resolvedWebTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
         }
 
-        if (webModel == null || webModel.isEmpty) {
+        if (resolvedWebModel.isEmpty) {
           throw Exception('未配置网页服务商模型\n\n请前往设置页面选择模型（如：Vidu Q3）');
         }
 
         _logger.info(
           '【批量空间】网页服务商配置',
           module: '批量空间',
-          extra: {'provider': provider, 'tool': webTool, 'model': webModel},
+          extra: {
+            'provider': provider,
+            'tool': resolvedWebTool,
+            'model': resolvedWebModel,
+          },
         );
 
         // ✅ 创建 AutomationApiClient 实例
@@ -1033,8 +1047,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             // 构建 payload（只需一个，共用同一提示词和参数）
             final payload = await _buildWebPayload(
               task: task,
-              webModel: webModel,
-              webTool: webTool,
+              webModel: resolvedWebModel,
+              webTool: resolvedWebTool,
               index: 0,
               prefs: prefs,
               provider: provider,
@@ -1045,7 +1059,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             // ONE submit call → Python 填写一次提示词，点 N 次创作
             final result = await aigcClient.submitGenerationTask(
               platform: provider,
-              toolType: webTool,
+              toolType: resolvedWebTool,
               payload: payload,
             );
 
@@ -1215,8 +1229,8 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             // ✅ 构建 payload（复用辅助方法）
             final payload = await _buildWebPayload(
               task: task,
-              webModel: webModel!,
-              webTool: webTool!,
+              webModel: resolvedWebModel,
+              webTool: resolvedWebTool,
               index: i,
               prefs: prefs,
               provider: provider,
@@ -1225,7 +1239,7 @@ class _BatchVideoSpaceState extends State<BatchVideoSpace> {
             // 提交生成任务
             final result = await aigcClient.submitGenerationTask(
               platform: provider,
-              toolType: webTool,
+              toolType: resolvedWebTool,
               payload: payload,
             );
 

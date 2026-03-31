@@ -14,7 +14,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'dart:io';
 import 'dart:convert';
-import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart';  // ✅ 导入拖动组件
+import 'package:xinghe_new/features/creation_workflow/presentation/widgets/draggable_media_item.dart'; // ✅ 导入拖动组件
 
 /// GeekNow 图片模型列表（与设置界面保持一致）
 class GeekNowImageModels {
@@ -32,11 +32,12 @@ class DrawingSpace extends StatefulWidget {
   State<DrawingSpace> createState() => _DrawingSpaceState();
 }
 
-class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver {
+class _DrawingSpaceState extends State<DrawingSpace>
+    with WidgetsBindingObserver {
   final List<DrawingTask> _tasks = [DrawingTask.create()];
   final LogManager _logger = LogManager();
-  final SecureStorageManager _storage = SecureStorageManager();  // ✅ 添加存储管理器
-  String _lastKnownProvider = '';  // 记录上次加载的服务商
+  final SecureStorageManager _storage = SecureStorageManager(); // ✅ 添加存储管理器
+  String _lastKnownProvider = ''; // 记录上次加载的服务商
 
   @override
   void initState() {
@@ -44,7 +45,7 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTasks();
-      _checkProviderChange();  // 检查服务商变化
+      _checkProviderChange(); // 检查服务商变化
     });
   }
 
@@ -67,19 +68,21 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
     try {
       final prefs = await SharedPreferences.getInstance();
       final currentProvider = prefs.getString('image_provider') ?? 'openai';
-      
-      if (_lastKnownProvider.isNotEmpty && _lastKnownProvider != currentProvider) {
-        _logger.info('检测到图片服务商变化', module: '绘图空间', extra: {
-          '旧服务商': _lastKnownProvider,
-          '新服务商': currentProvider,
-        });
-        
+
+      if (_lastKnownProvider.isNotEmpty &&
+          _lastKnownProvider != currentProvider) {
+        _logger.info(
+          '检测到图片服务商变化',
+          module: '绘图空间',
+          extra: {'旧服务商': _lastKnownProvider, '新服务商': currentProvider},
+        );
+
         // 强制刷新 UI，让所有 TaskCard 重新加载
         if (mounted) {
           setState(() {});
         }
       }
-      
+
       _lastKnownProvider = currentProvider;
     } catch (e) {
       _logger.error('检查服务商变化失败: $e', module: '绘图空间');
@@ -92,8 +95,10 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
       final tasksJson = prefs.getString('drawing_tasks');
       if (tasksJson != null && tasksJson.isNotEmpty && mounted) {
         final tasksList = jsonDecode(tasksJson) as List;
-        final tasks = tasksList.map((json) => DrawingTask.fromJson(json)).toList();
-        
+        final tasks = tasksList
+            .map((json) => DrawingTask.fromJson(json))
+            .toList();
+
         // ✅ 自动重置任务状态（清理生成中的状态）
         var resetCount = 0;
         for (var task in tasks) {
@@ -102,21 +107,21 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
             resetCount++;
           }
         }
-        
+
         if (resetCount > 0) {
           _logger.success('重置了 $resetCount 个任务的状态', module: '绘图空间');
         }
-        
+
         setState(() {
           _tasks.clear();
           _tasks.addAll(tasks);
         });
-        
+
         // ✅ 保存重置后的任务
         if (resetCount > 0) {
           _saveTasks();
         }
-        
+
         _logger.debug('成功加载 ${_tasks.length} 个绘图任务', module: '绘图空间');
       }
     } catch (e) {
@@ -128,7 +133,10 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
   Future<void> _saveTasks() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('drawing_tasks', jsonEncode(_tasks.map((t) => t.toJson()).toList()));
+      await prefs.setString(
+        'drawing_tasks',
+        jsonEncode(_tasks.map((t) => t.toJson()).toList()),
+      );
     } catch (e) {
       debugPrint('保存任务失败: $e');
     }
@@ -137,21 +145,25 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
   void _addNewTask() {
     if (mounted) {
       // 如果有现有任务，从最后一个任务复制设置
-      final newTask = _tasks.isEmpty 
+      final newTask = _tasks.isEmpty
           ? DrawingTask.create()
           : DrawingTask.create().copyWith(
-              model: _tasks.last.model,  // ✅ 从最后一个任务复制
+              model: _tasks.last.model, // ✅ 从最后一个任务复制
               ratio: _tasks.last.ratio,
               quality: _tasks.last.quality,
               batchCount: _tasks.last.batchCount,
             );
-      setState(() => _tasks.add(newTask));  // ✅ 修改：添加到末尾
+      setState(() => _tasks.add(newTask)); // ✅ 修改：添加到末尾
       _saveTasks();
-      _logger.success('创建新的绘图任务', module: '绘图空间', extra: {
-        'model': newTask.model,
-        'ratio': newTask.ratio,
-        'quality': newTask.quality,
-      });
+      _logger.success(
+        '创建新的绘图任务',
+        module: '绘图空间',
+        extra: {
+          'model': newTask.model,
+          'ratio': newTask.ratio,
+          'quality': newTask.quality,
+        },
+      );
     }
   }
 
@@ -176,10 +188,10 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
   /// 批量生成所有任务
   Future<void> _generateAllTasks() async {
     // 获取所有待生成的任务（状态为idle且有提示词）
-    final tasksToGenerate = _tasks.where((t) => 
-      t.status == TaskStatus.idle && t.prompt.trim().isNotEmpty
-    ).toList();
-    
+    final tasksToGenerate = _tasks
+        .where((t) => t.status == TaskStatus.idle && t.prompt.trim().isNotEmpty)
+        .toList();
+
     if (tasksToGenerate.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -191,44 +203,42 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
       }
       return;
     }
-    
-    _logger.success('🚀 开始批量生成 ${tasksToGenerate.length} 个任务', module: '绘图空间', extra: {
-      '总任务数': _tasks.length,
-      '待生成': tasksToGenerate.length,
-    });
-    
+
+    _logger.success(
+      '🚀 开始批量生成 ${tasksToGenerate.length} 个任务',
+      module: '绘图空间',
+      extra: {'总任务数': _tasks.length, '待生成': tasksToGenerate.length},
+    );
+
     // 并发生成所有任务（每个任务按其批量设置生成）
     await Future.wait(
       tasksToGenerate.map((task) => _generateSingleTask(task)),
-      eagerError: false,  // 即使有错误也继续其他任务
+      eagerError: false, // 即使有错误也继续其他任务
     );
-    
+
     _logger.success('✅ 批量生成完成', module: '绘图空间');
   }
-  
+
   /// 生成单个任务（支持批量）
   Future<void> _generateSingleTask(DrawingTask task) async {
     try {
       // 标记为生成中
       final updatedTask = task.copyWith(status: TaskStatus.generating);
       _updateTask(updatedTask);
-      
-      _logger.info('开始生成任务: ${task.prompt.substring(0, task.prompt.length > 20 ? 20 : task.prompt.length)}...', 
+
+      _logger.info(
+        '开始生成任务: ${task.prompt.substring(0, task.prompt.length > 20 ? 20 : task.prompt.length)}...',
         module: '绘图空间',
-        extra: {
-          '批量': task.batchCount,
-          '比例': task.ratio,
-          '质量': task.quality,
-        },
+        extra: {'批量': task.batchCount, '比例': task.ratio, '质量': task.quality},
       );
-      
+
       // 读取服务商配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
-      
+
       // ✅ 检查是否为网页服务商
       final isWebProvider = ['google_flow'].contains(provider);
-      
+
       if (isWebProvider) {
         // === 网页服务商：通过 Python 后端浏览器自动化 ===
         final aigcClient = AutomationApiClient();
@@ -236,16 +246,19 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
         if (!isHealthy) {
           throw Exception('Python 后端服务未启动');
         }
-        
+
         final imageSavePath = prefs.getString('image_save_path') ?? '';
-        final saveDir = Directory(imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path);
+        final saveDir = Directory(
+          imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path,
+        );
         if (!await saveDir.exists()) await saveDir.create(recursive: true);
-        
+
         final savedPaths = <String>[];
         for (int i = 0; i < task.batchCount; i++) {
-          final filename = 'flow_${DateTime.now().millisecondsSinceEpoch}_$i.png';
+          final filename =
+              'flow_${DateTime.now().millisecondsSinceEpoch}_$i.png';
           final savePath = '${saveDir.path}${Platform.pathSeparator}$filename';
-          
+
           try {
             final taskResult = await aigcClient.submitGenerationTask(
               platform: provider,
@@ -256,15 +269,16 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
                 'savePath': savePath,
               },
             );
-            
+
             final pollResult = await aigcClient.pollTaskStatus(
               taskId: taskResult.taskId,
               interval: const Duration(seconds: 5),
               maxAttempts: 60,
             );
-            
+
             if (pollResult.isSuccess) {
-              final imagePath = pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
+              final imagePath =
+                  pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
               if (imagePath.startsWith('http')) {
                 final response = await http.get(Uri.parse(imagePath));
                 if (response.statusCode == 200) {
@@ -273,80 +287,101 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
                   savedPaths.add(savePath);
                 }
               } else {
-                savedPaths.add(File(imagePath).existsSync() ? imagePath : savePath);
+                savedPaths.add(
+                  File(imagePath).existsSync() ? imagePath : savePath,
+                );
               }
             }
           } catch (e) {
             _logger.error('[Web] 批量第 ${i + 1} 张异常: $e', module: '绘图空间');
           }
-          
+
           if (i < task.batchCount - 1) {
             await Future.delayed(const Duration(seconds: 2));
           }
         }
-        
+
         if (savedPaths.isNotEmpty) {
           final completedTask = task.copyWith(
             status: TaskStatus.idle,
             generatedImages: [...task.generatedImages, ...savedPaths],
           );
           _updateTask(completedTask);
-          _logger.success('[Web] 任务完成: ${savedPaths.length} 张图片', module: '绘图空间');
+          _logger.success(
+            '[Web] 任务完成: ${savedPaths.length} 张图片',
+            module: '绘图空间',
+          );
         } else {
           throw Exception('网页自动化生成失败');
         }
         return;
       }
 
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
-      
+      final baseUrl = await _storage.getBaseUrl(
+        provider: provider,
+        modelType: 'image',
+      );
+      final apiKey = await _storage.getApiKey(
+        provider: provider,
+        modelType: 'image',
+      );
+
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置图片 API');
       }
-      
-      final config = ApiConfig(provider: provider, baseUrl: baseUrl, apiKey: apiKey);
+
+      final config = ApiConfig(
+        provider: provider,
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+      );
       final apiFactory = ApiFactory();
       final service = apiFactory.createService(provider, config);
-      
+
       // 按批量设置生成多次
       final allImageUrls = <String>[];
-      
+
       for (int i = 0; i < task.batchCount; i++) {
         ApiResponse<dynamic> result;
-        
+
         if (provider == 'comfyui') {
           result = await service.generateImages(
             prompt: task.prompt,
             model: task.model,
-            referenceImages: task.referenceImages.isNotEmpty ? task.referenceImages : null,
+            referenceImages: task.referenceImages.isNotEmpty
+                ? task.referenceImages
+                : null,
             parameters: {'size': task.ratio, 'quality': task.quality},
           );
         } else {
           result = await service.generateImages(
             prompt: task.prompt,
             model: task.model,
-            referenceImages: task.referenceImages.isNotEmpty ? task.referenceImages : null,
+            referenceImages: task.referenceImages.isNotEmpty
+                ? task.referenceImages
+                : null,
             parameters: {'n': 1, 'size': task.ratio, 'quality': task.quality},
           );
         }
-        
+
         // 提取图片URL
         List<String> imageUrls = [];
         if (result.isSuccess && result.data != null) {
           if (result.data is List) {
-            imageUrls = (result.data as List).map((img) => img.imageUrl as String).toList();
+            imageUrls = (result.data as List)
+                .map((img) => img.imageUrl as String)
+                .toList();
           }
         }
-        
+
         allImageUrls.addAll(imageUrls);
-        
+
         // 避免请求过快
         if (i < task.batchCount - 1) {
           await Future.delayed(const Duration(milliseconds: 500));
         }
       }
-      
+
       if (allImageUrls.isNotEmpty) {
         // 下载并保存图片
         final savedPaths = <String>[];
@@ -356,28 +391,31 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
             if (response.statusCode == 200) {
               final prefs = await SharedPreferences.getInstance();
               final imagePath = prefs.getString('image_save_path') ?? '';
-              final dir = Directory(imagePath.isNotEmpty ? imagePath : Directory.systemTemp.path);
+              final dir = Directory(
+                imagePath.isNotEmpty ? imagePath : Directory.systemTemp.path,
+              );
               if (!await dir.exists()) await dir.create(recursive: true);
-              
-              final filename = 'image_${DateTime.now().millisecondsSinceEpoch}_${savedPaths.length}.png';
+
+              final filename =
+                  'image_${DateTime.now().millisecondsSinceEpoch}_${savedPaths.length}.png';
               final filePath = '${dir.path}${Platform.pathSeparator}$filename';
               final file = File(filePath);
               await file.writeAsBytes(response.bodyBytes);
-              
+
               savedPaths.add(filePath);
             }
           } catch (e) {
             _logger.error('下载图片失败: $e', module: '绘图空间');
           }
         }
-        
+
         // 更新任务状态
         final completedTask = task.copyWith(
           status: TaskStatus.idle,
           generatedImages: [...task.generatedImages, ...savedPaths],
         );
         _updateTask(completedTask);
-        
+
         _logger.success('任务生成完成: ${savedPaths.length} 张图片', module: '绘图空间');
       } else {
         throw Exception('生成失败');
@@ -430,7 +468,14 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
       ),
       child: Row(
         children: [
-          Text('绘图空间', style: TextStyle(color: AppTheme.textColor, fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(
+            '绘图空间',
+            style: TextStyle(
+              color: AppTheme.textColor,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const Spacer(),
           _toolButton(Icons.delete_sweep_rounded, '清空全部', () {
             if (_tasks.isEmpty) return;
@@ -438,20 +483,41 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
               context: context,
               builder: (context) => AlertDialog(
                 backgroundColor: AppTheme.surfaceBackground,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                title: Text('清空全部任务', style: TextStyle(color: AppTheme.textColor)),
-                content: Text('确定要删除所有任务吗？此操作不可恢复。', style: TextStyle(color: AppTheme.subTextColor)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                title: Text(
+                  '清空全部任务',
+                  style: TextStyle(color: AppTheme.textColor),
+                ),
+                content: Text(
+                  '确定要删除所有任务吗？此操作不可恢复。',
+                  style: TextStyle(color: AppTheme.subTextColor),
+                ),
                 actions: [
-                  TextButton(onPressed: () => Navigator.pop(context), child: Text('取消', style: TextStyle(color: AppTheme.subTextColor))),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(
+                      '取消',
+                      style: TextStyle(color: AppTheme.subTextColor),
+                    ),
+                  ),
                   TextButton(
                     onPressed: () {
                       Navigator.pop(context);
                       final count = _tasks.length;
                       setState(() => _tasks.clear());
                       _saveTasks();
-                      _logger.warning('清空所有绘图任务', module: '绘图空间', extra: {'删除数量': count});
+                      _logger.warning(
+                        '清空所有绘图任务',
+                        module: '绘图空间',
+                        extra: {'删除数量': count},
+                      );
                     },
-                    child: const Text('确定', style: TextStyle(color: Colors.red)),
+                    child: const Text(
+                      '确定',
+                      style: TextStyle(color: Colors.red),
+                    ),
                   ),
                 ],
               ),
@@ -467,19 +533,33 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
     );
   }
 
-  Widget _toolButton(IconData icon, String label, VoidCallback onTap, {Color? color}) {
+  Widget _toolButton(
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(color: AppTheme.textColor.withOpacity(0.05), borderRadius: BorderRadius.circular(8)),
+          decoration: BoxDecoration(
+            color: AppTheme.textColor.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+          ),
           child: Row(
             children: [
               Icon(icon, color: color ?? AppTheme.subTextColor, size: 16),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(color: color ?? AppTheme.subTextColor, fontSize: 13)),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color ?? AppTheme.subTextColor,
+                  fontSize: 13,
+                ),
+              ),
             ],
           ),
         ),
@@ -490,24 +570,39 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
   /// 批量生成按钮
   Widget _batchGenerateAllButton() {
     // ✅ 修复：检查是否有提示词，而不是检查状态
-    final hasValidTasks = _tasks.any((t) => t.prompt.trim().isNotEmpty && t.status != TaskStatus.generating);
-    final isAnyGenerating = _tasks.any((t) => t.status == TaskStatus.generating);
-    
+    final hasValidTasks = _tasks.any(
+      (t) => t.prompt.trim().isNotEmpty && t.status != TaskStatus.generating,
+    );
+    final isAnyGenerating = _tasks.any(
+      (t) => t.status == TaskStatus.generating,
+    );
+
     return MouseRegion(
-      cursor: hasValidTasks && !isAnyGenerating ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: hasValidTasks && !isAnyGenerating
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: hasValidTasks && !isAnyGenerating ? _generateAllTasks : null,
         child: Opacity(
           opacity: hasValidTasks && !isAnyGenerating ? 1.0 : 0.5,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),  // ✅ 与新建任务保持一致
+            padding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 10,
+            ), // ✅ 与新建任务保持一致
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)],  // 橙红色渐变
+                colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)], // 橙红色渐变
               ),
               borderRadius: BorderRadius.circular(8),
               boxShadow: hasValidTasks && !isAnyGenerating
-                  ? [BoxShadow(color: const Color(0xFFFF6B6B).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 2))]
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFFFF6B6B).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
                   : null,
             ),
             child: Row(
@@ -516,14 +611,14 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
                 Icon(
                   isAnyGenerating ? Icons.hourglass_empty : Icons.flash_on,
                   color: Colors.white,
-                  size: 18,  // ✅ 与新建任务图标大小一致
+                  size: 18, // ✅ 与新建任务图标大小一致
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  isAnyGenerating ? '生成中...' : '批量生成',  // ✅ 简化文字
+                  isAnyGenerating ? '生成中...' : '批量生成', // ✅ 简化文字
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 13,  // ✅ 与新建任务字体大小一致
+                    fontSize: 13, // ✅ 与新建任务字体大小一致
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -543,15 +638,30 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+            ),
             borderRadius: BorderRadius.circular(8),
-            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 2))],
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2AF598).withOpacity(0.3),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Row(
             children: const [
               Icon(Icons.add, color: Colors.white, size: 18),
               SizedBox(width: 6),
-              Text('新建任务', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              Text(
+                '新建任务',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
         ),
@@ -564,29 +674,65 @@ class _DrawingSpaceState extends State<DrawingSpace> with WidgetsBindingObserver
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.art_track, size: 100, color: AppTheme.subTextColor.withOpacity(0.2)),
+          Icon(
+            Icons.art_track,
+            size: 100,
+            color: AppTheme.subTextColor.withOpacity(0.2),
+          ),
           const SizedBox(height: 24),
-          Text('开始你的创作之旅', style: TextStyle(color: AppTheme.textColor, fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(
+            '开始你的创作之旅',
+            style: TextStyle(
+              color: AppTheme.textColor,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 12),
-          Text('创建一个新任务，开始AI绘图', style: TextStyle(color: AppTheme.subTextColor, fontSize: 14)),
+          Text(
+            '创建一个新任务，开始AI绘图',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 14),
+          ),
           const SizedBox(height: 32),
           MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
               onTap: _addNewTask,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+                  ),
                   borderRadius: BorderRadius.circular(10),
-                  boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF2AF598).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: const [
-                    Icon(Icons.add_circle_outline, color: Colors.white, size: 20),
+                    Icon(
+                      Icons.add_circle_outline,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                     SizedBox(width: 10),
-                    Text('创建任务', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                    Text(
+                      '创建任务',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -603,32 +749,38 @@ class TaskCard extends StatefulWidget {
   final Function(DrawingTask) onUpdate;
   final VoidCallback onDelete;
 
-  const TaskCard({super.key, required this.task, required this.onUpdate, required this.onDelete});
+  const TaskCard({
+    super.key,
+    required this.task,
+    required this.onUpdate,
+    required this.onDelete,
+  });
 
   @override
   State<TaskCard> createState() => _TaskCardState();
 }
 
-class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
+class _TaskCardState extends State<TaskCard>
+    with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
   late final TextEditingController _controller;
-  late final FocusNode _focusNode;  // ✅ 添加焦点节点
+  late final FocusNode _focusNode; // ✅ 添加焦点节点
   List<String> _models = ['DALL-E 3', 'Midjourney', 'Stable Diffusion', 'Flux'];
   final List<String> _ratios = ['1:1', '9:16', '16:9', '4:3', '3:4'];
   final List<String> _qualities = ['1K', '2K', '4K'];
   final LogManager _logger = LogManager();
   final SecureStorageManager _storage = SecureStorageManager();
-  String _imageProvider = 'openai';  // 当前图片服务商
+  String _imageProvider = 'openai'; // 当前图片服务商
 
   @override
-  bool get wantKeepAlive => true;  // 保持状态
+  bool get wantKeepAlive => true; // 保持状态
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.task.prompt);
-    _focusNode = FocusNode();  // ✅ 初始化焦点节点
-    WidgetsBinding.instance.addObserver(this);  // 添加生命周期监听
-    _loadImageProvider();  // 加载服务商和模型列表
+    _focusNode = FocusNode(); // ✅ 初始化焦点节点
+    WidgetsBinding.instance.addObserver(this); // 添加生命周期监听
+    _loadImageProvider(); // 加载服务商和模型列表
   }
 
   @override
@@ -651,7 +803,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
-      
+
       // 如果服务商变化了，重新加载模型列表
       if (provider != _imageProvider) {
         await _loadImageProvider();
@@ -666,27 +818,43 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     try {
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'openai';
-      
+
       // 如果服务商没变，跳过重复加载
       if (provider == _imageProvider) return;
-      
+
       _logger.debug('加载图片服务商配置: $provider', module: '绘图空间');
-      
+
       if (mounted) {
+        final models = _getModelsForProvider(provider);
+
+        String? resolvedModel;
+        if (!models.contains(widget.task.model) && models.isNotEmpty) {
+          final savedModel = await _storage.getModel(
+            provider: provider,
+            modelType: 'image',
+          );
+          if (savedModel != null && models.contains(savedModel)) {
+            resolvedModel = savedModel;
+          } else {
+            resolvedModel = models.first;
+          }
+
+          _logger.warning(
+            '当前模型不在服务商模型列表中，已切换',
+            module: '绘图空间',
+            extra: {
+              '旧模型': widget.task.model,
+              '新模型': resolvedModel,
+              '服务商': provider,
+            },
+          );
+        }
+
         setState(() {
           _imageProvider = provider;
-          _models = _getModelsForProvider(provider);
-          
-          // 如果当前任务的模型不在新列表中，设置为列表第一个并更新任务
-          if (!_models.contains(widget.task.model) && _models.isNotEmpty) {
-            final newModel = _models.first;
-            _logger.warning(
-              '当前模型不在服务商模型列表中，已切换', 
-              module: '绘图空间',
-              extra: {'旧模型': widget.task.model, '新模型': newModel, '服务商': provider}
-            );
-            // 立即更新任务的模型
-            widget.onUpdate(widget.task.copyWith(model: newModel));
+          _models = models;
+          if (resolvedModel != null) {
+            widget.onUpdate(widget.task.copyWith(model: resolvedModel));
           }
         });
       }
@@ -709,7 +877,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       case 'openai':
         return ['gpt-4o', 'gpt-4-turbo', 'dall-e-3', 'dall-e-2'];
       case 'gemini':
-        return ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image', 'gemini-pro-vision'];
+        return [
+          'gemini-3-pro-image-preview',
+          'gemini-2.5-flash-image',
+          'gemini-pro-vision',
+        ];
       case 'midjourney':
         return ['midjourney-v6', 'midjourney-v5.2', 'midjourney-niji'];
       case 'google_flow':
@@ -721,9 +893,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);  // 移除监听
+    WidgetsBinding.instance.removeObserver(this); // 移除监听
     _controller.dispose();
-    _focusNode.dispose();  // ✅ 销毁焦点节点
+    _focusNode.dispose(); // ✅ 销毁焦点节点
     super.dispose();
   }
 
@@ -733,10 +905,14 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void _showTaskMenu(BuildContext buttonContext) {
     // 获取按钮的 RenderBox 以计算实际位置
     final RenderBox button = buttonContext.findRenderObject() as RenderBox;
-    final RenderBox overlay = Overlay.of(buttonContext).context.findRenderObject() as RenderBox;
-    final Offset buttonPosition = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final RenderBox overlay =
+        Overlay.of(buttonContext).context.findRenderObject() as RenderBox;
+    final Offset buttonPosition = button.localToGlobal(
+      Offset.zero,
+      ancestor: overlay,
+    );
     final Size buttonSize = button.size;
-    
+
     // 菜单出现在按钮正下方
     final position = RelativeRect.fromLTRB(
       buttonPosition.dx,
@@ -744,7 +920,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       overlay.size.width - buttonPosition.dx - buttonSize.width,
       0,
     );
-    
+
     showMenu(
       context: buttonContext,
       position: position,
@@ -756,9 +932,16 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.delete_outline, color: AppTheme.subTextColor, size: 16),
+              Icon(
+                Icons.delete_outline,
+                color: AppTheme.subTextColor,
+                size: 16,
+              ),
               const SizedBox(width: 8),
-              Text('删除', style: TextStyle(color: AppTheme.textColor, fontSize: 13)),
+              Text(
+                '删除',
+                style: TextStyle(color: AppTheme.textColor, fontSize: 13),
+              ),
             ],
           ),
         ),
@@ -773,74 +956,81 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   /// 下载并保存图片到本地
   Future<List<String>> _downloadAndSaveImages(List<String> imageUrls) async {
     final savedPaths = <String>[];
-    
+
     try {
       // 从设置中读取保存路径
       final savePath = imageSavePathNotifier.value;
-      
-      _logger.debug('图片保存路径: $savePath, 图片数: ${imageUrls.length}', module: '绘图空间');
-      
+
+      _logger.debug(
+        '图片保存路径: $savePath, 图片数: ${imageUrls.length}',
+        module: '绘图空间',
+      );
+
       if (savePath == '未设置' || savePath.isEmpty) {
         _logger.warning('未设置图片保存路径，图片仅在线显示', module: '绘图空间');
-        return imageUrls;  // 返回原 URL
+        return imageUrls; // 返回原 URL
       }
-      
+
       final saveDir = Directory(savePath);
       if (!await saveDir.exists()) {
         await saveDir.create(recursive: true);
       }
-      
+
       // 下载并保存每张图片（带重试）
       for (var i = 0; i < imageUrls.length; i++) {
         try {
           final url = imageUrls[i];
           String? savedPath;
-          
+
           // 重试最多3次
           for (var retry = 0; retry < 3; retry++) {
             try {
-              final response = await http.get(
-                Uri.parse(url),
-                headers: {'Connection': 'keep-alive'},
-              ).timeout(const Duration(seconds: 30));
-              
+              final response = await http
+                  .get(Uri.parse(url), headers: {'Connection': 'keep-alive'})
+                  .timeout(const Duration(seconds: 30));
+
               if (response.statusCode == 200) {
                 final timestamp = DateTime.now().millisecondsSinceEpoch;
                 final fileName = 'image_${timestamp}_$i.png';
                 final filePath = path.join(savePath, fileName);
-                
+
                 final file = File(filePath);
                 await file.writeAsBytes(response.bodyBytes);
-                
+
                 savedPath = filePath;
-                _logger.success('图片已保存', module: '绘图空间', extra: {
-                  'path': filePath,
-                  'retry': retry,
-                });
-                break;  // 成功，跳出重试
+                _logger.success(
+                  '图片已保存',
+                  module: '绘图空间',
+                  extra: {'path': filePath, 'retry': retry},
+                );
+                break; // 成功，跳出重试
               } else {
-                _logger.warning('下载失败 (重试 $retry/3): HTTP ${response.statusCode}', module: '绘图空间');
+                _logger.warning(
+                  '下载失败 (重试 $retry/3): HTTP ${response.statusCode}',
+                  module: '绘图空间',
+                );
               }
             } catch (e) {
               _logger.warning('下载异常 (重试 $retry/3): $e', module: '绘图空间');
               if (retry < 2) {
-                await Future.delayed(Duration(seconds: retry + 1));  // 等待1/2/3秒后重试
+                await Future.delayed(
+                  Duration(seconds: retry + 1),
+                ); // 等待1/2/3秒后重试
               }
             }
           }
-          
-          savedPaths.add(savedPath ?? url);  // 使用本地路径或在线 URL
-          
+
+          savedPaths.add(savedPath ?? url); // 使用本地路径或在线 URL
         } catch (e) {
           _logger.error('保存图片失败: $e', module: '绘图空间');
-          savedPaths.add(imageUrls[i]);  // 保存失败，使用在线 URL
+          savedPaths.add(imageUrls[i]); // 保存失败，使用在线 URL
         }
       }
     } catch (e) {
       _logger.error('保存图片失败: $e', module: '绘图空间');
-      return imageUrls;  // 出错，返回原 URL
+      return imageUrls; // 出错，返回原 URL
     }
-    
+
     return savedPaths;
   }
 
@@ -853,28 +1043,37 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
     final batchCount = widget.task.batchCount;
 
-    _logger.info('开始生成图片', module: '绘图空间', extra: {
-      'model': widget.task.model,
-      'count': batchCount,
-      'ratio': widget.task.ratio,
-      'quality': widget.task.quality,
-      'references': widget.task.referenceImages.length,
-    });
+    _logger.info(
+      '开始生成图片',
+      module: '绘图空间',
+      extra: {
+        'model': widget.task.model,
+        'count': batchCount,
+        'ratio': widget.task.ratio,
+        'quality': widget.task.quality,
+        'references': widget.task.referenceImages.length,
+      },
+    );
 
     // 立即添加占位符（显示"生成中"）
-    final placeholders = List.generate(batchCount, (i) => 'loading_${DateTime.now().millisecondsSinceEpoch}_$i');
-    _update(widget.task.copyWith(
-      generatedImages: [...widget.task.generatedImages, ...placeholders],
-    ));
+    final placeholders = List.generate(
+      batchCount,
+      (i) => 'loading_${DateTime.now().millisecondsSinceEpoch}_$i',
+    );
+    _update(
+      widget.task.copyWith(
+        generatedImages: [...widget.task.generatedImages, ...placeholders],
+      ),
+    );
 
     try {
       // 从设置中读取图片 API 配置
       final prefs = await SharedPreferences.getInstance();
       final provider = prefs.getString('image_provider') ?? 'geeknow';
-      
+
       // ✅ 检查是否为网页服务商（走 AutomationApiClient 路径）
       final isWebProvider = ['google_flow'].contains(provider);
-      
+
       if (isWebProvider) {
         // === 网页服务商：通过 Python 后端浏览器自动化生成图片 ===
         await _generateImagesViaWebAutomation(
@@ -886,9 +1085,18 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         return;
       }
 
-      final baseUrl = await _storage.getBaseUrl(provider: provider, modelType: 'image');
-      final apiKey = await _storage.getApiKey(provider: provider, modelType: 'image');
-      final configModel = await _storage.getModel(provider: provider, modelType: 'image');
+      final baseUrl = await _storage.getBaseUrl(
+        provider: provider,
+        modelType: 'image',
+      );
+      final apiKey = await _storage.getApiKey(
+        provider: provider,
+        modelType: 'image',
+      );
+      final configModel = await _storage.getModel(
+        provider: provider,
+        modelType: 'image',
+      );
 
       if (baseUrl == null || apiKey == null) {
         throw Exception('未配置图片 API，请先在设置中配置');
@@ -907,29 +1115,35 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       final service = factory.createService(provider, config);
 
       // 📤 详细记录发送给 API 的所有参数
-      debugPrint('📤 发送给 API: provider=$provider, model=$configModel, ratio=${widget.task.ratio}, batch=$batchCount');
+      debugPrint(
+        '📤 发送给 API: provider=$provider, model=$configModel, ratio=${widget.task.ratio}, batch=$batchCount',
+      );
 
       // 批量生成：多次调用 API
       final allImageUrls = <String>[];
-      
+
       for (int i = 0; i < batchCount; i++) {
         debugPrint('🎯 生成第 ${i + 1}/$batchCount 张');
-        
-        debugPrint('📦 参数: n=1, size=${widget.task.ratio}, quality=${widget.task.quality}');
-        
+
+        debugPrint(
+          '📦 参数: n=1, size=${widget.task.ratio}, quality=${widget.task.quality}',
+        );
+
         // ✅ 调用图片生成 API
         // 所有服务统一使用 generateImages 方法
         ApiResponse<dynamic> result;
-        
+
         // 优先使用设置里配的模型，任务模型作为备选
         final effectiveModel = configModel ?? widget.task.model;
-        
+
         if (provider == 'comfyui') {
           // ComfyUI 使用标准接口
           result = await service.generateImages(
             prompt: widget.task.prompt,
             model: effectiveModel,
-            referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
+            referenceImages: widget.task.referenceImages.isNotEmpty
+                ? widget.task.referenceImages
+                : null,
             parameters: {
               'size': widget.task.ratio,
               'quality': widget.task.quality,
@@ -940,7 +1154,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           result = await service.generateImages(
             prompt: widget.task.prompt,
             model: effectiveModel,
-            referenceImages: widget.task.referenceImages.isNotEmpty ? widget.task.referenceImages : null,
+            referenceImages: widget.task.referenceImages.isNotEmpty
+                ? widget.task.referenceImages
+                : null,
             parameters: {
               'n': 1,
               'size': widget.task.ratio,
@@ -948,29 +1164,37 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             },
           );
         }
-        
+
         // ✅ 统一处理结果
         List<String> imageUrls = [];
         if (result.isSuccess && result.data != null) {
           if (result.data is List) {
-            imageUrls = (result.data as List).map((img) => img.imageUrl as String).toList();
+            imageUrls = (result.data as List)
+                .map((img) => img.imageUrl as String)
+                .toList();
           }
         }
 
         if (imageUrls.isNotEmpty) {
           allImageUrls.addAll(imageUrls);
-          _logger.success('第 ${i + 1} 张生成成功', module: '绘图空间', extra: {
-            'urls': imageUrls.join(', '),
-          });
+          _logger.success(
+            '第 ${i + 1} 张生成成功',
+            module: '绘图空间',
+            extra: {'urls': imageUrls.join(', ')},
+          );
         } else {
           // 📝 详细记录失败原因
-          _logger.error('第 ${i + 1} 张生成失败', module: '绘图空间', extra: {
-            'isSuccess': result.isSuccess,
-            'hasData': result.data != null,
-            'errorMessage': result.error ?? '无错误信息',
-          });
+          _logger.error(
+            '第 ${i + 1} 张生成失败',
+            module: '绘图空间',
+            extra: {
+              'isSuccess': result.isSuccess,
+              'hasData': result.data != null,
+              'errorMessage': result.error ?? '无错误信息',
+            },
+          );
         }
-        
+
         // 避免请求过快
         if (i < batchCount - 1) {
           await Future.delayed(const Duration(milliseconds: 500));
@@ -978,17 +1202,21 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       }
 
       if (allImageUrls.isNotEmpty) {
-        _logger.success('批量生成完成，共 ${allImageUrls.length} 张图片', module: '绘图空间', extra: {
-          'requested': batchCount,
-          'received': allImageUrls.length,
-          'urls': allImageUrls.join(', '),
-        });
-        
+        _logger.success(
+          '批量生成完成，共 ${allImageUrls.length} 张图片',
+          module: '绘图空间',
+          extra: {
+            'requested': batchCount,
+            'received': allImageUrls.length,
+            'urls': allImageUrls.join(', '),
+          },
+        );
+
         final imageUrls = allImageUrls;
-        
+
         // 下载并保存图片到本地
         final savedPaths = await _downloadAndSaveImages(imageUrls);
-        
+
         // 替换占位符为本地路径
         final currentImages = List<String>.from(widget.task.generatedImages);
         // 移除刚添加的占位符
@@ -1000,36 +1228,44 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         }
         // 添加保存的本地路径
         currentImages.addAll(savedPaths);
-        
+
         // 确保状态更新为 completed
-        _update(widget.task.copyWith(
-          generatedImages: currentImages,
-          status: TaskStatus.completed,
-        ));
+        _update(
+          widget.task.copyWith(
+            generatedImages: currentImages,
+            status: TaskStatus.completed,
+          ),
+        );
       } else {
         throw Exception('批量生成失败：没有生成任何图片');
       }
-
     } catch (e, stackTrace) {
       _logger.error('图片生成失败: $e', module: '绘图空间');
       debugPrint('Stack Trace: $stackTrace');
-      
+
       // 移除占位符或标记为失败
       final currentImages = List<String>.from(widget.task.generatedImages);
       for (var placeholder in placeholders) {
         final index = currentImages.indexOf(placeholder);
         if (index != -1) {
-          currentImages[index] = 'failed_${DateTime.now().millisecondsSinceEpoch}';
+          currentImages[index] =
+              'failed_${DateTime.now().millisecondsSinceEpoch}';
         }
       }
-      
+
       // 检查是否还有"生成中"的占位符
-      final hasLoadingPlaceholder = currentImages.any((img) => img.startsWith('loading_'));
-      
-      _update(widget.task.copyWith(
-        generatedImages: currentImages,
-        status: hasLoadingPlaceholder ? TaskStatus.generating : TaskStatus.completed,
-      ));
+      final hasLoadingPlaceholder = currentImages.any(
+        (img) => img.startsWith('loading_'),
+      );
+
+      _update(
+        widget.task.copyWith(
+          generatedImages: currentImages,
+          status: hasLoadingPlaceholder
+              ? TaskStatus.generating
+              : TaskStatus.completed,
+        ),
+      );
     }
   }
 
@@ -1041,27 +1277,29 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     required List<String> placeholders,
   }) async {
     final aigcClient = AutomationApiClient();
-    
+
     // 先检查 Python 后端是否在运行
     final isHealthy = await aigcClient.checkHealth();
     if (!isHealthy) {
       throw Exception('Python 后端服务未启动，请先启动 api_server.py');
     }
-    
+
     // 获取保存路径
     final imageSavePath = prefs.getString('image_save_path') ?? '';
-    final saveDir = Directory(imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path);
+    final saveDir = Directory(
+      imageSavePath.isNotEmpty ? imageSavePath : Directory.systemTemp.path,
+    );
     if (!await saveDir.exists()) await saveDir.create(recursive: true);
-    
+
     final savedPaths = <String>[];
-    
+
     // Google Flow 支持 x1-x4 批量：提交一次任务，传入 batchCount
     final effectiveBatch = batchCount.clamp(1, 4);
     final filename = 'flow_${DateTime.now().millisecondsSinceEpoch}_0.png';
     final savePath = '${saveDir.path}${Platform.pathSeparator}$filename';
-    
+
     _logger.info('🎯 [Web] Google Flow 批量生成 x$effectiveBatch', module: '绘图空间');
-    
+
     try {
       // 提交一次生成任务，batchCount 让 Google Flow 用 x1/x2/x3/x4
       final taskResult = await aigcClient.submitGenerationTask(
@@ -1077,9 +1315,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             'referenceFile': widget.task.referenceImages,
         },
       );
-      
+
       _logger.info('[Web] 任务已提交: ${taskResult.taskId}', module: '绘图空间');
-      
+
       // 轮询等待结果（后端会自动收集 batchCount 张图片）
       final pollResult = await aigcClient.pollTaskStatus(
         taskId: taskResult.taskId,
@@ -1091,7 +1329,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           }
         },
       );
-      
+
       if (pollResult.isSuccess) {
         // 优先使用批量图片列表
         final batchPaths = pollResult.localImagePaths;
@@ -1099,8 +1337,10 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           for (final imgPath in batchPaths) {
             if (imgPath.startsWith('http')) {
               // 下载远程图片
-              final dlFilename = 'flow_${DateTime.now().millisecondsSinceEpoch}_${savedPaths.length}.png';
-              final dlPath = '${saveDir.path}${Platform.pathSeparator}$dlFilename';
+              final dlFilename =
+                  'flow_${DateTime.now().millisecondsSinceEpoch}_${savedPaths.length}.png';
+              final dlPath =
+                  '${saveDir.path}${Platform.pathSeparator}$dlFilename';
               final response = await http.get(Uri.parse(imgPath));
               if (response.statusCode == 200) {
                 final file = File(dlPath);
@@ -1113,7 +1353,8 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           }
         } else {
           // 降级：单图结果
-          final imagePath = pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
+          final imagePath =
+              pollResult.localImagePath ?? pollResult.imageUrl ?? savePath;
           if (imagePath.startsWith('http')) {
             final response = await http.get(Uri.parse(imagePath));
             if (response.statusCode == 200) {
@@ -1127,15 +1368,18 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
             savedPaths.add(savePath);
           }
         }
-        
+
         _logger.success('[Web] 生成成功，共 ${savedPaths.length} 张', module: '绘图空间');
       } else {
-        _logger.error('[Web] 生成失败: ${pollResult.error ?? pollResult.message}', module: '绘图空间');
+        _logger.error(
+          '[Web] 生成失败: ${pollResult.error ?? pollResult.message}',
+          module: '绘图空间',
+        );
       }
     } catch (e) {
       _logger.error('[Web] 异常: $e', module: '绘图空间');
     }
-    
+
     // 替换占位符
     final currentImages = List<String>.from(widget.task.generatedImages);
     for (var placeholder in placeholders) {
@@ -1145,13 +1389,18 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       }
     }
     currentImages.addAll(savedPaths);
-    
+
     if (savedPaths.isNotEmpty) {
-      _update(widget.task.copyWith(
-        generatedImages: currentImages,
-        status: TaskStatus.completed,
-      ));
-      _logger.success('[Web] 批量生成完成，共 ${savedPaths.length} 张图片', module: '绘图空间');
+      _update(
+        widget.task.copyWith(
+          generatedImages: currentImages,
+          status: TaskStatus.completed,
+        ),
+      );
+      _logger.success(
+        '[Web] 批量生成完成，共 ${savedPaths.length} 张图片',
+        module: '绘图空间',
+      );
     } else {
       throw Exception('网页自动化生成失败：没有生成任何图片');
     }
@@ -1162,16 +1411,17 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     // 检查是否是真实的本地文件（可以拖动）
     final imageFile = File(imageUrl);
     final isLocalFile = imageFile.existsSync();
-    final canDrag = isLocalFile && !imageUrl.startsWith('loading_') && !imageUrl.startsWith('failed_');
-    
+    final canDrag =
+        isLocalFile &&
+        !imageUrl.startsWith('loading_') &&
+        !imageUrl.startsWith('failed_');
+
     Widget imageWidget = Stack(
-      fit: StackFit.expand,  // ✅ Stack 填充满整个区域
+      fit: StackFit.expand, // ✅ Stack 填充满整个区域
       children: [
         // 图片内容（填充满）
-        Positioned.fill(
-          child: _buildImageContent(imageUrl),
-        ),
-        
+        Positioned.fill(child: _buildImageContent(imageUrl)),
+
         // 删除按钮（右上角）
         Positioned(
           top: 4,
@@ -1193,17 +1443,17 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         ),
       ],
     );
-    
+
     // ✅ 如果是本地文件，添加拖动功能
     if (canDrag) {
       return DraggableMediaItem(
         filePath: imageUrl,
         dragPreviewText: path.basename(imageUrl),
-        coverUrl: imageUrl,  // 使用图片本身作为拖动预览
+        coverUrl: imageUrl, // 使用图片本身作为拖动预览
         child: imageWidget,
       );
     }
-    
+
     return imageWidget;
   }
 
@@ -1220,12 +1470,15 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
               child: CircularProgressIndicator(strokeWidth: 3),
             ),
             const SizedBox(height: 12),
-            Text('生成中...', style: TextStyle(color: AppTheme.accentColor, fontSize: 11)),
+            Text(
+              '生成中...',
+              style: TextStyle(color: AppTheme.accentColor, fontSize: 11),
+            ),
           ],
         ),
       );
     }
-    
+
     // 失败状态
     if (imageUrl.startsWith('failed_')) {
       return Center(
@@ -1239,12 +1492,13 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         ),
       );
     }
-    
+
     // 真实图片（支持点击放大和右键）
     final imageFile = File(imageUrl);
     final isLocalFile = imageFile.existsSync();
-    final isOnlineUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
-    
+    final isOnlineUrl =
+        imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
@@ -1252,7 +1506,12 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         onTap: () => _showImagePreviewNew(imageUrl, isLocalFile),
         // 右键：显示菜单（本地文件和在线图片都支持）
         onSecondaryTapDown: (isLocalFile || isOnlineUrl)
-            ? (details) => _showContextMenu(context, details.globalPosition, imageUrl, isLocalFile)
+            ? (details) => _showContextMenu(
+                context,
+                details.globalPosition,
+                imageUrl,
+                isLocalFile,
+              )
             : null,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -1263,7 +1522,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
                     return Center(
-                      child: Icon(Icons.broken_image, color: AppTheme.subTextColor, size: 40),
+                      child: Icon(
+                        Icons.broken_image,
+                        color: AppTheme.subTextColor,
+                        size: 40,
+                      ),
                     );
                   },
                 ),
@@ -1276,21 +1539,28 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   void _deleteImage(String imageUrl) {
     final currentImages = List<String>.from(widget.task.generatedImages);
     currentImages.remove(imageUrl);
-    
+
     // 检查是否还有"生成中"的占位符
-    final hasLoadingPlaceholder = currentImages.any((img) => img.startsWith('loading_'));
-    final newStatus = hasLoadingPlaceholder ? TaskStatus.generating : TaskStatus.completed;
-    
-    _update(widget.task.copyWith(
-      generatedImages: currentImages,
-      status: newStatus,
-    ));
-    
-    _logger.info('删除图片', module: '绘图空间', extra: {
-      '剩余图片': currentImages.length,
-      '有加载中': hasLoadingPlaceholder,
-      '新状态': newStatus.toString(),
-    });
+    final hasLoadingPlaceholder = currentImages.any(
+      (img) => img.startsWith('loading_'),
+    );
+    final newStatus = hasLoadingPlaceholder
+        ? TaskStatus.generating
+        : TaskStatus.completed;
+
+    _update(
+      widget.task.copyWith(generatedImages: currentImages, status: newStatus),
+    );
+
+    _logger.info(
+      '删除图片',
+      module: '绘图空间',
+      extra: {
+        '剩余图片': currentImages.length,
+        '有加载中': hasLoadingPlaceholder,
+        '新状态': newStatus.toString(),
+      },
+    );
   }
 
   // 显示图片预览（放大）- 新版本支持本地文件
@@ -1324,7 +1594,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                       color: Colors.black.withOpacity(0.6),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.close, color: Colors.white, size: 24),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 24,
+                    ),
                   ),
                 ),
               ),
@@ -1336,9 +1610,14 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   }
 
   // 显示右键菜单
-  void _showContextMenu(BuildContext context, Offset position, String imageUrl, bool isLocalFile) {
+  void _showContextMenu(
+    BuildContext context,
+    Offset position,
+    String imageUrl,
+    bool isLocalFile,
+  ) {
     final menuItems = <PopupMenuEntry<String>>[];
-    
+
     if (isLocalFile) {
       // 本地文件：显示"定位文件"
       menuItems.add(
@@ -1368,7 +1647,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         ),
       );
     }
-    
+
     showMenu(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -1403,7 +1682,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);  // 必须调用，因为使用了 AutomaticKeepAliveClientMixin
+    super.build(context); // 必须调用，因为使用了 AutomaticKeepAliveClientMixin
     return Container(
       height: 400,
       decoration: BoxDecoration(
@@ -1429,7 +1708,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         children: [
           Expanded(
             child: MouseRegion(
-              cursor: SystemMouseCursors.text,  // ✅ 整个区域显示文本光标
+              cursor: SystemMouseCursors.text, // ✅ 整个区域显示文本光标
               child: GestureDetector(
                 onTap: () {
                   // ✅ 点击任意位置都请求焦点
@@ -1444,13 +1723,16 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                   child: TextField(
                     controller: _controller,
                     focusNode: _focusNode,
-                    maxLines: null,  // ✅ 多行输入（不限制）
+                    maxLines: null, // ✅ 多行输入（不限制）
                     keyboardType: TextInputType.multiline,
-                    textAlignVertical: TextAlignVertical.top,  // ✅ 文本从顶部开始
+                    textAlignVertical: TextAlignVertical.top, // ✅ 文本从顶部开始
                     style: TextStyle(color: AppTheme.textColor, fontSize: 13),
                     decoration: InputDecoration(
                       hintText: '输入画面描述...',
-                      hintStyle: TextStyle(color: AppTheme.subTextColor, fontSize: 12),
+                      hintStyle: TextStyle(
+                        color: AppTheme.subTextColor,
+                        fontSize: 12,
+                      ),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.zero,
                       isDense: true,
@@ -1509,7 +1791,9 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                   cursor: SystemMouseCursors.click,
                   child: GestureDetector(
                     onTap: () {
-                      final newImages = List<String>.from(widget.task.referenceImages);
+                      final newImages = List<String>.from(
+                        widget.task.referenceImages,
+                      );
                       newImages.removeAt(index);
                       _update(widget.task.copyWith(referenceImages: newImages));
                     },
@@ -1519,7 +1803,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                         color: Colors.black.withOpacity(0.6),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.close, color: Colors.white, size: 10),
+                      child: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 10,
+                      ),
                     ),
                   ),
                 ),
@@ -1540,9 +1828,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
         child: Stack(
           children: [
             Center(
-              child: InteractiveViewer(
-                child: Image.file(File(imagePath)),
-              ),
+              child: InteractiveViewer(child: Image.file(File(imagePath))),
             ),
             Positioned(
               top: 20,
@@ -1557,7 +1843,11 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                       color: Colors.black.withOpacity(0.6),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.close, color: Colors.white, size: 24),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 24,
+                    ),
                   ),
                 ),
               ),
@@ -1586,8 +1876,18 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       runSpacing: 8,
       children: [
         // 模型选择器已删除，使用设置中的全局配置
-        _dropdown(null, widget.task.ratio, _ratios, (v) => _update(widget.task.copyWith(ratio: v))),
-        _dropdown(null, widget.task.quality, _qualities, (v) => _update(widget.task.copyWith(quality: v))),
+        _dropdown(
+          null,
+          widget.task.ratio,
+          _ratios,
+          (v) => _update(widget.task.copyWith(ratio: v)),
+        ),
+        _dropdown(
+          null,
+          widget.task.quality,
+          _qualities,
+          (v) => _update(widget.task.copyWith(quality: v)),
+        ),
         _batch(),
       ],
     );
@@ -1606,12 +1906,21 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('模型', style: TextStyle(color: AppTheme.subTextColor, fontSize: 11)),
+          Text(
+            '模型',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+          ),
           PopupMenuButton<String>(
-            icon: Icon(Icons.arrow_drop_down, color: AppTheme.subTextColor, size: 16),
+            icon: Icon(
+              Icons.arrow_drop_down,
+              color: AppTheme.subTextColor,
+              size: 16,
+            ),
             offset: const Offset(0, 40),
             color: AppTheme.surfaceBackground,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             itemBuilder: (context) {
               return _models.map((model) {
                 final isSelected = model == widget.task.model;
@@ -1620,18 +1929,26 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                   child: Row(
                     children: [
                       Icon(
-                        isSelected ? Icons.check : Icons.check_box_outline_blank,
+                        isSelected
+                            ? Icons.check
+                            : Icons.check_box_outline_blank,
                         size: 16,
-                        color: isSelected ? AppTheme.accentColor : Colors.transparent,
+                        color: isSelected
+                            ? AppTheme.accentColor
+                            : Colors.transparent,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           model,
                           style: TextStyle(
-                            color: isSelected ? AppTheme.accentColor : AppTheme.textColor,
+                            color: isSelected
+                                ? AppTheme.accentColor
+                                : AppTheme.textColor,
                             fontSize: 12,
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            fontWeight: isSelected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
                           ),
                         ),
                       ),
@@ -1647,29 +1964,51 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
     );
   }
 
-  Widget _dropdown(String? label, String value, List<String> items, Function(String) onChanged) {
+  Widget _dropdown(
+    String? label,
+    String value,
+    List<String> items,
+    Function(String) onChanged,
+  ) {
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        color: AppTheme.inputBackground, 
-        borderRadius: BorderRadius.circular(8), 
-        border: Border.all(color: AppTheme.dividerColor)
+        color: AppTheme.inputBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.dividerColor),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (label != null) ...[
-            Text(label, style: TextStyle(color: AppTheme.subTextColor, fontSize: 11)),
+            Text(
+              label,
+              style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+            ),
             const SizedBox(width: 6),
           ],
           DropdownButton<String>(
             value: value,
-            items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: TextStyle(color: AppTheme.textColor, fontSize: 12)))).toList(),
+            items: items
+                .map(
+                  (i) => DropdownMenuItem(
+                    value: i,
+                    child: Text(
+                      i,
+                      style: TextStyle(color: AppTheme.textColor, fontSize: 12),
+                    ),
+                  ),
+                )
+                .toList(),
             onChanged: (v) => onChanged(v!),
             underline: const SizedBox(),
             dropdownColor: AppTheme.surfaceBackground,
-            icon: Icon(Icons.arrow_drop_down, color: AppTheme.subTextColor, size: 16),
+            icon: Icon(
+              Icons.arrow_drop_down,
+              color: AppTheme.subTextColor,
+              size: 16,
+            ),
             isDense: true,
           ),
         ],
@@ -1682,18 +2021,45 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        color: AppTheme.inputBackground, 
-        borderRadius: BorderRadius.circular(8), 
-        border: Border.all(color: AppTheme.dividerColor)
+        color: AppTheme.inputBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.dividerColor),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('批量', style: TextStyle(color: AppTheme.subTextColor, fontSize: 11)),
+          Text(
+            '批量',
+            style: TextStyle(color: AppTheme.subTextColor, fontSize: 11),
+          ),
           const SizedBox(width: 6),
-          _batchBtn(Icons.remove, widget.task.batchCount > 1, () => _update(widget.task.copyWith(batchCount: widget.task.batchCount - 1))),
-          SizedBox(width: 28, child: Center(child: Text('${widget.task.batchCount}', style: TextStyle(color: AppTheme.textColor, fontSize: 12, fontWeight: FontWeight.bold)))),
-          _batchBtn(Icons.add, widget.task.batchCount < 20, () => _update(widget.task.copyWith(batchCount: widget.task.batchCount + 1))),
+          _batchBtn(
+            Icons.remove,
+            widget.task.batchCount > 1,
+            () => _update(
+              widget.task.copyWith(batchCount: widget.task.batchCount - 1),
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            child: Center(
+              child: Text(
+                '${widget.task.batchCount}',
+                style: TextStyle(
+                  color: AppTheme.textColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          _batchBtn(
+            Icons.add,
+            widget.task.batchCount < 20,
+            () => _update(
+              widget.task.copyWith(batchCount: widget.task.batchCount + 1),
+            ),
+          ),
         ],
       ),
     );
@@ -1704,7 +2070,13 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
       cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: enabled ? onTap : null,
-        child: Icon(icon, color: enabled ? AppTheme.textColor : AppTheme.subTextColor.withOpacity(0.3), size: 16),
+        child: Icon(
+          icon,
+          color: enabled
+              ? AppTheme.textColor
+              : AppTheme.subTextColor.withOpacity(0.3),
+          size: 16,
+        ),
       ),
     );
   }
@@ -1712,42 +2084,58 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
   Widget _addImageButton() {
     final canAddMore = widget.task.referenceImages.length < 9;
     return MouseRegion(
-      cursor: canAddMore ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
+      cursor: canAddMore
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.forbidden,
       child: GestureDetector(
-        onTap: canAddMore ? () async {
-          try {
-            final result = await FilePicker.platform.pickFiles(
-              type: FileType.image,
-              allowMultiple: true,
-            );
-            if (result != null && result.files.isNotEmpty) {
-              final currentCount = widget.task.referenceImages.length;
-              final availableSlots = 9 - currentCount;
-              final newImages = result.files
-                  .take(availableSlots)
-                  .map((file) => file.path!)
-                  .toList();
-              _update(widget.task.copyWith(
-                referenceImages: [...widget.task.referenceImages, ...newImages],
-              ));
-              _logger.success('添加 ${newImages.length} 张参考图片', module: '绘图空间');
-            }
-          } catch (e) {
-            _logger.error('添加图片失败: $e', module: '绘图空间');
-          }
-        } : null,
+        onTap: canAddMore
+            ? () async {
+                try {
+                  final result = await FilePicker.platform.pickFiles(
+                    type: FileType.image,
+                    allowMultiple: true,
+                  );
+                  if (result != null && result.files.isNotEmpty) {
+                    final currentCount = widget.task.referenceImages.length;
+                    final availableSlots = 9 - currentCount;
+                    final newImages = result.files
+                        .take(availableSlots)
+                        .map((file) => file.path!)
+                        .toList();
+                    _update(
+                      widget.task.copyWith(
+                        referenceImages: [
+                          ...widget.task.referenceImages,
+                          ...newImages,
+                        ],
+                      ),
+                    );
+                    _logger.success(
+                      '添加 ${newImages.length} 张参考图片',
+                      module: '绘图空间',
+                    );
+                  }
+                } catch (e) {
+                  _logger.error('添加图片失败: $e', module: '绘图空间');
+                }
+              }
+            : null,
         child: Container(
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: canAddMore ? AppTheme.inputBackground : AppTheme.inputBackground.withOpacity(0.5),
+            color: canAddMore
+                ? AppTheme.inputBackground
+                : AppTheme.inputBackground.withOpacity(0.5),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: AppTheme.dividerColor),
           ),
           child: Icon(
-            Icons.add_photo_alternate_outlined, 
-            color: canAddMore ? AppTheme.subTextColor : AppTheme.subTextColor.withOpacity(0.3), 
-            size: 22
+            Icons.add_photo_alternate_outlined,
+            color: canAddMore
+                ? AppTheme.subTextColor
+                : AppTheme.subTextColor.withOpacity(0.3),
+            size: 22,
           ),
         ),
       ),
@@ -1764,13 +2152,28 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF2AF598), Color(0xFF009EFD)]),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF2AF598), Color(0xFF009EFD)],
+            ),
             borderRadius: BorderRadius.circular(10),
-            boxShadow: [BoxShadow(color: const Color(0xFF2AF598).withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 3))],
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2AF598).withOpacity(0.3),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
           child: Center(
             child: isGen
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.white)))
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(Colors.white),
+                    ),
+                  )
                 : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
           ),
         ),
@@ -1780,36 +2183,69 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
 
   Widget _buildRight() {
     final isGenerating = widget.task.status == TaskStatus.generating;
-    
+
     return Stack(
       children: [
         Padding(
           padding: const EdgeInsets.all(20),
           child: isGenerating && widget.task.generatedImages.isEmpty
-              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const SizedBox(
-                    width: 64,
-                    height: 64,
-                    child: CircularProgressIndicator(strokeWidth: 3),
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 64,
+                        height: 64,
+                        child: CircularProgressIndicator(strokeWidth: 3),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        '生成中...',
+                        style: TextStyle(
+                          color: AppTheme.accentColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '请稍候',
+                        style: TextStyle(
+                          color: AppTheme.subTextColor,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  Text('生成中...', style: TextStyle(color: AppTheme.accentColor, fontSize: 14, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text('请稍候', style: TextStyle(color: AppTheme.subTextColor, fontSize: 12)),
-                ]))
+                )
               : widget.task.generatedImages.isEmpty
-                  ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Icon(Icons.image_outlined, size: 64, color: AppTheme.subTextColor.withOpacity(0.2)),
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.image_outlined,
+                        size: 64,
+                        color: AppTheme.subTextColor.withOpacity(0.2),
+                      ),
                       const SizedBox(height: 12),
-                      Text('等待生成', style: TextStyle(color: AppTheme.subTextColor, fontSize: 14)),
-                    ]))
-                  : GridView.builder(
+                      Text(
+                        '等待生成',
+                        style: TextStyle(
+                          color: AppTheme.subTextColor,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : GridView.builder(
                   padding: const EdgeInsets.all(12),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,  // ✅ 3 列，图片更大
-                    crossAxisSpacing: 16, 
-                    mainAxisSpacing: 16, 
-                    childAspectRatio: 0.9,  // ✅ 0.9，接近正方形
+                    crossAxisCount: 3, // ✅ 3 列，图片更大
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: 0.9, // ✅ 0.9，接近正方形
                   ),
                   itemCount: widget.task.generatedImages.length,
                   itemBuilder: (context, index) {
@@ -1819,7 +2255,7 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
                 ),
         ),
         Positioned(
-          top: -2,  // 上移到卡片边缘外
+          top: -2, // 上移到卡片边缘外
           right: 6,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
@@ -1827,20 +2263,27 @@ class _TaskCardState extends State<TaskCard> with WidgetsBindingObserver, Automa
               builder: (buttonContext) => GestureDetector(
                 onTap: () => _showTaskMenu(buttonContext),
                 child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceBackground.withOpacity(0.95),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: AppTheme.dividerColor),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                  child: Icon(Icons.more_horiz, color: AppTheme.textColor, size: 16),  // ⋯ 横向三个点
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceBackground.withOpacity(0.95),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AppTheme.dividerColor),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.more_horiz,
+                    color: AppTheme.textColor,
+                    size: 16,
+                  ), // ⋯ 横向三个点
                 ),
               ),
             ),

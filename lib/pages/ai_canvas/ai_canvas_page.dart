@@ -11,6 +11,7 @@ import 'package:xinghe_new/features/home/presentation/settings_page.dart';
 import 'package:xinghe_new/services/api/api_factory.dart';
 import 'package:xinghe_new/services/api/base/api_config.dart';
 import 'package:xinghe_new/services/api/base/api_response.dart';
+import 'package:xinghe_new/services/api/provider_preference_helper.dart';
 import 'package:xinghe_new/services/api/secure_storage_manager.dart';
 import 'package:xinghe_new/core/logger/log_manager.dart';
 import 'package:xinghe_new/core/aigc_engine/automation_api_client.dart';
@@ -94,6 +95,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   CanvasNode? _draggingNode;
   Offset? _draggingOffset;
   bool _isMiddleButtonPressed = false; // 中键按下状态
+  bool _isSpacePressed = false; // 空格键按下状态（用于空格+鼠标拖动画布）
+  bool _isPanning = false; // 正在拖动画布中（用于光标切换）
+  Offset? _cursorPosition; // 鼠标在画布Stack中的位置（自定义光标用）
   DrawingStroke? _draggingStroke; // 拖动的涂鸦
   Offset? _draggingStrokeOffset; // 涂鸦拖动偏移
 
@@ -158,7 +162,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   late AnimationController _scaleAnimationController;
   late Animation<double> _scaleAnimation;
 
-  // 缩放焦点（用于以鼠标为中心缩放）
+  // 画布焦点节点（用于从文本输入框切换回画布快捷键）
+  final FocusNode _canvasFocusNode = FocusNode();
   Offset? _zoomFocalPoint;
   double? _zoomStartScale;
   Offset? _zoomStartOffset;
@@ -169,6 +174,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
   // Agent 面板状态
   bool _showAgentPanel = false;
+  final Set<String> _agentHighlightedNodeIds = {};
+  Timer? _agentHighlightTimer;
 
   // 视频播放器控制器映射（使用 media_kit）
   final Map<String, Player> _videoPlayers = {};
@@ -179,6 +186,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   String _videoProvider = 'geeknow';
   List<String> _availableImageModels = GeekNowImageModels.models;
   List<String> _availableVideoModels = GeekNowVideoModels.models;
+  String? _currentImageModel;
+  String? _currentVideoModel;
 
   // ComfyUI 工作流
   List<Map<String, dynamic>> _comfyUIWorkflows = [];
@@ -221,7 +230,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     super.initState();
 
     _scaleAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 120),
       vsync: this,
     );
 
@@ -261,7 +270,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     // 保存画布数据
     _saveCanvasData();
 
+    _agentHighlightTimer?.cancel();
     _scaleAnimationController.dispose();
+    _canvasFocusNode.dispose();
     // 清理所有视频播放器
     for (var player in _videoPlayers.values) {
       player.dispose();
@@ -294,12 +305,31 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       }
 
       if (mounted) {
+        final imageModels = _getModelsForProvider(imageProvider, 'image');
+        final videoModels = _getModelsForProvider(videoProvider, 'video');
+        final savedImageModel = await _storage.getModel(
+          provider: imageProvider,
+          modelType: 'image',
+        );
+        final savedVideoModel = await _storage.getModel(
+          provider: videoProvider,
+          modelType: 'video',
+        );
+
         setState(() {
           _imageProvider = imageProvider;
           _videoProvider = videoProvider;
           _comfyUIWorkflows = workflows;
-          _availableImageModels = _getModelsForProvider(imageProvider, 'image');
-          _availableVideoModels = _getModelsForProvider(videoProvider, 'video');
+          _availableImageModels = imageModels;
+          _availableVideoModels = videoModels;
+          _currentImageModel =
+              savedImageModel != null && imageModels.contains(savedImageModel)
+              ? savedImageModel
+              : (imageModels.isNotEmpty ? imageModels.first : null);
+          _currentVideoModel =
+              savedVideoModel != null && videoModels.contains(savedVideoModel)
+              ? savedVideoModel
+              : (videoModels.isNotEmpty ? videoModels.first : null);
         });
       }
     } catch (e) {
@@ -770,7 +800,11 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
       // ========== Google Flow 图片生成 ==========
       if (isGoogleFlow && isImage) {
-        _logger.info('使用 Google Flow 生成图片', module: 'AI画布', extra: {'provider': provider});
+        _logger.info(
+          '使用 Google Flow 生成图片',
+          module: 'AI画布',
+          extra: {'provider': provider},
+        );
 
         final aigcClient = AutomationApiClient();
         try {
@@ -789,11 +823,12 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           // 保存路径
           final canvasSavePath = prefs.getString('canvas_save_path');
           final imgSavePath = prefs.getString('image_save_path');
-          final saveDirPath = (canvasSavePath != null && canvasSavePath.isNotEmpty)
+          final saveDirPath =
+              (canvasSavePath != null && canvasSavePath.isNotEmpty)
               ? canvasSavePath
               : (imgSavePath != null && imgSavePath.isNotEmpty)
-                  ? imgSavePath
-                  : null;
+              ? imgSavePath
+              : null;
           if (saveDirPath != null) {
             final timestamp = DateTime.now().millisecondsSinceEpoch;
             final fileName = 'canvas_flow_${timestamp}_${node.id}.png';
@@ -801,7 +836,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           }
 
           // 参考图片
-          final referenceImages = node.data['referenceImages'] as List<String>? ?? [];
+          final referenceImages =
+              node.data['referenceImages'] as List<String>? ?? [];
           if (referenceImages.isNotEmpty) {
             payload['referenceFile'] = referenceImages;
           }
@@ -842,7 +878,11 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             });
 
             _saveCanvasData();
-            _logger.success('Google Flow 图片生成成功', module: 'AI画布', extra: {'文件': finalPath});
+            _logger.success(
+              'Google Flow 图片生成成功',
+              module: 'AI画布',
+              extra: {'文件': finalPath},
+            );
             _showMessage('图片生成成功！');
           } else {
             throw Exception(pollResult.error ?? 'Google Flow 生成失败');
@@ -855,11 +895,21 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
       if (isViduWeb && !isImage) {
         // ========== VIDU 网页服务商路线（参考批量空间实现） ==========
-        _logger.info('使用网页服务商生成视频', module: 'AI画布', extra: {'provider': provider});
+        _logger.info(
+          '使用网页服务商生成视频',
+          module: 'AI画布',
+          extra: {'provider': provider},
+        );
 
         final prefs = await SharedPreferences.getInstance();
-        final webTool = prefs.getString('video_web_tool');
-        final webModel = prefs.getString('video_web_model');
+        final webTool = ProviderPreferenceHelper.getVideoWebTool(
+          prefs,
+          provider,
+        );
+        final webModel = ProviderPreferenceHelper.getVideoWebModel(
+          prefs,
+          provider,
+        );
 
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
@@ -898,10 +948,13 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           }
 
           // 参考图片处理
-          final referenceImages = node.data['referenceImages'] as List<String>? ?? [];
+          final referenceImages =
+              node.data['referenceImages'] as List<String>? ?? [];
           final firstFrameImage = node.data['firstFrameImage'] as String?;
           if (webTool == 'img2video') {
-            final imgSource = firstFrameImage ?? (referenceImages.isNotEmpty ? referenceImages.first : null);
+            final imgSource =
+                firstFrameImage ??
+                (referenceImages.isNotEmpty ? referenceImages.first : null);
             if (imgSource == null) {
               throw Exception('图生视频需要提供参考图片');
             }
@@ -909,7 +962,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           }
           if (webTool == 'ref2video') {
             // 检查prompt中是否包含 [📷name] 占位符（图片库内联模式）
-            final hasInlinePlaceholders = RegExp(r'\[📷[^\]]+\]').hasMatch(prompt);
+            final hasInlinePlaceholders = RegExp(
+              r'\[📷[^\]]+\]',
+            ).hasMatch(prompt);
             if (hasInlinePlaceholders) {
               final segments = await _parsePromptToSegments(prompt, prefs);
               if (segments.isNotEmpty) {
@@ -922,12 +977,15 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
           // ✅ 即梦：始终传递模式（默认全能参考）
           if (provider.toLowerCase() == 'jimeng') {
-            payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
-            
+            payload['mode'] =
+                ProviderPreferenceHelper.getVideoWebMode(prefs, provider) ??
+                'all_ref';
+
             // 有参考图时传递图片和角色名
             if (referenceImages.isNotEmpty) {
               payload['referenceImages'] = referenceImages;
-              final charNames = node.data['characterNames'] as List<String>? ?? [];
+              final charNames =
+                  node.data['characterNames'] as List<String>? ?? [];
               if (charNames.isNotEmpty) {
                 payload['characterNames'] = charNames;
               }
@@ -943,15 +1001,19 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           payload['batchCount'] = 1;
 
           // ✅ Vidu 去水印开关
-          final viduWmFree = prefs.getBool('vidu_watermark_free') ?? false;
+          final viduWmFree = ProviderPreferenceHelper.getVideoWatermarkFree(
+            prefs,
+            provider,
+          );
           if (viduWmFree) {
             payload['watermarkFree'] = true;
           }
 
-          _logger.info('提交 VIDU 生成任务', module: 'AI画布', extra: {
-            'tool': webTool,
-            'model': webModel,
-          });
+          _logger.info(
+            '提交 VIDU 生成任务',
+            module: 'AI画布',
+            extra: {'tool': webTool, 'model': webModel},
+          );
 
           // 提交任务
           final submitResult = await aigcClient.submitGenerationTask(
@@ -1008,7 +1070,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             // 清理旧播放器
             final oldPlayer = _videoPlayers[node.id];
             if (oldPlayer != null) {
-              try { oldPlayer.dispose(); } catch (_) {}
+              try {
+                oldPlayer.dispose();
+              } catch (_) {}
             }
             _videoPlayers.remove(node.id);
             _videoControllers.remove(node.id);
@@ -1156,7 +1220,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
 
         // 优先使用设置里配的模型
         final effectiveModel = configModel ?? model;
-        debugPrint('调用 API - 模型参数: $effectiveModel (设置: $configModel, 节点: $model)');
+        debugPrint(
+          '调用 API - 模型参数: $effectiveModel (设置: $configModel, 节点: $model)',
+        );
 
         // ✅ 根据节点类型调用不同的方法
         result = isImage
@@ -2042,9 +2108,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     setState(() {
       // 删除选中的节点
       if (_selectedNodeId != null) {
-        final nodeToRemove = _nodes.where(
-          (node) => node.id == _selectedNodeId,
-        ).firstOrNull;
+        final nodeToRemove = _nodes
+            .where((node) => node.id == _selectedNodeId)
+            .firstOrNull;
 
         // 如果是视频节点，清理播放器
         if (nodeToRemove != null && nodeToRemove.type == NodeType.video) {
@@ -2064,9 +2130,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
         final count = _selectedNodeIds.length;
 
         for (final nodeId in _selectedNodeIds) {
-          final nodeToRemove = _nodes.where(
-            (node) => node.id == nodeId,
-          ).firstOrNull;
+          final nodeToRemove = _nodes
+              .where((node) => node.id == nodeId)
+              .firstOrNull;
 
           // 如果是视频节点，清理播放器
           if (nodeToRemove != null && nodeToRemove.type == NodeType.video) {
@@ -2112,8 +2178,39 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       body: _showSettings
           ? SettingsPage(onBack: () => setState(() => _showSettings = false))
           : Focus(
+              focusNode: _canvasFocusNode,
               autofocus: true,
               onKeyEvent: (node, event) {
+                // 焦点在文本输入框中时（AI 助手对话框、文本节点编辑等），放行键盘事件
+                final primaryFocus = FocusManager.instance.primaryFocus;
+                if (primaryFocus != null &&
+                    primaryFocus != node &&
+                    primaryFocus.context != null) {
+                  bool isInTextField = false;
+                  primaryFocus.context!.visitAncestorElements((element) {
+                    if (element.widget is EditableText) {
+                      isInTextField = true;
+                      return false;
+                    }
+                    return true;
+                  });
+                  if (isInTextField) return KeyEventResult.ignored;
+                }
+
+                // 空格键按下/释放：切换拖动画布模式
+                if (event.logicalKey == LogicalKeyboardKey.space) {
+                  if (event is KeyDownEvent && !_isSpacePressed) {
+                    setState(() => _isSpacePressed = true);
+                    return KeyEventResult.handled;
+                  } else if (event is KeyUpEvent) {
+                    setState(() {
+                      _isSpacePressed = false;
+                      _isPanning = false;
+                    });
+                    return KeyEventResult.handled;
+                  }
+                }
+
                 // 监听键盘事件
                 if (event is KeyDownEvent) {
                   final isCtrl = HardwareKeyboard.instance.isControlPressed;
@@ -2183,19 +2280,30 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                           Expanded(
                             child: Stack(
                               children: [
-                                // 画布区域
+                                // 画布交互区域（保持非定位，避免 GestureDetector 变全尺寸干扰手势竞技场）
                                 MouseRegion(
                                   cursor: _currentTool == CanvasTool.draw
                                       ? SystemMouseCursors.precise
-                                      : _currentTool == CanvasTool.pan
-                                      ? SystemMouseCursors.grab
                                       : SystemMouseCursors.basic,
                                   child: Listener(
                                     onPointerDown: (event) {
+                                      // 点击画布时收回焦点，确保键盘快捷键可用
+                                      _canvasFocusNode.requestFocus();
+                                      // 更新光标位置
+                                      _cursorPosition = event.localPosition;
                                       // 检测中键按下
                                       if (event.buttons == 4) {
                                         setState(() {
                                           _isMiddleButtonPressed = true;
+                                          _isPanning = true;
+                                          _lastPanPosition =
+                                              event.localPosition;
+                                        });
+                                      }
+                                      // 空格+左键按下：拖动画布
+                                      if (_isSpacePressed && event.buttons == 1) {
+                                        setState(() {
+                                          _isPanning = true;
                                           _lastPanPosition =
                                               event.localPosition;
                                         });
@@ -2204,13 +2312,17 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                     onPointerUp: (event) {
                                       setState(() {
                                         _isMiddleButtonPressed = false;
+                                        _isPanning = false;
                                       });
                                     },
                                     onPointerMove: (event) {
-                                      // 中键拖动画布
-                                      if (_isMiddleButtonPressed &&
+                                      // 更新光标位置
+                                      _cursorPosition = event.localPosition;
+                                      // 中键或空格+左键拖动画布
+                                      if ((_isMiddleButtonPressed || (_isSpacePressed && event.buttons == 1)) &&
                                           _lastPanPosition != null) {
                                         setState(() {
+                                          _isPanning = true;
                                           final delta =
                                               event.localPosition -
                                               _lastPanPosition!;
@@ -2222,29 +2334,56 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                     },
                                     onPointerSignal: (event) {
                                       if (event is PointerScrollEvent) {
-                                        final delta = event.scrollDelta.dy;
-                                        final newScale =
-                                            _scale * (1 - delta / 1000);
-                                        _smoothZoomTo(
-                                          newScale,
-                                          focalPoint: event.localPosition,
-                                        );
+                                        final isCtrl = HardwareKeyboard.instance.isControlPressed;
+                                        if (isCtrl) {
+                                          // Ctrl+滚轮：缩放画布（直接更新，不走动画，避免连续滚轮的帧间延迟）
+                                          final delta = event.scrollDelta.dy;
+                                          final targetScale =
+                                              (_scale * (1 - delta / 400)).clamp(0.1, 5.0);
+                                          final focalPoint = event.localPosition;
+                                          setState(() {
+                                            final scaleChange = targetScale / _scale;
+                                            _canvasOffset = focalPoint -
+                                                (focalPoint - _canvasOffset) * scaleChange;
+                                            _scale = targetScale;
+                                          });
+                                        } else {
+                                          // 普通滚轮：上下平移画布
+                                          final isShift = HardwareKeyboard.instance.isShiftPressed;
+                                          setState(() {
+                                            if (isShift) {
+                                              // Shift+滚轮：左右平移
+                                              _canvasOffset = Offset(
+                                                _canvasOffset.dx - event.scrollDelta.dy,
+                                                _canvasOffset.dy,
+                                              );
+                                            } else {
+                                              // 普通滚轮：上下平移
+                                              _canvasOffset = Offset(
+                                                _canvasOffset.dx - event.scrollDelta.dx,
+                                                _canvasOffset.dy - event.scrollDelta.dy,
+                                              );
+                                            }
+                                          });
+                                        }
                                       }
                                     },
                                     child: GestureDetector(
                                       onDoubleTap: _resetView,
                                       onSecondaryTapDown: (details) {
-                                        // 右键菜单
+                                        // 右键菜单——所有节点类型均支持
                                         if (_selectedStroke != null) {
                                           _showStrokeContextMenu(
                                             details.globalPosition,
                                           );
                                         } else if (_selectedNodeId != null) {
-                                          final node = _nodes.where(
-                                            (n) => n.id == _selectedNodeId,
-                                          ).firstOrNull;
-                                          if (node != null && node.type == NodeType.text) {
-                                            _showTextNodeContextMenu(
+                                          final node = _nodes
+                                              .where(
+                                                (n) => n.id == _selectedNodeId,
+                                              )
+                                              .firstOrNull;
+                                          if (node != null) {
+                                            _showNodeContextMenu(
                                               details.globalPosition,
                                               node,
                                             );
@@ -2330,6 +2469,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                           _selectedNodeIds.clear(); // 清除多选状态
                                           _selectedStroke = null;
                                           _selectedStrokes.clear(); // 清除多涂鸦选中
+                                          // 取消画布选择模式
+                                          _cancelCanvasSelection();
                                         }
                                       },
                                       onPanStart: (details) {
@@ -2345,8 +2486,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                         _lastPanPosition =
                                             details.localPosition;
 
-                                        // 拖动画布工具
-                                        if (_currentTool == CanvasTool.pan) {
+                                        // 空格+拖动 或 拖动画布工具
+                                        if (_isSpacePressed || _currentTool == CanvasTool.pan) {
+                                          setState(() => _isPanning = true);
                                           return;
                                         }
 
@@ -2519,10 +2661,11 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                         }
                                       },
                                       onPanUpdate: (details) {
-                                        // 拖动画布工具 - 在 setState 外部处理以避免影响其他逻辑
-                                        if (_currentTool == CanvasTool.pan &&
+                                        // 空格+拖动 或 拖动画布工具
+                                        if ((_isSpacePressed || _currentTool == CanvasTool.pan) &&
                                             _lastPanPosition != null) {
                                           setState(() {
+                                            _isPanning = true;
                                             final delta =
                                                 details.localPosition -
                                                 _lastPanPosition!;
@@ -3005,6 +3148,12 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                         });
                                       },
                                       onPanEnd: (details) {
+                                        // 重置拖动状态
+                                        if (_isPanning) {
+                                          setState(() => _isPanning = false);
+                                          return;
+                                        }
+
                                         // 文本框创建结束
                                         if (_isCreatingTextBox &&
                                             _textBoxStart != null &&
@@ -3322,15 +3471,14 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                                 child: Container(),
                                               ),
 
-
-
-                                              // 渲染节点
+                                              // 渲染节点（单节点异常不拖垮整个画布）
                                               ..._nodes
                                                   .where(
                                                     (n) => !_hiddenNodeIds
                                                         .contains(n.id),
                                                   )
                                                   .map((node) {
+                                                    try {
                                                     final screenPos = Offset(
                                                       node.position.dx *
                                                               _scale +
@@ -3353,6 +3501,10 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                                         ),
                                                       ),
                                                     );
+                                                    } catch (e) {
+                                                      debugPrint('⚠️ 节点 ${node.id} 渲染异常: $e');
+                                                      return const SizedBox.shrink();
+                                                    }
                                                   }),
 
                                               // 框选矩形
@@ -3408,6 +3560,21 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                     ),
                                   ),
                                 ),
+                                // 光标跟踪层（填满画布，仅用于光标样式变化和位置跟踪，不影响手势竞技场）
+                                Positioned.fill(
+                                  child: MouseRegion(
+                                    cursor: (_isPanning || _isMiddleButtonPressed || _isSpacePressed || _currentTool == CanvasTool.pan)
+                                        ? SystemMouseCursors.none
+                                        : MouseCursor.defer,
+                                    opaque: false,
+                                    onHover: (event) {
+                                      if (_isSpacePressed || _isPanning || _isMiddleButtonPressed || _currentTool == CanvasTool.pan) {
+                                        setState(() => _cursorPosition = event.localPosition);
+                                      }
+                                    },
+                                    child: const SizedBox.expand(),
+                                  ),
+                                ),
                                 Positioned(
                                   left: 16,
                                   top: 16,
@@ -3450,10 +3617,12 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                 if (_selectedNodeId != null &&
                                     _selectedNodeIds.isEmpty)
                                   () {
-                                    final node = _nodes.where(
-                                      (n) => n.id == _selectedNodeId,
-                                    ).firstOrNull;
-                                    if (node == null) return const SizedBox.shrink();
+                                    try {
+                                    final node = _nodes
+                                        .where((n) => n.id == _selectedNodeId)
+                                        .firstOrNull;
+                                    if (node == null)
+                                      return const SizedBox.shrink();
                                     final isDisplayOnly =
                                         node.data['isDisplayOnly'] == true;
 
@@ -3515,22 +3684,47 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                                       );
                                     }
                                     return const SizedBox.shrink();
+                                    } catch (e) {
+                                      debugPrint('⚠️ 编辑面板构建异常: $e');
+                                      return const SizedBox.shrink();
+                                    }
                                   }(),
+
+                                // 自定义拖动光标覆盖层（Windows 不支持 grab/grabbing 系统光标）
+                                if ((_isPanning || _isMiddleButtonPressed || _isSpacePressed || _currentTool == CanvasTool.pan) && _cursorPosition != null)
+                                  Positioned(
+                                    left: _cursorPosition!.dx - 8,
+                                    top: _cursorPosition!.dy - 2,
+                                    child: IgnorePointer(
+                                      child: Icon(
+                                        _isPanning || _isMiddleButtonPressed
+                                            ? Icons.back_hand
+                                            : Icons.pan_tool,
+                                        size: 16,
+                                        color: Colors.white,
+                                        shadows: const [
+                                          Shadow(blurRadius: 2, color: Colors.black87),
+                                          Shadow(blurRadius: 1, color: Colors.black54),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
                           // Agent 聊天面板
                           if (_showAgentPanel)
                             AgentChatPanel(
-                              currentImageModel:
-                                  _availableImageModels.isNotEmpty
-                                  ? _availableImageModels.first
-                                  : null,
-                              currentVideoModel:
-                                  _availableVideoModels.isNotEmpty
-                                  ? _availableVideoModels.first
-                                  : null,
+                              currentImageProvider: _imageProvider,
+                              currentImageModel: _currentImageModel,
+                              currentVideoProvider: _videoProvider,
+                              currentVideoModel: _currentVideoModel,
+                              canvasContextSummary:
+                                  _buildAgentCanvasContextSummary(),
                               onPlanReady: _applyDesignPlan,
+                              onActionBundleReady: _applyAgentActionBundle,
+                              onActionBundlePreview:
+                                  _previewAgentActionBundleTargets,
                               onClose: () {
                                 setState(() {
                                   _showAgentPanel = false;
@@ -3542,6 +3736,44 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                         ],
                       ),
                     ),
+                    // 画布选择模式底部提示条
+                    if (_isSelectingFromCanvas)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0EBF5),
+                          border: Border(top: BorderSide(color: Colors.grey.withValues(alpha: 0.2))),
+                        ),
+                        child: Row(
+                          children: [
+                            Text(
+                              _targetNodeForImage?.data['_selectingFrameType'] != null
+                                  ? '请点击画布上的图片节点作为${_targetNodeForImage!.data['_selectingFrameType'] == 'first' ? '首帧' : '尾帧'}'
+                                  : '请点击画布上的图片节点作为参考',
+                              style: const TextStyle(
+                                color: Color(0xFF555555),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: _cancelCanvasSelection,
+                              child: const Text(
+                                '取消',
+                                style: TextStyle(
+                                  color: Color(0xFF5C6BC0),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -3875,6 +4107,534 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     );
   }
 
+  String _buildAgentCanvasContextSummary() {
+    final selectedIds = <String>{
+      if (_selectedNodeId != null) _selectedNodeId!,
+      ..._selectedNodeIds,
+    }.toList();
+
+    final nodes = _nodes.take(40).map((node) {
+      final summary = <String, dynamic>{
+        'id': node.id,
+        'label': _getNodeAlias(node),
+        'type': node.type.name,
+        'x': node.position.dx.round(),
+        'y': node.position.dy.round(),
+        'width': node.size.width.round(),
+        'height': node.size.height.round(),
+      };
+
+      switch (node.type) {
+        case NodeType.text:
+          summary['text'] = node.data['text'] ?? '';
+          break;
+        case NodeType.image:
+          summary['prompt'] = node.data['prompt'] ?? '';
+          summary['hasGeneratedImage'] =
+              node.data['generatedImagePath'] != null;
+          break;
+        case NodeType.video:
+          summary['prompt'] = node.data['prompt'] ?? '';
+          summary['hasGeneratedVideo'] =
+              node.data['generatedVideoPath'] != null;
+          break;
+      }
+      return summary;
+    }).toList();
+
+    return jsonEncode({
+      'selectedNodeIds': selectedIds,
+      'nodeCount': _nodes.length,
+      'nodes': nodes,
+    });
+  }
+
+  String _normalizeNodeText(String? text) {
+    if (text == null) return '';
+    return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  String _shortNodeText(String? text, {int maxLength = 14}) {
+    final normalized = _normalizeNodeText(text);
+    if (normalized.isEmpty) return '';
+    if (normalized.length <= maxLength) return normalized;
+    return '${normalized.substring(0, maxLength)}...';
+  }
+
+  String _getNodeAlias(CanvasNode node) {
+    final storedName = _normalizeNodeText(
+      (node.data['label'] ?? node.data['name'])?.toString(),
+    );
+    if (storedName.isNotEmpty) return storedName;
+
+    switch (node.type) {
+      case NodeType.text:
+        final text = _shortNodeText(
+          node.data['text']?.toString(),
+          maxLength: 16,
+        );
+        return text.isNotEmpty ? '文本「$text」' : '文本节点';
+      case NodeType.image:
+        final prompt = _shortNodeText(
+          node.data['prompt']?.toString(),
+          maxLength: 12,
+        );
+        return prompt.isNotEmpty ? '图片「$prompt」' : '图片节点';
+      case NodeType.video:
+        final prompt = _shortNodeText(
+          node.data['prompt']?.toString(),
+          maxLength: 12,
+        );
+        return prompt.isNotEmpty ? '视频「$prompt」' : '视频节点';
+    }
+  }
+
+  void _setNodeAlias(CanvasNode node, String alias) {
+    final normalized = _normalizeNodeText(alias);
+    if (normalized.isNotEmpty) {
+      node.data['name'] = normalized;
+      node.data['label'] = normalized;
+    }
+  }
+
+  void _flashAgentHighlightNodeIds(Iterable<String> nodeIds) {
+    final ids = nodeIds.where((id) => id.isNotEmpty).toSet();
+    if (ids.isEmpty) return;
+
+    _agentHighlightTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _agentHighlightedNodeIds
+        ..clear()
+        ..addAll(ids);
+    });
+
+    _agentHighlightTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _agentHighlightedNodeIds.clear();
+      });
+    });
+  }
+
+  Offset _currentCanvasViewportCenter() {
+    final viewportWidth =
+        MediaQuery.of(context).size.width - (_showAgentPanel ? 360 : 0);
+    final viewportHeight = MediaQuery.of(context).size.height - 32;
+    return Offset(
+      (viewportWidth / 2 - _canvasOffset.dx) / _scale,
+      (viewportHeight / 2 - _canvasOffset.dy) / _scale,
+    );
+  }
+
+  double? _readActionDouble(Map<String, dynamic> source, String key) {
+    final value = source[key];
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  Size _resolveAgentActionSize(AgentAction action, NodeType nodeType) {
+    final width =
+        _readActionDouble(action.options, 'width') ??
+        _readActionDouble(action.payload, 'width') ??
+        (nodeType == NodeType.video ? 640 : 300);
+    final height =
+        _readActionDouble(action.options, 'height') ??
+        _readActionDouble(action.payload, 'height') ??
+        (nodeType == NodeType.video
+            ? 360
+            : nodeType == NodeType.text
+            ? 120
+            : 300);
+    return Size(
+      width.clamp(100.0, 4000.0).toDouble(),
+      height.clamp(60.0, 4000.0).toDouble(),
+    );
+  }
+
+  Offset _resolveAgentActionPosition(AgentAction action, int index) {
+    final x = _readActionDouble(action.position, 'x');
+    final y = _readActionDouble(action.position, 'y');
+    if (x != null && y != null) {
+      return Offset(x, y);
+    }
+
+    final center = _currentCanvasViewportCenter();
+    final dx = (index % 3) * 36.0;
+    final dy = (index ~/ 3) * 36.0;
+    return Offset(center.dx + dx, center.dy + dy);
+  }
+
+  String _nextAgentNodeId(String suffix) {
+    return '${DateTime.now().microsecondsSinceEpoch}_agent_$suffix';
+  }
+
+  bool _removeCanvasNodeById(String nodeId) {
+    final node = _nodes.where((n) => n.id == nodeId).firstOrNull;
+    if (node == null) return false;
+
+    if (node.type == NodeType.video) {
+      _videoPlayers[node.id]?.dispose();
+      _videoPlayers.remove(node.id);
+      _videoControllers.remove(node.id);
+    }
+
+    _nodes.removeWhere((n) => n.id == nodeId);
+    _selectedNodeIds.remove(nodeId);
+    if (_selectedNodeId == nodeId) {
+      _selectedNodeId = null;
+    }
+    return true;
+  }
+
+  CanvasNode? _createNodeFromAgentAction(AgentAction action, int index) {
+    switch (action.type) {
+      case 'generate_image':
+        final payload = action.payload;
+        final prompt = (payload['prompt'] as String? ?? '').trim();
+        if (prompt.isEmpty) return null;
+        final node = CanvasNode(
+          id: _nextAgentNodeId('img_$index'),
+          type: NodeType.image,
+          position: _resolveAgentActionPosition(action, index),
+          size: _resolveAgentActionSize(action, NodeType.image),
+          data: {
+            'prompt': prompt,
+            'provider':
+                payload['provider'] as String? ??
+                action.options['provider'] as String? ??
+                _imageProvider,
+            'model':
+                payload['model'] as String? ??
+                action.options['model'] as String? ??
+                _currentImageModel ??
+                (_availableImageModels.isNotEmpty
+                    ? _availableImageModels.first
+                    : ''),
+            'resolution': payload['quality'] as String? ?? '1K',
+            'ratio': payload['ratio'] as String? ?? '1:1',
+            if (payload['referenceImages'] is List)
+              'referenceImages': List<String>.from(
+                payload['referenceImages'] as List,
+              ),
+          },
+        );
+        _setNodeAlias(
+          node,
+          (payload['label'] ?? payload['name'] ?? '').toString(),
+        );
+        return node;
+      case 'generate_video':
+        final payload = action.payload;
+        final prompt = (payload['prompt'] as String? ?? '').trim();
+        if (prompt.isEmpty) return null;
+        final node = CanvasNode(
+          id: _nextAgentNodeId('video_$index'),
+          type: NodeType.video,
+          position: _resolveAgentActionPosition(action, index),
+          size: _resolveAgentActionSize(action, NodeType.video),
+          data: {
+            'prompt': prompt,
+            'provider':
+                payload['provider'] as String? ??
+                action.options['provider'] as String? ??
+                _videoProvider,
+            'model':
+                payload['model'] as String? ??
+                action.options['model'] as String? ??
+                _currentVideoModel ??
+                (_availableVideoModels.isNotEmpty
+                    ? _availableVideoModels.first
+                    : ''),
+            'resolution': payload['quality'] as String? ?? '1K',
+            'videoRatio': payload['ratio'] as String? ?? '16:9',
+            'ratio': payload['duration'] as String? ?? '5s',
+            if (payload['referenceImages'] is List)
+              'referenceImages': List<String>.from(
+                payload['referenceImages'] as List,
+              ),
+          },
+        );
+        _setNodeAlias(
+          node,
+          (payload['label'] ?? payload['name'] ?? '').toString(),
+        );
+        return node;
+      case 'create_text_node':
+      case 'create_note_node':
+        final payload = action.payload;
+        final text = (payload['text'] ?? payload['content'] ?? '')
+            .toString()
+            .trim();
+        if (text.isEmpty) return null;
+        final node = CanvasNode(
+          id: _nextAgentNodeId('text_$index'),
+          type: NodeType.text,
+          position: _resolveAgentActionPosition(action, index),
+          size: _resolveAgentActionSize(action, NodeType.text),
+          data: {
+            'text': text,
+            'fontFamily': _textFontFamily,
+            'fontSize':
+                _readActionDouble(payload, 'fontSize') ??
+                (action.type == 'create_note_node' ? 14.0 : _textFontSize),
+            'color': _getColorFromData(payload['color'], _textColor),
+            'bold': payload['bold'] as bool? ?? false,
+            'italic': payload['italic'] as bool? ?? false,
+            'underline': payload['underline'] as bool? ?? false,
+          },
+        );
+        _setNodeAlias(
+          node,
+          (payload['label'] ?? payload['name'] ?? '').toString(),
+        );
+        return node;
+    }
+    return null;
+  }
+
+  bool _applyNodeMutation(CanvasNode node, AgentAction action) {
+    final payload = action.payload['changes'] is Map
+        ? Map<String, dynamic>.from(action.payload['changes'] as Map)
+        : Map<String, dynamic>.from(action.payload);
+    var changed = false;
+
+    final x = _readActionDouble(action.position, 'x');
+    final y = _readActionDouble(action.position, 'y');
+    if (x != null && y != null) {
+      node.position = Offset(x, y);
+      changed = true;
+    }
+
+    final width =
+        _readActionDouble(action.options, 'width') ??
+        _readActionDouble(payload, 'width');
+    final height =
+        _readActionDouble(action.options, 'height') ??
+        _readActionDouble(payload, 'height');
+    if (width != null || height != null) {
+      node.size = Size(
+        (width ?? node.size.width).clamp(60.0, 4000.0).toDouble(),
+        (height ?? node.size.height).clamp(60.0, 4000.0).toDouble(),
+      );
+      changed = true;
+    }
+
+    for (final entry in payload.entries) {
+      switch (entry.key) {
+        case 'text':
+          node.data['text'] = entry.value?.toString() ?? '';
+          changed = true;
+          break;
+        case 'prompt':
+          node.data['prompt'] = entry.value?.toString() ?? '';
+          changed = true;
+          break;
+        case 'provider':
+        case 'model':
+        case 'resolution':
+        case 'ratio':
+        case 'videoRatio':
+          node.data[entry.key] = entry.value;
+          changed = true;
+          break;
+        case 'duration':
+          node.data['ratio'] = entry.value;
+          changed = true;
+          break;
+        case 'referenceImages':
+          if (entry.value is List) {
+            node.data['referenceImages'] = List<String>.from(
+              entry.value as List,
+            );
+            changed = true;
+          }
+          break;
+        case 'color':
+          node.data['color'] = _getColorFromData(entry.value, _textColor);
+          changed = true;
+          break;
+        case 'fontSize':
+          final fontSize = entry.value is num
+              ? entry.value.toDouble()
+              : double.tryParse(entry.value.toString());
+          if (fontSize != null) {
+            node.data['fontSize'] = fontSize;
+            changed = true;
+          }
+          break;
+        case 'bold':
+        case 'italic':
+        case 'underline':
+          node.data[entry.key] = entry.value == true;
+          changed = true;
+          break;
+      }
+    }
+
+    return changed;
+  }
+
+  Future<String> _applyAgentActionBundle(AgentActionBundle bundle) async {
+    if (bundle.actions.isEmpty) {
+      return '没有可执行动作，已作为普通聊天处理。';
+    }
+
+    final executableActions = bundle.actions
+        .where((a) => a.isExecutable)
+        .toList();
+    if (executableActions.isEmpty) {
+      return '本次回复只包含建议，没有自动执行动作。';
+    }
+
+    _pushUndo();
+
+    final newNodes = <CanvasNode>[];
+    final nodesToGenerate = <CanvasNode>[];
+    final highlightedNodeIds = <String>{};
+    final createdAliases = <String>[];
+    final updatedAliases = <String>[];
+    final movedAliases = <String>[];
+    final deletedAliases = <String>[];
+    var createdCount = 0;
+    var updatedCount = 0;
+    var movedCount = 0;
+    var deletedCount = 0;
+    var skippedCount = 0;
+
+    setState(() {
+      for (var i = 0; i < executableActions.length; i++) {
+        final action = executableActions[i];
+        switch (action.type) {
+          case 'generate_image':
+          case 'generate_video':
+          case 'create_text_node':
+          case 'create_note_node':
+            final node = _createNodeFromAgentAction(action, i);
+            if (node == null) {
+              skippedCount++;
+              continue;
+            }
+            _nodes.add(node);
+            newNodes.add(node);
+            highlightedNodeIds.add(node.id);
+            createdAliases.add(_getNodeAlias(node));
+            if (node.type == NodeType.image || node.type == NodeType.video) {
+              nodesToGenerate.add(node);
+            }
+            createdCount++;
+            break;
+          case 'update_node':
+            final node = _nodes.where((n) => n.id == action.nodeId).firstOrNull;
+            if (node == null) {
+              skippedCount++;
+              continue;
+            }
+            if (_applyNodeMutation(node, action)) {
+              updatedCount++;
+              highlightedNodeIds.add(node.id);
+              updatedAliases.add(_getNodeAlias(node));
+            } else {
+              skippedCount++;
+            }
+            break;
+          case 'move_node':
+            final node = _nodes.where((n) => n.id == action.nodeId).firstOrNull;
+            if (node == null) {
+              skippedCount++;
+              continue;
+            }
+            final x = _readActionDouble(action.position, 'x');
+            final y = _readActionDouble(action.position, 'y');
+            if (x == null || y == null) {
+              skippedCount++;
+              continue;
+            }
+            node.position = Offset(x, y);
+            movedCount++;
+            highlightedNodeIds.add(node.id);
+            movedAliases.add(_getNodeAlias(node));
+            break;
+          case 'delete_node':
+            if (action.nodeId == null) {
+              skippedCount++;
+              continue;
+            }
+            final node = _nodes.where((n) => n.id == action.nodeId).firstOrNull;
+            if (node == null || !_removeCanvasNodeById(action.nodeId!)) {
+              skippedCount++;
+              continue;
+            }
+            deletedCount++;
+            deletedAliases.add(_getNodeAlias(node));
+            break;
+          default:
+            skippedCount++;
+            break;
+        }
+      }
+
+      if (newNodes.isNotEmpty) {
+        _selectedNodeIds.clear();
+        _selectedNodeIds.addAll(newNodes.map((n) => n.id));
+        _selectedNodeId = newNodes.first.id;
+      }
+    });
+
+    await _saveCanvasData();
+
+    if (nodesToGenerate.isNotEmpty) {
+      unawaited(_autoGenerateNodes(nodesToGenerate));
+    }
+
+    _flashAgentHighlightNodeIds(highlightedNodeIds);
+
+    final parts = <String>[];
+    if (createdCount > 0) parts.add('创建 $createdCount 个元素');
+    if (updatedCount > 0) parts.add('更新 $updatedCount 个节点');
+    if (movedCount > 0) parts.add('移动 $movedCount 个节点');
+    if (deletedCount > 0) parts.add('删除 $deletedCount 个节点');
+    if (nodesToGenerate.isNotEmpty) {
+      parts.add('开始生成 ${nodesToGenerate.length} 个媒体元素');
+    }
+    if (skippedCount > 0) parts.add('跳过 $skippedCount 个动作');
+
+    final detailLines = <String>[];
+    if (createdAliases.isNotEmpty) {
+      detailLines.add('创建：${createdAliases.take(3).join('、')}');
+    }
+    if (updatedAliases.isNotEmpty) {
+      detailLines.add('更新：${updatedAliases.take(3).join('、')}');
+    }
+    if (movedAliases.isNotEmpty) {
+      detailLines.add('移动：${movedAliases.take(3).join('、')}');
+    }
+    if (deletedAliases.isNotEmpty) {
+      detailLines.add('删除：${deletedAliases.take(3).join('、')}');
+    }
+
+    final summary = parts.isEmpty
+        ? '没有执行任何动作。'
+        : [
+            '已执行：${parts.join('，')}',
+            if (detailLines.isNotEmpty) detailLines.join('\n'),
+          ].join('\n');
+    if (mounted) {
+      _showMessage(summary);
+    }
+    return summary;
+  }
+
+  void _previewAgentActionBundleTargets(AgentActionBundle bundle) {
+    final targetIds = bundle.actions
+        .map((action) => action.nodeId)
+        .whereType<String>()
+        .where((id) => _nodes.any((node) => node.id == id))
+        .toSet();
+    _flashAgentHighlightNodeIds(targetIds);
+  }
+
   /// 将 Agent 设计方案应用到画布
   void _applyDesignPlan(DesignPlan plan) {
     if (plan.elements.isEmpty) {
@@ -3919,8 +4679,13 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           nodeType = NodeType.video;
           data['prompt'] = element.prompt;
           data['provider'] = _videoProvider;
-          if (element.ratio != null) data['ratio'] = element.ratio;
-          if (element.duration != null) data['duration'] = element.duration;
+          data['model'] =
+              _currentVideoModel ??
+              (_availableVideoModels.isNotEmpty
+                  ? _availableVideoModels.first
+                  : '');
+          if (element.ratio != null) data['videoRatio'] = element.ratio;
+          if (element.duration != null) data['ratio'] = element.duration;
           break;
         case 'text':
           nodeType = NodeType.text;
@@ -3936,6 +4701,11 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           nodeType = NodeType.image;
           data['prompt'] = element.prompt;
           data['provider'] = _imageProvider;
+          data['model'] =
+              _currentImageModel ??
+              (_availableImageModels.isNotEmpty
+                  ? _availableImageModels.first
+                  : '');
           if (element.ratio != null) data['ratio'] = element.ratio;
           break;
       }
@@ -4628,22 +5398,14 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     // 节点图层
     for (final node in _nodes) {
       IconData icon;
-      String name;
+      final name = _getNodeAlias(node);
       switch (node.type) {
         case NodeType.image:
           icon = Icons.image_outlined;
-          name = node.data['name'] as String? ?? '图片';
         case NodeType.video:
           icon = Icons.videocam_outlined;
-          name = node.data['name'] as String? ?? '视频';
         case NodeType.text:
           icon = Icons.text_fields;
-          name =
-              (node.data['text'] as String?)?.substring(
-                0,
-                (node.data['text'] as String?)!.length.clamp(0, 12),
-              ) ??
-              '文本';
       }
       entries.add(
         _LayerEntry(
@@ -4653,6 +5415,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
           icon: icon,
           isSelected:
               _selectedNodeId == node.id || _selectedNodeIds.contains(node.id),
+          isAgentHighlighted: _agentHighlightedNodeIds.contains(node.id),
           isHidden: _hiddenNodeIds.contains(node.id),
         ),
       );
@@ -4788,11 +5551,15 @@ class _AiCanvasPageState extends State<AiCanvasPage>
         decoration: BoxDecoration(
           color: entry.isSelected
               ? _accentBlue.withValues(alpha: 0.08)
+              : entry.isAgentHighlighted
+              ? const Color(0xFF22C55E).withValues(alpha: 0.10)
               : Colors.transparent,
           border: Border(
             bottom: BorderSide(color: _borderColor.withValues(alpha: 0.5)),
             left: entry.isSelected
                 ? BorderSide(color: _accentBlue, width: 3)
+                : entry.isAgentHighlighted
+                ? const BorderSide(color: Color(0xFF22C55E), width: 3)
                 : BorderSide.none,
           ),
         ),
@@ -5055,6 +5822,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   Widget _buildNodeCard(CanvasNode node) {
     final isSelected =
         _selectedNodeId == node.id || _selectedNodeIds.contains(node.id);
+    final isAgentHighlighted = _agentHighlightedNodeIds.contains(node.id);
 
     return Stack(
       children: [
@@ -5064,7 +5832,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             if (_isSelectingFromCanvas && _targetNodeForImage != null) {
               // 只能选择图片节点（生成的图片或插入的媒体图片）
               final imagePath = node.type == NodeType.image
-                  ? (node.data['generatedImagePath'] ?? node.data['displayImagePath'])
+                  ? (node.data['generatedImagePath'] ??
+                        node.data['displayImagePath'])
                   : null;
               if (imagePath != null) {
                 final selectingFrameType =
@@ -5087,7 +5856,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                     SnackBar(
                       content: Text(
                         "已设置${selectingFrameType == 'first' ? '首帧' : '尾帧'}图片",
+                        style: const TextStyle(color: Color(0xFF555555), fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0.3),
                       ),
+                      backgroundColor: const Color(0xFFF0EBF5),
                       duration: const Duration(seconds: 1),
                     ),
                   );
@@ -5108,17 +5879,19 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                     _targetNodeForImage = null;
                   });
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("已添加参考图片"),
-                      duration: Duration(seconds: 1),
+                    SnackBar(
+                      content: const Text("已添加参考图片", style: TextStyle(color: Color(0xFF555555), fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0.3)),
+                      backgroundColor: const Color(0xFFF0EBF5),
+                      duration: const Duration(seconds: 1),
                     ),
                   );
                 }
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text("请选择包含图片的节点"),
-                    duration: Duration(seconds: 1),
+                  SnackBar(
+                    content: const Text("请选择包含图片的节点", style: TextStyle(color: Color(0xFF555555), fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0.3)),
+                    backgroundColor: const Color(0xFFF0EBF5),
+                    duration: const Duration(seconds: 1),
                   ),
                 );
               }
@@ -5142,15 +5915,27 @@ class _AiCanvasPageState extends State<AiCanvasPage>
               borderRadius: BorderRadius.circular(8),
               border: isSelected
                   ? Border.all(color: _accentBlue, width: 2)
+                  : isAgentHighlighted
+                  ? Border.all(color: const Color(0xFF22C55E), width: 2)
                   : (_isSelectingFromCanvas && node.type == NodeType.image
                         ? Border.all(color: Colors.green, width: 2)
                         : null), // 不选中时无边框，更自然
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: isSelected ? 0.15 : 0.08,
-                  ),
-                  blurRadius: isSelected ? 16 : 8,
+                  color:
+                      (isSelected
+                              ? _accentBlue
+                              : isAgentHighlighted
+                              ? const Color(0xFF22C55E)
+                              : Colors.black)
+                          .withValues(
+                            alpha: isSelected
+                                ? 0.18
+                                : isAgentHighlighted
+                                ? 0.20
+                                : 0.08,
+                          ),
+                  blurRadius: isSelected || isAgentHighlighted ? 16 : 8,
                   offset: const Offset(0, 2),
                 ),
               ],
@@ -5609,9 +6394,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   }
 
   Widget _buildTextNode(CanvasNode node) {
-    // 获取文本样式设置
+    // 获取文本样式设置（显式转 double，阻止 JSON 反序列化的 int 导致类型错误）
     final fontFamily = node.data['fontFamily'] ?? _textFontFamily;
-    final fontSize = node.data['fontSize'] ?? _textFontSize;
+    final double fontSize = (node.data['fontSize'] as num?)?.toDouble() ?? _textFontSize;
     final color = _getColorFromData(node.data['color'], _textColor);
     final bold = node.data['bold'] ?? _textBold;
     final italic = node.data['italic'] ?? _textItalic;
@@ -6052,27 +6837,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     setState(() {
       _isSelectingFromCanvas = true;
       _targetNodeForImage = targetNode;
-      // 标记是选择首帧还是尾帧
       targetNode.data['_selectingFrameType'] = isFirstFrame ? 'first' : 'last';
       _selectNode(null);
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("请点击画布上的图片节点作为${isFirstFrame ? '首帧' : '尾帧'}"),
-        duration: const Duration(seconds: 3),
-        action: SnackBarAction(
-          label: "取消",
-          onPressed: () {
-            setState(() {
-              _isSelectingFromCanvas = false;
-              _targetNodeForImage = null;
-              targetNode.data.remove('_selectingFrameType');
-            });
-          },
-        ),
-      ),
-    );
   }
 
   // 打开图片库 - 从素材库的图片库中选择（SharedPreferences image_library_data）
@@ -6081,9 +6848,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     final imageLibJson = prefs.getString('image_library_data');
     if (imageLibJson == null || imageLibJson.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('图片库为空，请先在素材库中添加图片')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('图片库为空，请先在素材库中添加图片')));
       }
       return;
     }
@@ -6091,21 +6858,24 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     final List<dynamic> imageList = jsonDecode(imageLibJson);
     if (imageList.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('图片库为空，请先在素材库中添加图片')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('图片库为空，请先在素材库中添加图片')));
       }
       return;
     }
 
     // 转换为统一格式
-    final entries = imageList.map((item) {
-      final m = item as Map<String, dynamic>;
-      return {
-        'name': m['name'] as String? ?? '',
-        'path': m['path'] as String? ?? '',
-      };
-    }).where((e) => e['path']!.isNotEmpty).toList();
+    final entries = imageList
+        .map((item) {
+          final m = item as Map<String, dynamic>;
+          return {
+            'name': m['name'] as String? ?? '',
+            'path': m['path'] as String? ?? '',
+          };
+        })
+        .where((e) => e['path']!.isNotEmpty)
+        .toList();
 
     if (!mounted) return;
 
@@ -6113,10 +6883,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       // 首帧/尾帧模式 - 单选，直接设置图片路径
       final selected = await showDialog<Map<String, String>>(
         context: context,
-        builder: (context) => _ImageLibraryDialog(
-          imageEntries: entries,
-          singleSelect: true,
-        ),
+        builder: (context) =>
+            _ImageLibraryDialog(imageEntries: entries, singleSelect: true),
       );
       if (selected != null && mounted) {
         setState(() {
@@ -6131,10 +6899,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
       // 参考图片模式 - 插入 [📷name] 占位符到prompt
       final selected = await showDialog<Map<String, String>>(
         context: context,
-        builder: (context) => _ImageLibraryDialog(
-          imageEntries: entries,
-          singleSelect: true,
-        ),
+        builder: (context) =>
+            _ImageLibraryDialog(imageEntries: entries, singleSelect: true),
       );
       if (selected != null && mounted) {
         final name = selected['name'] ?? '';
@@ -6319,30 +7085,23 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     }
   }
 
+  // 取消画布选择模式
+  void _cancelCanvasSelection() {
+    if (!_isSelectingFromCanvas) return;
+    setState(() {
+      _targetNodeForImage?.data.remove('_selectingFrameType');
+      _isSelectingFromCanvas = false;
+      _targetNodeForImage = null;
+    });
+  }
+
   // 从画布选择参考图片
   void _selectReferenceFromCanvas(CanvasNode targetNode) {
     setState(() {
       _isSelectingFromCanvas = true;
       _targetNodeForImage = targetNode;
-      _selectNode(null); // 取消当前选择
+      _selectNode(null);
     });
-
-    // 显示提示
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text("请点击画布上的图片节点作为参考"),
-        duration: const Duration(seconds: 3),
-        action: SnackBarAction(
-          label: "取消",
-          onPressed: () {
-            setState(() {
-              _isSelectingFromCanvas = false;
-              _targetNodeForImage = null;
-            });
-          },
-        ),
-      ),
-    );
   }
 
   // 从本地选择图片（旧方法，保留用于其他用途）
@@ -6392,98 +7151,111 @@ class _AiCanvasPageState extends State<AiCanvasPage>
   }
 
   // 显示文本节点右键菜单
-  void _showTextNodeContextMenu(Offset position, CanvasNode node) {
-    showMenu<void>(
+  /// 通用节点右键菜单（lovart 风格：纯文字 + 快捷键，无图标、无色块、无装饰）
+  void _showNodeContextMenu(Offset position, CanvasNode node) {
+    final bool isText = node.type == NodeType.text;
+    final bool isImage = node.type == NodeType.image;
+    final bool isVideo = node.type == NodeType.video;
+    final String? imagePath = isImage
+        ? (node.data['generatedImagePath'] ?? node.data['displayImagePath']) as String?
+        : null;
+    final String? videoPath = isVideo
+        ? node.data['generatedVideoPath'] as String?
+        : null;
+
+    PopupMenuItem<String> _item(String value, String label, [String? shortcut]) {
+      return PopupMenuItem<String>(
+        value: value,
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+            if (shortcut != null) ...[
+              const SizedBox(width: 32),
+              Text(shortcut, style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final items = <PopupMenuEntry<String>>[
+      _item('copy', '复制', 'Ctrl+C'),
+      _item('paste', '粘贴', 'Ctrl+V'),
+      _item('duplicate', '创建副本', 'Ctrl+D'),
+    ];
+
+    // 文本节点
+    if (isText) {
+      items.add(_item('edit_text', '编辑文本'));
+    }
+
+    // 图片节点
+    if (imagePath != null) {
+      items.add(_item('locate_file', '定位文件'));
+    }
+
+    // 视频节点
+    if (videoPath != null) {
+      items.add(_item('locate_file', '定位文件'));
+      items.add(_item('play_video', '播放视频'));
+    }
+
+    items.add(_item('delete', '删除', 'Delete'));
+
+    showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx,
-        position.dy,
-      ),
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
       color: Colors.white,
-      elevation: 12,
-      shadowColor: Colors.black.withValues(alpha: 0.15),
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: 0.12),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: _borderColor, width: 1),
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: Colors.grey.withValues(alpha: 0.15), width: 1),
       ),
-      items: <PopupMenuEntry<void>>[
-        PopupMenuItem<void>(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: _accentBlue.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(Icons.edit, size: 20, color: _accentBlue),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                "编辑",
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.black,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          onTap: () {
-            Future.delayed(Duration.zero, () {
-              _showTextNodeEditDialog(node);
-            });
-          },
-        ),
-        const PopupMenuDivider(height: 1),
-        PopupMenuItem<void>(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.delete_outline,
-                  size: 20,
-                  color: Colors.red,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                "删除",
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.black,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          onTap: () {
-            setState(() {
-              // 清理视频播放器
-              if (_videoPlayers.containsKey(node.id)) {
-                _videoPlayers[node.id]?.dispose();
-                _videoPlayers.remove(node.id);
-                _videoControllers.remove(node.id);
-              }
-              _nodes.remove(node);
-              _selectedNodeId = null;
-            });
-          },
-        ),
-      ],
-    );
+      items: items,
+    ).then((value) {
+      if (value == null) return;
+      switch (value) {
+        case 'copy':
+          _selectNode(node.id);
+          _copySelected();
+          break;
+        case 'paste':
+          _pasteFromClipboard();
+          break;
+        case 'duplicate':
+          _selectNode(node.id);
+          _duplicate();
+          break;
+        case 'edit_text':
+          setState(() => node.data['isEditing'] = true);
+          break;
+        case 'locate_file':
+          final filePath = imagePath ?? videoPath;
+          if (filePath != null) {
+            Process.run('explorer', ['/select,', filePath]);
+          }
+          break;
+        case 'play_video':
+          if (videoPath != null) {
+            Process.run('cmd', ['/c', 'start', '', videoPath]);
+          }
+          break;
+        case 'delete':
+          _selectNode(node.id);
+          _deleteSelectedElements();
+          _saveCanvasData();
+          break;
+      }
+    });
   }
+
+  // 保留旧方法名兼容
+  void _showTextNodeContextMenu(Offset position, CanvasNode node) =>
+      _showNodeContextMenu(position, node);
 
   // 显示文本节点编辑对话框
   void _showTextNodeEditDialog(CanvasNode node) {
@@ -7170,7 +7942,6 @@ class _AiCanvasPageState extends State<AiCanvasPage>
     );
   }
 
-
   Future<void> _showProviderModelCascadeMenu({
     required BuildContext anchorContext,
     required CanvasNode node,
@@ -7223,7 +7994,8 @@ class _AiCanvasPageState extends State<AiCanvasPage>
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
             // 判断当前 provider 是否需要三列级联（Vidu: 工具→模型, 即梦: 模型→方式）
-            final isThreeColumn = isVideo &&
+            final isThreeColumn =
+                isVideo &&
                 (hoveredProvider == 'vidu' || hoveredProvider == 'jimeng');
 
             // 第二列内容
@@ -7383,7 +8155,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                     vertical: 12,
                   ),
                   decoration: BoxDecoration(
-                    color: isHovered ? const Color(0xFFF0F0EF) : Colors.transparent,
+                    color: isHovered
+                        ? const Color(0xFFF0F0EF)
+                        : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
@@ -7432,14 +8206,30 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                         // Vidu: 中间列=工具, 第三列=模型
                         node.data['model'] = itemId;
                         node.data['webTool'] = hoveredMiddleItem;
-                        prefs.setString('video_web_tool', hoveredMiddleItem!);
-                        prefs.setString('video_web_model', itemId);
+                        ProviderPreferenceHelper.setVideoWebTool(
+                          prefs,
+                          hoveredProvider,
+                          hoveredMiddleItem!,
+                        );
+                        ProviderPreferenceHelper.setVideoWebModel(
+                          prefs,
+                          hoveredProvider,
+                          itemId,
+                        );
                       } else if (hoveredProvider == 'jimeng') {
                         // 即梦: 中间列=模型, 第三列=方式
                         node.data['model'] = hoveredMiddleItem;
                         node.data['webMode'] = itemId;
-                        prefs.setString('video_web_model', hoveredMiddleItem!);
-                        prefs.setString('video_web_mode', itemId);
+                        ProviderPreferenceHelper.setVideoWebModel(
+                          prefs,
+                          hoveredProvider,
+                          hoveredMiddleItem!,
+                        );
+                        ProviderPreferenceHelper.setVideoWebMode(
+                          prefs,
+                          hoveredProvider,
+                          itemId,
+                        );
                       }
                     });
                     Navigator.of(dialogContext).pop();
@@ -7523,15 +8313,23 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: isThreeColumn
-                                  ? secondColumnItems.map(buildMiddleRow).toList()
-                                  : secondColumnItems.map((item) => buildModelRow(item['id']!)).toList(),
+                                  ? secondColumnItems
+                                        .map(buildMiddleRow)
+                                        .toList()
+                                  : secondColumnItems
+                                        .map(
+                                          (item) => buildModelRow(item['id']!),
+                                        )
+                                        .toList(),
                             ),
                           ),
                           // 第三列：Vidu 模型 / 即梦方式（条件显示）
                           if (isThreeColumn && thirdColumnItems.isNotEmpty) ...[
                             const SizedBox(width: 10),
                             Container(
-                              key: ValueKey('col3_${hoveredProvider}_$hoveredMiddleItem'),
+                              key: ValueKey(
+                                'col3_${hoveredProvider}_$hoveredMiddleItem',
+                              ),
                               width: 200,
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
@@ -7548,7 +8346,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.start,
-                                children: thirdColumnItems.map(buildThirdRow).toList(),
+                                children: thirdColumnItems
+                                    .map(buildThirdRow)
+                                    .toList(),
                               ),
                             ),
                           ],
@@ -7889,7 +8689,9 @@ class _AiCanvasPageState extends State<AiCanvasPage>
             style: TextStyle(
               fontSize: 12,
               color: _textPrimary,
-              fontWeight: previewPath != null ? FontWeight.w600 : FontWeight.w400,
+              fontWeight: previewPath != null
+                  ? FontWeight.w600
+                  : FontWeight.w400,
             ),
           ),
         ),
@@ -8216,8 +9018,7 @@ class _AiCanvasPageState extends State<AiCanvasPage>
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation(Colors.white),
+                              valueColor: AlwaysStoppedAnimation(Colors.white),
                             ),
                           )
                         : const Icon(
@@ -8307,6 +9108,7 @@ class _LayerEntry {
   final String name;
   final IconData icon;
   final bool isSelected;
+  final bool isAgentHighlighted;
   final bool isHidden;
 
   _LayerEntry({
@@ -8316,6 +9118,7 @@ class _LayerEntry {
     required this.name,
     required this.icon,
     this.isSelected = false,
+    this.isAgentHighlighted = false,
     this.isHidden = false,
   });
 }
@@ -8748,7 +9551,12 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
   int _selectedCategoryIndex = 0;
   final List<String> _imageCategories = ['角色素材', '场景素材', '物品素材'];
   final List<String> _videoCategories = ['角色素材', '场景素材', '物品素材', '语音库'];
-  final List<IconData> _categoryIcons = [Icons.person, Icons.landscape, Icons.inventory_2, Icons.mic];
+  final List<IconData> _categoryIcons = [
+    Icons.person,
+    Icons.landscape,
+    Icons.inventory_2,
+    Icons.mic,
+  ];
 
   // 实际素材数据
   final Map<int, List<AssetStyle>> _stylesByCategory = {};
@@ -8834,7 +9642,12 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
     final allAssets = isVoiceCategory ? <AssetItem>[] : _getCurrentAssets();
     final filteredAssets = _searchQuery.isEmpty
         ? allAssets
-        : allAssets.where((a) => a.name.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+        : allAssets
+              .where(
+                (a) =>
+                    a.name.toLowerCase().contains(_searchQuery.toLowerCase()),
+              )
+              .toList();
     final voices = isVoiceCategory ? _voiceAssets : <VoiceAsset>[];
 
     return Dialog(
@@ -8852,10 +9665,20 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
               children: [
                 Icon(Icons.photo_library, color: Colors.grey[700], size: 22),
                 const SizedBox(width: 8),
-                const Text('选择素材', style: TextStyle(color: Color(0xFF111827), fontSize: 16, fontWeight: FontWeight.w600)),
+                const Text(
+                  '选择素材',
+                  style: TextStyle(
+                    color: Color(0xFF111827),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const Spacer(),
                 if (_selectedImages.isNotEmpty)
-                  Text('已选 ${_selectedImages.length}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  Text(
+                    '已选 ${_selectedImages.length}',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                  ),
                 const SizedBox(width: 8),
                 IconButton(
                   icon: Icon(Icons.close, color: Colors.grey[500], size: 20),
@@ -8869,7 +9692,11 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
               children: List.generate(categories.length, (i) {
                 final isActive = _selectedCategoryIndex == i;
                 final count = i <= 2
-                    ? (_stylesByCategory[i]?.fold<int>(0, (sum, s) => sum + s.assets.length) ?? 0)
+                    ? (_stylesByCategory[i]?.fold<int>(
+                            0,
+                            (sum, s) => sum + s.assets.length,
+                          ) ??
+                          0)
                     : _voiceAssets.length;
                 return Expanded(
                   child: GestureDetector(
@@ -8882,7 +9709,9 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                       decoration: BoxDecoration(
                         border: Border(
                           bottom: BorderSide(
-                            color: isActive ? const Color(0xFF111827) : Colors.transparent,
+                            color: isActive
+                                ? const Color(0xFF111827)
+                                : Colors.transparent,
                             width: 2,
                           ),
                         ),
@@ -8890,15 +9719,26 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(_categoryIcons[i], size: 16,
-                            color: isActive ? const Color(0xFF111827) : Colors.grey[400]),
+                          Icon(
+                            _categoryIcons[i],
+                            size: 16,
+                            color: isActive
+                                ? const Color(0xFF111827)
+                                : Colors.grey[400],
+                          ),
                           const SizedBox(width: 4),
-                          Text('${categories[i]}($count)',
+                          Text(
+                            '${categories[i]}($count)',
                             style: TextStyle(
-                              color: isActive ? const Color(0xFF111827) : Colors.grey[400],
+                              color: isActive
+                                  ? const Color(0xFF111827)
+                                  : Colors.grey[400],
                               fontSize: 12,
-                              fontWeight: isActive ? FontWeight.w700 : FontWeight.normal,
-                            )),
+                              fontWeight: isActive
+                                  ? FontWeight.w700
+                                  : FontWeight.normal,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -8914,7 +9754,11 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                 decoration: InputDecoration(
                   hintText: '搜索素材名称...',
                   hintStyle: TextStyle(color: Colors.grey[400], fontSize: 12),
-                  prefixIcon: Icon(Icons.search, color: Colors.grey[400], size: 18),
+                  prefixIcon: Icon(
+                    Icons.search,
+                    color: Colors.grey[400],
+                    size: 18,
+                  ),
                   filled: true,
                   fillColor: Colors.grey[100],
                   border: OutlineInputBorder(
@@ -8939,27 +9783,35 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                       ),
                     )
                   : GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
-                        crossAxisSpacing: 8,
-                        mainAxisSpacing: 8,
-                        childAspectRatio: 0.85,
-                      ),
-                      itemCount: isVoiceCategory ? voices.length : filteredAssets.length,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 4,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            childAspectRatio: 0.85,
+                          ),
+                      itemCount: isVoiceCategory
+                          ? voices.length
+                          : filteredAssets.length,
                       itemBuilder: (context, index) {
                         if (isVoiceCategory) {
                           final voice = voices[index];
                           final isSelected = _selectedVoice == voice.id;
                           return GestureDetector(
-                            onTap: () => setState(() => _selectedVoice = voice.id),
+                            onTap: () =>
+                                setState(() => _selectedVoice = voice.id),
                             child: Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
                                 color: isSelected
-                                    ? const Color(0xFF111827).withValues(alpha: 0.06)
+                                    ? const Color(
+                                        0xFF111827,
+                                      ).withValues(alpha: 0.06)
                                     : Colors.grey[50],
                                 border: Border.all(
-                                  color: isSelected ? const Color(0xFF111827) : Colors.grey[300]!,
+                                  color: isSelected
+                                      ? const Color(0xFF111827)
+                                      : Colors.grey[300]!,
                                   width: isSelected ? 2 : 1,
                                 ),
                                 borderRadius: BorderRadius.circular(8),
@@ -8967,25 +9819,38 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.mic, size: 32,
-                                    color: isSelected ? const Color(0xFF111827) : Colors.grey[500]),
+                                  Icon(
+                                    Icons.mic,
+                                    size: 32,
+                                    color: isSelected
+                                        ? const Color(0xFF111827)
+                                        : Colors.grey[500],
+                                  ),
                                   const SizedBox(height: 8),
-                                  Text(voice.name,
+                                  Text(
+                                    voice.name,
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: isSelected ? const Color(0xFF111827) : Colors.grey[700],
-                                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
+                                      color: isSelected
+                                          ? const Color(0xFF111827)
+                                          : Colors.grey[700],
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.normal,
                                     ),
                                     textAlign: TextAlign.center,
                                     maxLines: 2,
-                                    overflow: TextOverflow.ellipsis),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ],
                               ),
                             ),
                           );
                         } else {
                           final asset = filteredAssets[index];
-                          final isSelected = _selectedImages.contains(asset.path);
+                          final isSelected = _selectedImages.contains(
+                            asset.path,
+                          );
                           return GestureDetector(
                             onTap: () {
                               setState(() {
@@ -9000,7 +9865,9 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
-                                  color: isSelected ? const Color(0xFF111827) : Colors.grey[300]!,
+                                  color: isSelected
+                                      ? const Color(0xFF111827)
+                                      : Colors.grey[300]!,
                                   width: isSelected ? 2 : 1,
                                 ),
                               ),
@@ -9008,24 +9875,34 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                                 children: [
                                   Expanded(
                                     child: ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                                      borderRadius: const BorderRadius.vertical(
+                                        top: Radius.circular(7),
+                                      ),
                                       child: Image.file(
                                         File(asset.path),
                                         fit: BoxFit.cover,
                                         width: double.infinity,
                                         errorBuilder: (_, __, ___) => Container(
                                           color: Colors.grey[100],
-                                          child: Icon(Icons.broken_image, color: Colors.grey[400]),
+                                          child: Icon(
+                                            Icons.broken_image,
+                                            color: Colors.grey[400],
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ),
                                   Padding(
                                     padding: const EdgeInsets.all(4),
-                                    child: Text(asset.name,
-                                      style: TextStyle(color: Colors.grey[800], fontSize: 10),
+                                    child: Text(
+                                      asset.name,
+                                      style: TextStyle(
+                                        color: Colors.grey[800],
+                                        fontSize: 10,
+                                      ),
                                       maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -9058,14 +9935,18 @@ class _MaterialLibraryDialogState extends State<_MaterialLibraryDialog> {
                       }
                     } else {
                       if (_selectedImages.isNotEmpty) {
-                        Navigator.pop(context, {'images': _selectedImages.toList()});
+                        Navigator.pop(context, {
+                          'images': _selectedImages.toList(),
+                        });
                       }
                     }
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF111827),
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   child: const Text('确定'),
                 ),
@@ -9100,9 +9981,13 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
   Widget build(BuildContext context) {
     final filtered = _searchQuery.isEmpty
         ? widget.imageEntries
-        : widget.imageEntries.where((e) =>
-            (e['name'] ?? '').toLowerCase().contains(_searchQuery.toLowerCase())
-          ).toList();
+        : widget.imageEntries
+              .where(
+                (e) => (e['name'] ?? '').toLowerCase().contains(
+                  _searchQuery.toLowerCase(),
+                ),
+              )
+              .toList();
 
     return Dialog(
       backgroundColor: Colors.white,
@@ -9116,12 +10001,25 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
           children: [
             Row(
               children: [
-                Icon(Icons.collections_outlined, color: Colors.grey[700], size: 22),
+                Icon(
+                  Icons.collections_outlined,
+                  color: Colors.grey[700],
+                  size: 22,
+                ),
                 const SizedBox(width: 8),
-                const Text('图片库', style: TextStyle(color: Color(0xFF111827), fontSize: 16, fontWeight: FontWeight.w600)),
+                const Text(
+                  '图片库',
+                  style: TextStyle(
+                    color: Color(0xFF111827),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Text('素材库中的图片',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                Text(
+                  '素材库中的图片',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                ),
                 const Spacer(),
                 IconButton(
                   icon: Icon(Icons.close, color: Colors.grey[500], size: 20),
@@ -9135,7 +10033,11 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
               decoration: InputDecoration(
                 hintText: '搜索图片名称...',
                 hintStyle: TextStyle(color: Colors.grey[400], fontSize: 12),
-                prefixIcon: Icon(Icons.search, color: Colors.grey[400], size: 18),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: Colors.grey[400],
+                  size: 18,
+                ),
                 filled: true,
                 fillColor: Colors.grey[100],
                 border: OutlineInputBorder(
@@ -9157,25 +10059,30 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
                       ),
                     )
                   : GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
-                        crossAxisSpacing: 8,
-                        mainAxisSpacing: 8,
-                        childAspectRatio: 0.85,
-                      ),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 4,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            childAspectRatio: 0.85,
+                          ),
                       itemCount: filtered.length,
                       itemBuilder: (context, index) {
                         final entry = filtered[index];
                         final imgPath = entry['path'] ?? '';
                         final name = entry['name'] ?? '';
-                        final isSelected = _selectedIndex >= 0 &&
+                        final isSelected =
+                            _selectedIndex >= 0 &&
                             _selectedIndex < widget.imageEntries.length &&
-                            widget.imageEntries[_selectedIndex]['path'] == imgPath;
+                            widget.imageEntries[_selectedIndex]['path'] ==
+                                imgPath;
 
                         return GestureDetector(
                           onTap: () {
                             setState(() {
-                              final globalIndex = widget.imageEntries.indexOf(entry);
+                              final globalIndex = widget.imageEntries.indexOf(
+                                entry,
+                              );
                               _selectedIndex = isSelected ? -1 : globalIndex;
                             });
                           },
@@ -9183,7 +10090,9 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
-                                color: isSelected ? const Color(0xFF111827) : Colors.grey[300]!,
+                                color: isSelected
+                                    ? const Color(0xFF111827)
+                                    : Colors.grey[300]!,
                                 width: isSelected ? 2 : 1,
                               ),
                             ),
@@ -9191,8 +10100,12 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
                               children: [
                                 Expanded(
                                   child: ClipRRect(
-                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-                                    child: imgPath.isNotEmpty && File(imgPath).existsSync()
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(7),
+                                    ),
+                                    child:
+                                        imgPath.isNotEmpty &&
+                                            File(imgPath).existsSync()
                                         ? Image.file(
                                             File(imgPath),
                                             fit: BoxFit.cover,
@@ -9200,22 +10113,34 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
                                           )
                                         : Container(
                                             color: Colors.grey[100],
-                                            child: Icon(Icons.image, color: Colors.grey[400], size: 32),
+                                            child: Icon(
+                                              Icons.image,
+                                              color: Colors.grey[400],
+                                              size: 32,
+                                            ),
                                           ),
                                   ),
                                 ),
                                 Container(
                                   width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                    horizontal: 6,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: Colors.grey[50],
-                                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(7)),
+                                    borderRadius: const BorderRadius.vertical(
+                                      bottom: Radius.circular(7),
+                                    ),
                                   ),
-                                  child: Text(name,
+                                  child: Text(
+                                    name,
                                     style: TextStyle(
                                       color: Colors.grey[800],
                                       fontSize: 10,
-                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -9241,11 +10166,16 @@ class _ImageLibraryDialogState extends State<_ImageLibraryDialog> {
                 ElevatedButton(
                   onPressed: _selectedIndex < 0
                       ? null
-                      : () => Navigator.pop(context, widget.imageEntries[_selectedIndex]),
+                      : () => Navigator.pop(
+                          context,
+                          widget.imageEntries[_selectedIndex],
+                        ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF111827),
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   child: const Text('确定'),
                 ),

@@ -4,6 +4,7 @@ import 'package:xinghe_new/core/logger/error_translator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:xinghe_new/main.dart';
+import 'package:xinghe_new/services/api/provider_preference_helper.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -3252,8 +3253,14 @@ ${widget.scriptContent}
         // ========== 网页服务商路线（顺序生成）==========
         print('🌐 使用网页服务商批量生成图片: $provider');
 
-        final webTool = prefs.getString('image_web_tool');
-        final webModel = prefs.getString('image_web_model');
+        final webTool = ProviderPreferenceHelper.getImageWebTool(
+          prefs,
+          provider,
+        );
+        final webModel = ProviderPreferenceHelper.getImageWebModel(
+          prefs,
+          provider,
+        );
 
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型');
@@ -3612,8 +3619,14 @@ ${widget.scriptContent}
         print('🌐 使用网页服务商批量生成视频: $provider');
 
         // 读取网页服务商配置
-        final webTool = prefs.getString('video_web_tool');
-        final webModel = prefs.getString('video_web_model');
+        final webTool = ProviderPreferenceHelper.getVideoWebTool(
+          prefs,
+          provider,
+        );
+        final webModel = ProviderPreferenceHelper.getVideoWebModel(
+          prefs,
+          provider,
+        );
 
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型');
@@ -3800,7 +3813,11 @@ ${widget.scriptContent}
 
               // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
               if (provider == 'jimeng') {
-                payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+                payload['mode'] = ProviderPreferenceHelper.getVideoWebMode(
+                      prefs,
+                      provider,
+                    ) ??
+                    'all_ref';
                 final segments = payload['segments'] as List<Map<String, String>>?;
                 if (segments != null && segments.isNotEmpty) {
                   final List<String> refImages = [];
@@ -4038,7 +4055,11 @@ ${widget.scriptContent}
 
               // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
               if (provider == 'jimeng') {
-                payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+                payload['mode'] = ProviderPreferenceHelper.getVideoWebMode(
+                      prefs,
+                      provider,
+                    ) ??
+                    'all_ref';
                 final segments = payload['segments'] as List<Map<String, String>>?;
                 if (segments != null && segments.isNotEmpty) {
                   final List<String> refImages = [];
@@ -5850,8 +5871,14 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         // ========== 网页服务商路线 ==========
         print('🌐 使用网页服务商生成图片: $provider');
 
-        final webTool = prefs.getString('image_web_tool');
-        final webModel = prefs.getString('image_web_model');
+        final webTool = ProviderPreferenceHelper.getImageWebTool(
+          prefs,
+          provider,
+        );
+        final webModel = ProviderPreferenceHelper.getImageWebModel(
+          prefs,
+          provider,
+        );
 
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型');
@@ -6187,8 +6214,14 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
         print('🌐 使用网页服务商生成视频: $provider');
 
         // 读取网页服务商配置
-        final webTool = prefs.getString('video_web_tool');
-        final webModel = prefs.getString('video_web_model');
+        final webTool = ProviderPreferenceHelper.getVideoWebTool(
+          prefs,
+          provider,
+        );
+        final webModel = ProviderPreferenceHelper.getVideoWebModel(
+          prefs,
+          provider,
+        );
 
         if (webTool == null || webTool.isEmpty) {
           throw Exception('未配置网页服务商工具\n\n请前往设置页面选择工具类型（如：文生视频）');
@@ -6358,7 +6391,11 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
 
         // ✅ 即梦专用：将 segments 转换为 referenceImages + characterNames
         if (provider == 'jimeng') {
-          payload['mode'] = prefs.getString('video_web_mode') ?? 'all_ref';
+          payload['mode'] = ProviderPreferenceHelper.getVideoWebMode(
+                prefs,
+                provider,
+              ) ??
+              'all_ref';
           final segments = payload['segments'] as List<Map<String, String>>?;
           if (segments != null && segments.isNotEmpty) {
             final List<String> refImages = [];
