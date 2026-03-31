@@ -3878,6 +3878,11 @@ ${widget.scriptContent}
                   throw Exception('任务完成但未返回视频地址');
                 }
 
+                // ✅ 校验视频文件有效性
+                if (!videoPath2.startsWith('http')) {
+                  await _validateLocalVideo(videoPath2);
+                }
+
                 // 提取视频首帧
                 if (!videoPath2.startsWith('http') &&
                     videoPath2.endsWith('.mp4')) {
@@ -4144,6 +4149,11 @@ ${widget.scriptContent}
                     pollResult.localVideoPath ?? pollResult.videoUrl;
                 if (videoPath2 == null || videoPath2.isEmpty) {
                   throw Exception('任务完成但未返回视频地址');
+                }
+
+                // ✅ 校验视频文件有效性
+                if (!videoPath2.startsWith('http')) {
+                  await _validateLocalVideo(videoPath2);
                 }
 
                 // 提取视频首帧
@@ -6454,6 +6464,11 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
             throw Exception('任务完成但未返回视频地址');
           }
 
+          // ✅ 校验本地视频文件有效性
+          if (!videoPath2.startsWith('http')) {
+            await _validateLocalVideo(videoPath2);
+          }
+
           print('✅ 网页服务商视频生成成功: $videoPath2');
 
           // ✅ 提取视频首帧（本地文件才需要）
@@ -6641,6 +6656,31 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
     return null;
   }
 
+  /// 校验本地视频文件有效性（大小 + MP4 文件头）
+  Future<void> _validateLocalVideo(String videoPath) async {
+    final videoFile = File(videoPath);
+    if (!await videoFile.exists()) {
+      throw Exception('视频文件不存在: $videoPath');
+    }
+    final fileSize = await videoFile.length();
+    if (fileSize < 1024) {
+      await videoFile.delete();
+      throw Exception('视频文件无效：文件过小 ($fileSize 字节)');
+    }
+    final headerBytes = await videoFile.openRead(0, 8).fold<List<int>>(
+      [],
+      (prev, chunk) => prev..addAll(chunk),
+    );
+    if (headerBytes.length >= 8) {
+      final ftypSignature = String.fromCharCodes(headerBytes.sublist(4, 8));
+      if (ftypSignature != 'ftyp') {
+        await videoFile.delete();
+        throw Exception('视频文件无效：不是有效的 MP4 格式');
+      }
+    }
+    debugPrint('✅ 视频校验通过: ${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB');
+  }
+
   /// 下载并保存视频到本地
   Future<String> _downloadAndSaveVideo(String videoUrl, String prefix) async {
     try {
@@ -6676,14 +6716,29 @@ ${requirement.isNotEmpty ? '【用户额外要求】\n$requirement\n\n' : ''}
               .timeout(const Duration(seconds: 120)); // 视频较大，超时时间longer
 
           if (response.statusCode == 200) {
+            // ✅ 校验视频文件有效性
+            final bodyBytes = response.bodyBytes;
+            if (bodyBytes.length < 1024) {
+              debugPrint('⚠️ 视频文件过小 (${bodyBytes.length} 字节)，视为无效');
+              throw Exception('视频文件无效：下载内容过小 (${bodyBytes.length} 字节)');
+            }
+            // 检查 MP4 文件头 (ftyp box)
+            if (bodyBytes.length >= 8) {
+              final ftypSignature = String.fromCharCodes(bodyBytes.sublist(4, 8));
+              if (ftypSignature != 'ftyp') {
+                debugPrint('⚠️ 文件不是有效的 MP4 格式 (签名: $ftypSignature)');
+                throw Exception('视频文件无效：不是有效的 MP4 格式');
+              }
+            }
+
             final timestamp = DateTime.now().millisecondsSinceEpoch;
             final fileName = '${prefix}_$timestamp.mp4';
             final filePath = path.join(savePath, fileName);
 
             final file = File(filePath);
-            await file.writeAsBytes(response.bodyBytes);
+            await file.writeAsBytes(bodyBytes);
 
-            debugPrint('✅ 视频已保存: $filePath');
+            debugPrint('✅ 视频已保存: $filePath (${(bodyBytes.length / 1024 / 1024).toStringAsFixed(2)} MB)');
 
             // ✅ 提取视频首帧
             try {

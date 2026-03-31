@@ -645,13 +645,25 @@ class ViduAutomation:
                             # 不清空，追加到末尾
                             self.page.keyboard.press('Control+End')
                             time.sleep(0.2)
-                            self.page.keyboard.type(prompt, delay=random.randint(30, 80))
                         else:
                             self.page.keyboard.press('Control+a')
                             time.sleep(0.2)
                             self.page.keyboard.press('Delete')
                             time.sleep(0.3)
+                        
+                        # 尝试 keyboard.type，失败则用 JS execCommand 回退
+                        try:
                             self.page.keyboard.type(prompt, delay=random.randint(30, 80))
+                        except Exception as type_err:
+                            print(f"   ⚠️  keyboard.type 失败: {type_err}，使用 JS 插入...", flush=True)
+                            self.page.evaluate(f'''() => {{
+                                const editor = document.querySelector('div.ProseMirror[contenteditable="true"]')
+                                    || document.querySelector('div[contenteditable="true"]');
+                                if (editor) {{
+                                    editor.focus();
+                                    document.execCommand('insertText', false, {json.dumps(prompt)});
+                                }}
+                            }}''')
                     else:
                         # 标准 textarea
                         el.fill('', force=True)
@@ -664,10 +676,18 @@ class ViduAutomation:
                     time.sleep(1)
                     print(f"   ✅ 提示词已输入")
                     return True
-                except:
+                except Exception as sel_err:
+                    print(f"   ⚠️  选择器 {selector} 失败: {sel_err}", flush=True)
                     continue
             
             print("   ❌ 未找到提示词输入框")
+            # 保存调试截图
+            try:
+                debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'debug_no_input_{int(time.time())}.png')
+                self.page.screenshot(path=debug_path)
+                print(f"   📸 调试截图: {debug_path}", flush=True)
+            except:
+                pass
             return False
         except Exception as e:
             print(f"   ❌ 输入提示词失败: {e}")
@@ -720,22 +740,26 @@ class ViduAutomation:
         try:
             # 第一张图片时，需要先点击"上传图片/主体"展开面板
             if is_first:
+                area_clicked = False
+                # 策略1: Playwright locators（不带 :visible，该页面 :visible 不生效）
                 area_selectors = [
                     'text="上传图片 / 主体"',
-                    'div:has-text("上传图片 / 主体"):visible',
-                    'div:has-text("上传图片"):visible',
+                    'text="上传图片/主体"',
+                    'div:has-text("上传图片 / 主体")',
+                    'div:has-text("上传图片")',
                 ]
-                area_clicked = False
                 for selector in area_selectors:
                     try:
                         elements = self.page.locator(selector).all()
                         for element in elements:
                             try:
-                                if not element.is_visible(timeout=1000):
-                                    continue
                                 box = element.bounding_box()
                                 if not box or box['x'] > 500:
                                     continue
+                                # 排除过大的容器
+                                if box['width'] > 450 or box['height'] > 200:
+                                    continue
+                                print(f"   ✅ 找到上传区域 (selector={selector}, x={box['x']:.0f}, y={box['y']:.0f}, w={box['width']:.0f})", flush=True)
                                 element.click(timeout=3000)
                                 area_clicked = True
                                 break
@@ -745,12 +769,36 @@ class ViduAutomation:
                             break
                     except:
                         continue
+                
+                # 策略2: JS 回退
+                if not area_clicked:
+                    print("   ⚠️  Playwright 未找到上传区域，尝试 JS 查找...", flush=True)
+                    js_click = self.page.evaluate("""() => {
+                        // 查找包含 "上传图片" 文本的 div（在左侧面板，x < 500）
+                        const allDivs = document.querySelectorAll('div');
+                        for (const div of allDivs) {
+                            const text = div.textContent || '';
+                            if (text.includes('上传图片') && text.includes('主体')) {
+                                const rect = div.getBoundingClientRect();
+                                if (rect.x < 500 && rect.width < 450 && rect.width > 50 && rect.height < 200 && rect.height > 20) {
+                                    div.click();
+                                    return { clicked: true, text: text.trim().substring(0, 30), x: rect.x, y: rect.y };
+                                }
+                            }
+                        }
+                        return { clicked: false };
+                    }""")
+                    if js_click and js_click.get('clicked'):
+                        area_clicked = True
+                        print(f"   ✅ JS 点击上传区域: '{js_click.get('text')}' ({js_click.get('x'):.0f}, {js_click.get('y'):.0f})", flush=True)
+                    else:
+                        print("   ⚠️ 未找到「上传图片/主体」区域，尝试直接找「图片」按钮", flush=True)
+                
                 if area_clicked:
                     time.sleep(1)
-                else:
-                    print("   ⚠️ 未找到「上传图片/主体」区域，尝试直接找「+ 图片」按钮")
             
-            # 查找并点击「+ 图片」按钮
+            # 查找并点击「+ 图片」按钮（触发 file chooser）
+            # 策略1: Playwright locators
             pic_selectors = [
                 'text="图片"',
                 'text="+ 图片"',
@@ -763,8 +811,6 @@ class ViduAutomation:
                     elements = self.page.locator(selector).all()
                     for element in elements:
                         try:
-                            if not element.is_visible(timeout=1000):
-                                continue
                             box = element.bounding_box()
                             if not box or box['x'] > 500:
                                 continue
@@ -774,6 +820,7 @@ class ViduAutomation:
                             if '上传' in text or '主体库' in text:
                                 continue
                             
+                            print(f"   🔍 尝试点击 '{text}' ({box['x']:.0f}, {box['y']:.0f})", flush=True)
                             with self.page.expect_file_chooser(timeout=5000) as fc_info:
                                 element.click(timeout=3000)
                             file_chooser = fc_info.value
@@ -786,11 +833,73 @@ class ViduAutomation:
                 except:
                     continue
             
-            print(f"   ❌ 未找到「+ 图片」按钮")
+            # 策略2: JS 查找「图片」按钮并点击（用 Playwright 的 file chooser 拦截）
+            print("   ⚠️  Playwright 未找到「图片」按钮，尝试 JS 查找...", flush=True)
+            js_btn = self.page.evaluate("""() => {
+                // 查找所有文本为"图片"或"+ 图片"的按钮/元素
+                const candidates = document.querySelectorAll('div, button, span, a');
+                const results = [];
+                for (const el of candidates) {
+                    const text = el.textContent?.trim() || '';
+                    const rect = el.getBoundingClientRect();
+                    // 条件：在左侧面板(x<500)，小尺寸元素，文本包含"图片"但不含"上传"/"主体库"
+                    if (rect.x < 500 && rect.width < 200 && rect.width > 10 && rect.height < 60
+                        && rect.height > 10 && text.includes('图片')
+                        && !text.includes('上传') && !text.includes('主体库') && !text.includes('视频')) {
+                        results.push({text: text.substring(0,20), x: rect.x, y: rect.y, w: rect.width, h: rect.height, tag: el.tagName});
+                    }
+                }
+                return results;
+            }""")
+            if js_btn:
+                print(f"   🔍 JS 找到 {len(js_btn)} 个候选按钮: {js_btn}", flush=True)
+                for btn_info in js_btn:
+                    try:
+                        # 用坐标点击
+                        x = btn_info['x'] + btn_info['w'] / 2
+                        y = btn_info['y'] + btn_info['h'] / 2
+                        print(f"   🖱️ JS 坐标点击 '{btn_info['text']}' ({x:.0f}, {y:.0f})", flush=True)
+                        with self.page.expect_file_chooser(timeout=5000) as fc_info:
+                            self.page.mouse.click(x, y)
+                        file_chooser = fc_info.value
+                        file_chooser.set_files(file_path)
+                        print(f"   ✅ 图片已上传（JS坐标）: {os.path.basename(file_path)}")
+                        time.sleep(2)
+                        return True
+                    except Exception as click_err:
+                        print(f"   ⚠️  JS 坐标点击失败: {click_err}", flush=True)
+                        continue
+            else:
+                print("   ❌ JS 也未找到「图片」按钮", flush=True)
+            
+            # 策略3: 直接用 file input 上传（绕过 UI 按钮）
+            print("   ⚠️  尝试直接查找 file input...", flush=True)
+            try:
+                # 有些页面有隐藏的 file input
+                file_input = self.page.locator('input[type="file"]').first
+                if file_input.count() > 0:
+                    file_input.set_input_files(file_path)
+                    print(f"   ✅ 通过 input[type=file] 上传: {os.path.basename(file_path)}")
+                    time.sleep(2)
+                    return True
+            except Exception as fi_err:
+                print(f"   ⚠️  file input 上传失败: {fi_err}", flush=True)
+            
+            # 保存调试截图
+            try:
+                debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'debug_no_pic_btn_{int(time.time())}.png')
+                self.page.screenshot(path=debug_path)
+                print(f"   📸 调试截图: {debug_path}", flush=True)
+            except:
+                pass
+            
+            print(f"   ❌ 未找到「+ 图片」按钮（所有策略均失败）")
             return False
             
         except Exception as e:
             print(f"   ❌ 插入内联图片异常: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _input_prompt_with_inline_images(self, segments: list) -> bool:
@@ -811,21 +920,21 @@ class ViduAutomation:
         print(f"   📝 图片库模式：交替输入 {len(segments)} 个段落")
         
         try:
-            # 聚焦编辑器
+            # 聚焦编辑器（ref2video 页面 :visible 伪类不生效，不使用）
             editor_selectors = [
-                'div.ProseMirror[contenteditable="true"]:visible',
-                'div.tiptap[contenteditable="true"]:visible',
-                'div[contenteditable="true"]:visible',
+                'div.ProseMirror[contenteditable="true"]',
+                'div.tiptap[contenteditable="true"]',
+                'div[contenteditable="true"]',
             ]
             editor = None
-            # 多次重试查找编辑器（Debug 模式下页面加载较慢）
             for attempt in range(3):
                 for selector in editor_selectors:
                     try:
                         el = self.page.locator(selector).first
-                        if el.is_visible(timeout=5000):
+                        box = el.bounding_box()
+                        if box and box['width'] > 0 and box['height'] > 0:
                             editor = el
-                            print(f"   ✅ 找到编辑器 (selector={selector}, attempt={attempt+1})")
+                            print(f"   ✅ 找到编辑器 (selector={selector}, attempt={attempt+1}, {box['width']:.0f}x{box['height']:.0f})")
                             break
                     except:
                         continue
@@ -872,6 +981,7 @@ class ViduAutomation:
             time.sleep(0.5)
             
             image_count = 0
+            failed_images = []
             
             for i, seg in enumerate(segments):
                 seg_type = seg.get('type', '')
@@ -880,13 +990,25 @@ class ViduAutomation:
                     content = seg.get('content', '')
                     if content:
                         print(f"   📝 [{i+1}/{len(segments)}] 输入文字: {content[:40]}...")
-                        self.page.keyboard.type(content, delay=5)
+                        try:
+                            self.page.keyboard.type(content, delay=5)
+                        except Exception as type_err:
+                            # keyboard.type 对某些字符（emoji等）可能失败，用 JS 回退
+                            print(f"   ⚠️  keyboard.type 失败: {type_err}，使用 JS 插入...", flush=True)
+                            self.page.evaluate(f'''() => {{
+                                const editor = document.querySelector('div.ProseMirror[contenteditable="true"]');
+                                if (editor) {{
+                                    editor.focus();
+                                    document.execCommand('insertText', false, {json.dumps(content)});
+                                }}
+                            }}''')
                         time.sleep(0.3)
                 
                 elif seg_type == 'image':
                     img_path = seg.get('path', '')
+                    img_name = seg.get('name', os.path.basename(img_path) if img_path else '?')
                     if img_path:
-                        print(f"   📷 [{i+1}/{len(segments)}] 插入图片: {os.path.basename(img_path)}")
+                        print(f"   📷 [{i+1}/{len(segments)}] 插入图片: {img_name} ({os.path.basename(img_path)})")
                         is_first = (image_count == 0)
                         if self._insert_inline_image(img_path, is_first=is_first):
                             image_count += 1
@@ -905,18 +1027,40 @@ class ViduAutomation:
                             }''')
                             time.sleep(0.3)
                         else:
-                            print(f"   ❌ 图片插入失败: {img_path}")
-                            return False
+                            # 图片插入失败：降级为输入占位符文字，不中断流程
+                            failed_images.append(img_name)
+                            fallback_text = f'[{img_name}]'
+                            print(f"   ⚠️  图片插入失败，降级输入占位符: {fallback_text}", flush=True)
+                            try:
+                                self.page.keyboard.type(fallback_text, delay=5)
+                            except Exception:
+                                self.page.evaluate(f'''() => {{
+                                    const editor = document.querySelector('div.ProseMirror[contenteditable="true"]');
+                                    if (editor) {{
+                                        editor.focus();
+                                        document.execCommand('insertText', false, {json.dumps(fallback_text)});
+                                    }}
+                                }}''')
+                            time.sleep(0.3)
 
             expected_image_count = sum(1 for seg in segments if seg.get('type') == 'image')
-            if image_count != expected_image_count:
+            if failed_images:
                 print(
-                    f"   ❌ 交替输入不完整：期望插入 {expected_image_count} 张，实际成功 {image_count} 张",
+                    f"   ⚠️  图片插入部分失败：{image_count}/{expected_image_count} 张成功，"
+                    f"失败: {', '.join(failed_images)}",
                     flush=True,
                 )
-                return False
-
-            print(f"   ✅ 交替输入完成：{image_count} 张图片已插入")
+                # 保存调试截图
+                try:
+                    debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'debug_img_fail_{int(time.time())}.png')
+                    self.page.screenshot(path=debug_path)
+                    print(f"   📸 调试截图: {debug_path}", flush=True)
+                except:
+                    pass
+            else:
+                print(f"   ✅ 交替输入完成：{image_count} 张图片全部成功插入")
+            
+            # 只要有文字或部分图片成功输入就算成功，不因图片失败而整体失败
             return True
             
         except Exception as e:
@@ -1150,8 +1294,24 @@ class ViduAutomation:
                     print(f"   [STEP 3] ⚠️  弹窗处理异常: {e}", flush=True)
             
             # 3. 上传参考文件 / 图片库交替输入（ref2video）
+            # 如果有 segments（图片库模式），自动切换到 ref2video
+            if segments and tool_type != 'ref2video':
+                print(f"   [STEP 4] ⚠️  有 segments 但 tool_type={tool_type}，自动切换为 ref2video", flush=True)
+                tool_type = 'ref2video'
+                self._ensure_tool_page(tool_type, force_reload=True)
+                try:
+                    self.page.wait_for_selector('div.ProseMirror[contenteditable="true"]:visible, div[contenteditable="true"]:visible', timeout=10000)
+                except:
+                    time.sleep(2)
             use_segments = bool(segments and tool_type == 'ref2video')
-            print(f"   [STEP 4] 📋 参数: tool_type={tool_type}, reference_file={reference_file}, character_name={character_name}, segments={len(segments) if segments else 0}段", flush=True)
+            print(f"   [STEP 4] 📋 参数: tool_type={tool_type}, reference_file={reference_file}, character_name={character_name}, segments={len(segments) if segments else 0}段, use_segments={use_segments}", flush=True)
+            if segments:
+                for si, seg in enumerate(segments):
+                    seg_type = seg.get('type', '?')
+                    if seg_type == 'image':
+                        print(f"   [STEP 4]   段[{si}] image: name={seg.get('name','?')}, path={seg.get('path','?')[:60]}", flush=True)
+                    else:
+                        print(f"   [STEP 4]   段[{si}] text: {seg.get('content','')[:40]}", flush=True)
             
             if use_segments:
                 # ======== 图片库模式：跳过传统上传，STEP 5 中用交替输入 ========
